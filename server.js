@@ -411,6 +411,16 @@ app.post('/api/cortes/:id/:accion', auth, async (req, res) => {
 app.delete('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res) => {
   if (!dbReady(res)) return; await db.query('delete from cortes'); await bit(req, 'corte', 'vació cortes'); res.json({ ok: true });
 });
+// Eliminar un corte individual (borra sus cálculos por FK cascade)
+app.delete('/api/cortes/:id', auth, requiereRol('admin', 'operador'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const id = parseInt(req.params.id, 10);
+  const c = (await db.query('select estado from cortes where id_corte=$1', [id])).rows[0];
+  if (!c) return res.status(404).json({ error: 'no_existe' });
+  await db.query('delete from cortes where id_corte=$1', [id]);
+  await bit(req, 'corte', `eliminó corte #${id} (estado ${c.estado})`);
+  res.json({ ok: true });
+});
 
 /* ---------- descargas .xlsx (generadas por el server) ---------- */
 function enviarXLSX(res, filename, buffer) {

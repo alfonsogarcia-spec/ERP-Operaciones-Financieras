@@ -278,7 +278,7 @@ function tableWrap(head,rows,opts){const w=el('div',{class:'tablewrap'});const t
   const tb=el('tbody');
   if(!rows.length)tb.append(el('tr',{},el('td',{colspan:head.length},el('div',{class:'empty'},(opts&&opts.empty)||'Sin registros'))));
   rows.forEach(r=>{const tr=el('tr',{});if(r._onclick){tr.style.cursor='pointer';tr.addEventListener('click',r._onclick);}
-    r.forEach(cell=>{if(cell&&typeof cell==='object'&&'num'in cell)tr.append(el('td',{class:'num',html:cell.num}));else tr.append(el('td',{html:cell==null?'':String(cell)}));});tb.append(tr);});
+    r.forEach(cell=>{if(cell&&cell.nodeType)tr.append(el('td',{},cell));else if(cell&&typeof cell==='object'&&'num'in cell)tr.append(el('td',{class:'num',html:cell.num}));else tr.append(el('td',{html:cell==null?'':String(cell)}));});tb.append(tr);});
   t.append(tb);w.append(t);return w;}
 const badgeEstado=e=>{const m={'Borrador':'g','Validado':'b','Dispersado':'v','Cerrado':'ok'};return `<span class="badge ${m[e]||'g'}">${esc(e)}</span>`;};
 const badgeProd=p=>{const m={'Débito':'b','Crédito':'v','American Express':'g','Internacional':'w'};return `<span class="badge ${m[p]||'d'}">${esc(p||'—')}</span>`;};
@@ -397,7 +397,13 @@ async function vCortes(v){
   const cortes=await api('GET','/api/cortes');
   if(can('corte')&&cortes.length)$('#pageAction').prepend(el('button',{class:'btn ghost sm',onclick:async()=>{if(confirm('¿Vaciar TODOS los cortes?')){await api('DELETE','/api/cortes');render();}}},'Vaciar cortes'),el('span',{},' '));
   v.innerHTML='';const p=el('div',{class:'panel'});p.append(el('h3',{},'Cortes'));
-  p.append(tableWrap(['Corte','Fecha liq.','Estado',{t:'Trx'},'Grupos',{t:'Monto'},{t:'A compensar'},{t:'A dispersar'},'Cuadre'],cortes.map(c=>{const r=[`#${c.id_corte}`,c.fecha_liq,badgeEstado(c.estado),{num:c.n_trx},c.bloqueos!=null?'':'',{num:mxn(c.total_monto)},{num:mxn(c.total_comp)},{num:mxn(c.total_disp)},c.cuadra?'<span class="flagok">✓</span>':'<span class="flagbad">✗</span>'];r._onclick=()=>abrirCorte(c.id_corte);return r;}),{empty:'Aún no hay cortes. Crea uno con “+ Nuevo corte”.'}));
+  const puedeCorte=can('corte');
+  const head=['Corte','Fecha liq.','Estado',{t:'Trx'},'Grupos',{t:'Monto'},{t:'A compensar'},{t:'A dispersar'},'Cuadre'];
+  if(puedeCorte)head.push('');
+  p.append(tableWrap(head,cortes.map(c=>{
+    const r=[`#${c.id_corte}`,c.fecha_liq,badgeEstado(c.estado),{num:c.n_trx},'',{num:mxn(c.total_monto)},{num:mxn(c.total_comp)},{num:mxn(c.total_disp)},c.cuadra?'<span class="flagok">✓</span>':'<span class="flagbad">✗</span>'];
+    if(puedeCorte)r.push(el('button',{class:'btn danger sm',onclick:async(e)=>{e.stopPropagation();if(confirm(`¿Eliminar el corte #${c.id_corte} (${c.fecha_liq})? No se puede deshacer.`)){try{await api('DELETE','/api/cortes/'+c.id_corte);toast('Corte eliminado','ok');render();}catch(err){toast(errMsg(err),'err');}}}},'Eliminar'));
+    r._onclick=()=>abrirCorte(c.id_corte);return r;}),{empty:'Aún no hay cortes. Crea uno con “+ Nuevo corte”.'}));
   v.append(p);
 }
 async function openNuevoCorte(){
