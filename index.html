@@ -293,6 +293,8 @@ const NAV=[
   {id:'dashboard',t:'Panel',ic:'ic_01'},
   {id:'ingesta',t:'Ingesta de transacciones',ic:'ic_04'},
   {id:'cortes',t:'Cortes y liquidación',ic:'ic_06'},
+  {sec:'Contable'},
+  {id:'contable',t:'Registro contable',ic:'ic_15'},
   {sec:'Catálogos'},
   {id:'grupos',t:'Grupos y afiliaciones',ic:'ic_09'},
   {id:'cuentas',t:'Cuentas de liquidación',ic:'ic_11'},
@@ -305,11 +307,11 @@ const NAV=[
 function renderNav(){const nav=$('#nav');nav.innerHTML='';NAV.forEach(item=>{
   if(item.sec){nav.append(el('div',{class:'navlbl'},item.sec));return;}
   nav.append(el('a',{class:VIEW===item.id?'active':'',onclick:()=>go(item.id)},el('img',{src:`/public/brand-icons/${item.ic}.png`,alt:''}),el('span',{},item.t)));});}
-const TITLES={dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],bitacora:['Bitácora','Trazabilidad de acciones']};
+const TITLES={dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],bitacora:['Bitácora','Trazabilidad de acciones']};
 function go(v){VIEW=v;render();}
 async function render(){renderNav();const[t,s]=TITLES[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
   const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
-  try{await ({dashboard:vDashboard,ingesta:vIngesta,cortes:vCortes,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,bitacora:vBitacora}[VIEW]||vDashboard)(v);}
+  try{await ({dashboard:vDashboard,ingesta:vIngesta,cortes:vCortes,contable:vContable,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,bitacora:vBitacora}[VIEW]||vDashboard)(v);}
   catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
 }
 function setView(v,node){v.innerHTML='';v.append(node);}
@@ -464,6 +466,44 @@ function detalleCalculo(cc){const r=cc.calc;const body=el('div',{});
   body.append(g);
   body.append(el('div',{class:'banner '+(Math.abs(r.diferencia)<=0.01?'ok':'err'),html:`Comprobación: ${mxn(r.comprobacion)} · Diferencia: <b>${num(r.diferencia)}</b> · Utilidad: <b>${mxn(r.utilidad)}</b>`}));
   modal('Desglose del cálculo',body,el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'),true);
+}
+
+/* ---------- CONTABLE ---------- */
+async function vContable(v){
+  const {fechas}=await api('GET','/api/cortes/fechas');
+  v.innerHTML='';
+  if(!fechas.length){v.append(el('div',{class:'banner warn'},'No hay transacciones con fecha de liquidación. Carga transacciones primero.'));return;}
+  const min=fechas[0].iso, max=fechas[fechas.length-1].iso;
+  const desde=el('input',{type:'date',value:min,min,max});
+  const hasta=el('input',{type:'date',value:max,min,max});
+  const p=el('div',{class:'panel'});
+  p.append(el('h3',{},'Registro contable por rango de fecha de liquidación'));
+  p.append(el('div',{class:'banner',html:`Rango disponible: <b>${fmtISO(min)}</b> a <b>${fmtISO(max)}</b> · ${fechas.length} fechas de liquidación. El registro trae, por afiliación, la <b>comisión pactada + IVA</b> dividida en TDD, TDC, AMEX e INTERNACIONAL, más dispersión y banca (Telematic).`}));
+  const g=el('div',{class:'form-grid'});g.append(fld('Desde',desde),fld('Hasta',hasta));p.append(g);
+  const out=el('div',{});
+  const acc=el('div',{class:'kpi-row'});
+  acc.append(el('button',{class:'btn',onclick:async()=>{
+    if(desde.value>hasta.value){toast('El rango es inválido (desde > hasta)','err');return;}
+    try{const r=await withBusy('Calculando registro…',()=>api('GET',`/api/contable/resumen?desde=${desde.value}&hasta=${hasta.value}`));out.innerHTML='';out.append(resumenContable(r));}catch(e){toast(errMsg(e),'err');}
+  }},'Ver resumen'));
+  acc.append(el('button',{class:'btn secondary',onclick:()=>{
+    if(desde.value>hasta.value){toast('El rango es inválido (desde > hasta)','err');return;}
+    descargar(`/api/contable.xlsx?desde=${desde.value}&hasta=${hasta.value}`,`registro_contable_${desde.value}_a_${hasta.value}.xlsx`).catch(e=>toast(errMsg(e),'err'));
+  }},'⬇ Descargar registro contable (Excel)'));
+  p.append(acc);v.append(p,out);
+}
+function resumenContable(r){const t=r.totales;const p=el('div',{class:'panel'});
+  p.append(el('h3',{},`Resumen · ${r.nRows} renglones · ${r.afiliaciones} afiliaciones`));
+  p.append(cards([['Com. TDD + IVA',mxn(t.com_tdd+t.iva_tdd)],['Com. TDC + IVA',mxn(t.com_tdc+t.iva_tdc)],['Com. AMEX + IVA',mxn(t.com_amex+t.iva_amex)],['Com. INT + IVA',mxn(t.com_int+t.iva_int)]]));
+  p.append(tableWrap(['Concepto (ingreso por comisión MCEB)',{t:'Comisión'},{t:'IVA'},{t:'Total'}],[
+    ['TDD',{num:mxn(t.com_tdd)},{num:mxn(t.iva_tdd)},{num:mxn(t.com_tdd+t.iva_tdd)}],
+    ['TDC',{num:mxn(t.com_tdc)},{num:mxn(t.iva_tdc)},{num:mxn(t.com_tdc+t.iva_tdc)}],
+    ['AMEX',{num:mxn(t.com_amex)},{num:mxn(t.iva_amex)},{num:mxn(t.com_amex+t.iva_amex)}],
+    ['INTERNACIONAL',{num:mxn(t.com_int)},{num:mxn(t.iva_int)},{num:mxn(t.com_int+t.iva_int)}],
+    ['Banca (Telematic)',{num:mxn(t.banca)},{num:mxn(t.iva_banca)},{num:mxn(t.banca+t.iva_banca)}],
+    ['Dispersión MCEB',{num:mxn(t.disp)},'—',{num:mxn(t.disp)}],
+  ]));
+  return p;
 }
 
 /* ---------- GRUPOS ---------- */

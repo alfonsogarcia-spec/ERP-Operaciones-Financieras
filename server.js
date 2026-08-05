@@ -477,6 +477,66 @@ app.get('/api/cortes/:id/reporte.xlsx', auth, async (req, res) => {
   enviarXLSX(res, `reporte_cliente_corte_${c.id_corte}_${c.fli}.xlsx`, X.buildXLSX([{ name: 'Reporte por cliente', aoa: [head, ...rows] }]));
 });
 
+/* ============================================================================
+   CONTABLE — Registro contable (pólizas) por rango de fecha de liquidación
+   Ingresos por comisión (tasa pactada + IVA) por producto (TDD/TDC/AMEX/INT),
+   dispersión, e ingreso por banca (Telematic) + IVA. Por FECHA + AFILIACIÓN.
+   ========================================================================= */
+async function computeContable(desde, hasta) {
+  const txs = (await db.query("select fecha_liq::text as fl, cliente, numero_afiliacion, producto, monto from transacciones where fecha_liq between $1 and $2 and upper(estatus)='APROBADO' order by fecha_liq", [desde, hasta])).rows;
+  const [params, grupos, afilGrupo, costos, afiliaciones] = [await getParams(), await getGrupos(), await getAfilGrupo(), await getCostos(), await getAfiliaciones()];
+  const grupoPorNombre = nombre => grupos.find(g => nrm(g.nombre_cliente) === nrm(nombre));
+  const tasasDe = (idg, afil) => afilGrupo.find(a => String(a.id_grupo) === String(idg) && String(a.numero_afiliacion) === String(afil));
+  const costosDe = afil => costos.find(c => String(c.numero_afiliacion) === String(afil));
+  const razonDe = afil => { const a = afiliaciones.find(x => String(x.numero_afiliacion) === String(afil)); return a ? (a.razon_social || '') : ''; };
+  const groups = {};
+  for (const t of txs) { const k = `${t.fl}||${t.cliente}||${t.numero_afiliacion}`; (groups[k] = groups[k] || []).push({ producto: t.producto, monto: Number(t.monto) }); }
+  const rows = [];
+  for (const k of Object.keys(groups)) {
+    const sep = k.split('||'); const fl = sep[0], cliente = sep[1], afil = sep[2];
+    const g = grupoPorNombre(cliente); const idGrupo = g ? g.id_grupo : null;
+    const tasas = idGrupo ? tasasDe(idGrupo, afil) : null; const co = costosDe(afil);
+    const cat = {
+      tasas: tasas ? { pac_tdd: Number(tasas.tasa_pac_tdd), pac_tdc: Number(tasas.tasa_pac_tdc), pac_amex: Number(tasas.tasa_pac_amex), pac_int: Number(tasas.tasa_pac_int), costo_x_trx: Number(tasas.costo_x_trx), pct_banca: Number(tasas.pct_banca) } : {},
+      costos: co ? { int_tdd: Number(co.int_tdd), int_tdc: Number(co.int_tdc), int_amex: co.int_amex == null ? null : Number(co.int_amex), int_int: co.int_int == null ? null : Number(co.int_int), fee_broxel: co.fee_broxel == null ? null : Number(co.fee_broxel) } : {},
+    };
+    const r = E.calcularCompensacion(groups[k], cat, params, {});
+    rows.push({ fl, afil, razon: razonDe(afil) || cliente,
+      com_tdd: r.com_tdd, iva_tdd: r.iva_com_tdd, com_tdc: r.com_tdc, iva_tdc: r.iva_com_tdc,
+      com_amex: r.com_amex, iva_amex: r.iva_com_amex, com_int: r.com_int, iva_int: r.iva_com_int,
+      disp: r.disp_total, banca: r.banca, iva_banca: r.iva_banca });
+  }
+  rows.sort((a, b) => a.fl < b.fl ? -1 : a.fl > b.fl ? 1 : (String(a.afil) < String(b.afil) ? -1 : 1));
+  return rows;
+}
+app.get('/api/contable/resumen', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const { desde, hasta } = req.query; if (!desde || !hasta) return res.status(400).json({ error: 'rango' });
+  const rows = await computeContable(desde, hasta);
+  const S = k => E.round2(rows.reduce((a, r) => a + (r[k] || 0), 0));
+  res.json({ nRows: rows.length, afiliaciones: new Set(rows.map(r => r.afil)).size,
+    totales: { com_tdd: S('com_tdd'), iva_tdd: S('iva_tdd'), com_tdc: S('com_tdc'), iva_tdc: S('iva_tdc'), com_amex: S('com_amex'), iva_amex: S('iva_amex'), com_int: S('com_int'), iva_int: S('iva_int'), disp: S('disp'), banca: S('banca'), iva_banca: S('iva_banca') } });
+});
+app.get('/api/contable.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const { desde, hasta } = req.query; if (!desde || !hasta) return res.status(400).json({ error: 'rango' });
+  const rows = await computeContable(desde, hasta);
+  const ddmmyyyy = iso => { const f = E.parseFecha(iso); return f ? `${String(f.getDate()).padStart(2, '0')} ${String(f.getMonth() + 1).padStart(2, '0')} ${f.getFullYear()}` : iso; };
+  // Encabezado de 2 filas con celdas combinadas (como la plantilla de referencia)
+  const h1 = ['FECHA', 'AFILIACIÓN', 'RAZON SOCIAL', 'INGRESOS POR COMISION MCEB', '', '', '', '', '', '', '', 'DISPERSION DE MCEB', 'INGRESO POR COMISION TELEMATIC', ''];
+  const h2 = ['', '', '', 'TDD', 'IVA', 'TDC', 'IVA', 'AMEX', 'IVA', 'INTERNACIONAL', 'IVA', '', 'BANCA', 'IVA'];
+  const data = rows.map(r => [ddmmyyyy(r.fl), String(r.afil), r.razon,
+    E.round2(r.com_tdd), E.round2(r.iva_tdd), E.round2(r.com_tdc), E.round2(r.iva_tdc), E.round2(r.com_amex), E.round2(r.iva_amex), E.round2(r.com_int), E.round2(r.iva_int),
+    E.round2(r.disp), E.round2(r.banca), E.round2(r.iva_banca)]);
+  const merges = [
+    { s: { r: 0, c: 0 }, e: { r: 1, c: 0 } }, { s: { r: 0, c: 1 }, e: { r: 1, c: 1 } }, { s: { r: 0, c: 2 }, e: { r: 1, c: 2 } },
+    { s: { r: 0, c: 3 }, e: { r: 0, c: 10 } }, { s: { r: 0, c: 11 }, e: { r: 1, c: 11 } }, { s: { r: 0, c: 12 }, e: { r: 0, c: 13 } },
+  ];
+  const cols = [{ wch: 12 }, { wch: 12 }, { wch: 28 }].concat(Array(11).fill({ wch: 13 }));
+  await bit(req, 'contable', `registro contable ${desde}..${hasta} (${rows.length} filas)`);
+  enviarXLSX(res, `registro_contable_${desde}_a_${hasta}.xlsx`, X.buildXLSX([{ name: 'REGISTROS CONTABLES', aoa: [h1, h2, ...data], merges, cols }]));
+});
+
 // Plantillas (cualquiera autenticado)
 app.get('/api/plantilla/:tipo.xlsx', auth, (req, res) => {
   const t = req.params.tipo; let sheet;
