@@ -7,7 +7,7 @@
    - Auth JWT + bcrypt, roles forzados por endpoint, inmutabilidad de cortes.
    ========================================================================= */
 'use strict';
-require('dotenv').config();   // carga .env (DATABASE_URL, JWT_SECRET, DB_SCHEMA) si existe
+require('dotenv').config({ path: require('path').join(__dirname, '.env'), quiet: true });   // .env por ruta absoluta (no depende del cwd)
 const express = require('express');
 const path = require('path');
 const jwt = require('jsonwebtoken');

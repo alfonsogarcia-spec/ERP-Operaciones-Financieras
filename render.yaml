@@ -1,0 +1,23 @@
+# Blueprint de Render — Sistema de Conciliación y Liquidación T+1
+# Servicio independiente. La BD es el MISMO Supabase que gestion-operaciones,
+# pero aislado en el schema `conciliacion` (DB_SCHEMA). Los secretos (DATABASE_URL,
+# JWT_SECRET) se capturan en el dashboard de Render, NO en el repo.
+services:
+  - type: web
+    name: polipay-conciliacion-liquidacion
+    runtime: node
+    plan: free            # cámbialo a "starter" si no quieres que el servicio "duerma" por inactividad
+    region: oregon        # cercano a Supabase us-west-2 (menor latencia)
+    buildCommand: npm install
+    startCommand: node server.js
+    autoDeploy: true      # cada git push a la rama despliega solo
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: DB_SCHEMA
+        value: conciliacion
+      - key: JWT_SECRET
+        sync: false        # se pega en el dashboard de Render
+      - key: DATABASE_URL
+        sync: false        # se pega en el dashboard de Render (cadena de Supabase)
