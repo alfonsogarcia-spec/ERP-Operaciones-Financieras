@@ -525,9 +525,12 @@ app.get('/api/contable.xlsx', auth, async (req, res) => {
   // Encabezado de 2 filas con celdas combinadas (como la plantilla de referencia)
   const h1 = ['FECHA', 'AFILIACIÓN', 'RAZON SOCIAL', 'INGRESOS POR COMISION MCEB', '', '', '', '', '', '', '', 'DISPERSION DE MCEB', 'INGRESO POR COMISION TELEMATIC', ''];
   const h2 = ['', '', '', 'TDD', 'IVA', 'TDC', 'IVA', 'AMEX', 'IVA', 'INTERNACIONAL', 'IVA', '', 'BANCA', 'IVA'];
+  // Valores en precisión contable completa. Se limpia solo el ruido de punto flotante
+  // (redondeo a 10 decimales) sin perder precisión: 175.00000000000003 -> 175.
+  const r10 = v => Math.round((Number(v) || 0) * 1e10) / 1e10;
   const data = rows.map(r => [ddmmyyyy(r.fl), String(r.afil), r.razon,
-    E.round2(r.com_tdd), E.round2(r.iva_tdd), E.round2(r.com_tdc), E.round2(r.iva_tdc), E.round2(r.com_amex), E.round2(r.iva_amex), E.round2(r.com_int), E.round2(r.iva_int),
-    E.round2(r.disp), E.round2(r.banca), E.round2(r.iva_banca)]);
+    r10(r.com_tdd), r10(r.iva_tdd), r10(r.com_tdc), r10(r.iva_tdc), r10(r.com_amex), r10(r.iva_amex), r10(r.com_int), r10(r.iva_int),
+    r10(r.disp), r10(r.banca), r10(r.iva_banca)]);
   const merges = [
     { s: { r: 0, c: 0 }, e: { r: 1, c: 0 } }, { s: { r: 0, c: 1 }, e: { r: 1, c: 1 } }, { s: { r: 0, c: 2 }, e: { r: 1, c: 2 } },
     { s: { r: 0, c: 3 }, e: { r: 0, c: 10 } }, { s: { r: 0, c: 11 }, e: { r: 1, c: 11 } }, { s: { r: 0, c: 12 }, e: { r: 0, c: 13 } },
