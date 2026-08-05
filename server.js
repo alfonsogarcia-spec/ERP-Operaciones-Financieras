@@ -437,10 +437,29 @@ app.get('/api/cortes/:id/layout.xlsx', auth, async (req, res) => {
     .filter(x => Math.abs(x.calc.disp_total) > 0.005);
   const bloq = cal.filter(x => !x.clabe || !x.codigo_banco);
   if (bloq.length) return res.status(409).json({ error: 'bloqueado', detalle: bloq.map(x => ({ razon: x.razon, afil: x.afil, importe: E.round2(x.calc.disp_total), falta: !x.clabe ? 'CLABE' : 'codigo_banco' })) });
-  const head = ['concepto', 'clabe', 'codigo_banco', 'beneficiario', 'importe'];
-  const rows = cal.map(x => [x.concepto, String(x.clabe), Number(x.codigo_banco) || x.codigo_banco, x.beneficiario, E.round2(x.calc.disp_total)]);
+  // Plantilla LAYOUT (dispersor): 8 columnas. Se llenan solo las que tenemos; el resto en blanco.
+  const head = [
+    'Concepto',
+    'Cuenta clabe del beneficiario',
+    'Código del banco del beneficiario',
+    'Nombre del beneficiario',
+    'RFC o CURP del beneficiario',
+    'Cantidad',
+    'Referencia numérica',
+    'Fecha de pago (Opcional, solo para transacciones futuras) Formato YYYY-mm-dd HH:mm',
+  ];
+  const rows = cal.map(x => [
+    x.concepto,                              // Concepto
+    String(x.clabe),                         // Cuenta clabe del beneficiario (texto, conserva ceros)
+    Number(x.codigo_banco) || x.codigo_banco,// Código del banco del beneficiario
+    x.beneficiario,                          // Nombre del beneficiario
+    '',                                      // RFC o CURP del beneficiario  (en blanco: no disponible)
+    E.round2(x.calc.disp_total),             // Cantidad
+    '',                                      // Referencia numérica          (en blanco)
+    '',                                      // Fecha de pago                (en blanco)
+  ]);
   await bit(req, 'layout', `exportó layout corte #${c.id_corte} (${rows.length} órdenes)`);
-  enviarXLSX(res, `layout_spei_corte_${c.id_corte}_${c.fli}.xlsx`, X.buildXLSX([{ name: 'Layout SPEI', aoa: [head, ...rows], cols: [{ wch: 22 }, { wch: 20 }, { wch: 12 }, { wch: 28 }, { wch: 14 }] }]));
+  enviarXLSX(res, `layout_spei_corte_${c.id_corte}_${c.fli}.xlsx`, X.buildXLSX([{ name: 'LAYOUT', aoa: [head, ...rows], cols: [{ wch: 22 }, { wch: 22 }, { wch: 16 }, { wch: 28 }, { wch: 20 }, { wch: 14 }, { wch: 18 }, { wch: 40 }] }]));
 });
 app.get('/api/cortes/:id/reporte.xlsx', auth, async (req, res) => {
   if (!dbReady(res)) return;
