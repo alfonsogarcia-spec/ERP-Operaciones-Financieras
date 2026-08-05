@@ -46,6 +46,12 @@ async function initDB() {
       exec: (sql) => pool.query(sql),
     };
   } else {
+    // BLINDAJE: en producción NUNCA arrancar pglite (Postgres en WASM, pesado → OOM en 512Mi).
+    // Si falta DATABASE_URL en prod, fallar con mensaje claro (server.js lo captura y sigue con db:false).
+    if (process.env.RENDER || process.env.NODE_ENV === 'production') {
+      throw new Error('DATABASE_URL no configurada. En producción NO se arranca la BD local (pglite) para evitar consumo de memoria. Configura DATABASE_URL y JWT_SECRET en el entorno.');
+    }
+    // Solo desarrollo local:
     const { PGlite } = await import('@electric-sql/pglite');
     const db = new PGlite(path.join(__dirname, '..', '.pgdata'));
     await db.exec(`create schema if not exists ${SCHEMA}; set search_path to ${SCHEMA};`);
