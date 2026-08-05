@@ -456,7 +456,12 @@ app.get('/api/cortes/:id/layout.xlsx', auth, async (req, res) => {
     'Referencia numérica',
     'Fecha de pago (Opcional, solo para transacciones futuras) Formato YYYY-mm-dd HH:mm',
   ];
-  const rows = orders.map(o => [o.concepto, String(o.clabe), Number(o.cod) || o.cod, o.benef, '', o.cant, '', '']);
+  // Referencia numérica: "1" + DDMMYY del día en que se genera (zona Mexico_City). Ej: 05/08/26 -> 1050826
+  const pz = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: '2-digit', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const gp = t => (pz.find(p => p.type === t) || {}).value || '';
+  const referencia = Number(`1${gp('day')}${gp('month')}${gp('year')}`);
+  // Nombre del beneficiario = nombre del GRUPO DE CLIENTE (o.razon)
+  const rows = orders.map(o => [o.concepto, String(o.clabe), Number(o.cod) || o.cod, o.razon, '', o.cant, referencia, '']);
   await bit(req, 'layout', `exportó layout corte #${c.id_corte} (${orders.length} órdenes: ${dom.length} dom + ${amex.length} AMEX)`);
   enviarXLSX(res, `layout_spei_corte_${c.id_corte}_${c.fli}.xlsx`, X.buildXLSX([{ name: 'LAYOUT', aoa: [head, ...rows], cols: [{ wch: 22 }, { wch: 22 }, { wch: 16 }, { wch: 28 }, { wch: 20 }, { wch: 14 }, { wch: 18 }, { wch: 40 }] }]));
 });
