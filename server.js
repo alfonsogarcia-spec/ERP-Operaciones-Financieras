@@ -537,7 +537,10 @@ app.get('/api/contable.xlsx', auth, async (req, res) => {
   ];
   const cols = [{ wch: 12 }, { wch: 12 }, { wch: 28 }].concat(Array(11).fill({ wch: 13 }));
   await bit(req, 'contable', `registro contable ${desde}..${hasta} (${rows.length} filas)`);
-  enviarXLSX(res, `registro_contable_${desde}_a_${hasta}.xlsx`, X.buildXLSX([{ name: 'REGISTROS CONTABLES', aoa: [h1, h2, ...data], merges, cols }]));
+  // Formato de contabilidad (signo de pesos) en las columnas de importes (D..N = índices 3..13),
+  // desde la fila de datos (índice 2). El valor guardado conserva su precisión completa.
+  const fmt = { z: '"$"#,##0.00######', cols: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], rowFrom: 2 };
+  enviarXLSX(res, `registro_contable_${desde}_a_${hasta}.xlsx`, X.buildXLSX([{ name: 'REGISTROS CONTABLES', aoa: [h1, h2, ...data], merges, cols, fmt }]));
 });
 
 // Plantillas (cualquiera autenticado)
