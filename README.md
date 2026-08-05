@@ -1,45 +1,40 @@
 # Polipay · Sistema de Conciliación y Liquidación T+1
 
-Automatiza el ciclo de **conciliación y liquidación T+1** del Agregador/POS (MCEB · Broxel como
-BIN Sponsor), reemplazando el Excel `ARCHIVO_DE_CONCILIACION_V7.xlsx`. Implementa el
-**BRD-OP-AGR-001 v1.0** — Fase 1 (MVP + motor completo).
+Automatiza el ciclo de **conciliación y liquidación T+1** del Agregador/POS (MCEB · Broxel BIN
+Sponsor). Implementa el **BRD-OP-AGR-001**. Desde v0.5.0 es **backend-driven**: toda la lógica y los
+datos viven en el servidor; el front es solo un espejo que consume la API.
 
-## Qué hace (Fase 1)
-
-- **Ingesta** de transacciones del gateway por **Excel (.xlsx)** — subir archivo (o pegar CSV como
-  respaldo), con normalización de tipos y marcado de filas inválidas.
-- **Cálculo de fecha de liquidación T+n por producto** con hora de corte y días feriados (RN-12):
-  Nacional/INT → T+1 corte 23:00; AMEX → T+3 corte 23:00 (parámetros configurables por ciclo
-  en Sistema → Parámetros; el desfase T+3 y la hora de corte de AMEX se pueden ajustar cuando cambie la operación).
-- **Catálogos**: grupos y afiliaciones (tasas pactadas, %banca, costo x trx), estructura de costos
-  del adquirente (intercambio + Fee Broxel), cuentas de liquidación (CLABE), bancos SPEI, feriados.
-- **Motor de compensación y dispersión** exacto (sección 6 / RN-01…RN-16), con IVA 16%.
-- **Cuadre automático** (diferencia = 0, tolerancia ±0.01) que **bloquea** la dispersión si algún
-  grupo no cuadra o si un grupo con importe carece de CLABE/banco.
-- **Layout SPEI** exportable a **Excel** (concepto `DISPERSION <ult3>CPPX00<id_grupo>`, CLABE como
-  texto, sin órdenes en 0).
-- **Reporte por cliente** exportable a **Excel** (compensar por producto, banca, dispersar, con totales).
-- Todas las **plantillas** de carga (transacciones, grupos, cuentas) se descargan en **.xlsx**;
-  el sistema lee y escribe Excel de forma nativa y offline (SheetJS incluido en `public/vendor/`).
-- **Segregación de funciones** (Operador calcula / Tesorería valida y dispersa / Admin catálogos)
-  y **bitácora** de acciones.
-- **Auto-pruebas del motor** embebidas: casos de aceptación RF-02 y control del anexo 13.3.
-
-Fuera de esta fase: pólizas contables (MCEB/Telematic), cruce Broxel, evidencia inmutable
-versionada y KPIs avanzados (Fase 2).
-
-## Regla de dispersión (RN-09, confirmada con Operaciones)
-
-Cada financiamiento/contracargo se aplica **una sola vez, en su propio bloque**:
+## Arquitectura
 
 ```
-base_dom  = comp_tdd + comp_tdc + comp_int
-disp_dom  = base_dom  − banca_dom  − iva_banca_dom  − financiamientos − contracargos_dom
-disp_amex = comp_amex − banca_amex − iva_banca_amex − contracargos_amex
-disp_total = disp_dom + disp_amex        # comprobación ⇒ diferencia = 0
+navegador (index.html: solo fetch + render)  ──HTTP/JSON + JWT──▶  server.js (Express)
+                                                                    ├─ engine.js    motor puro (única fuente de verdad)
+                                                                    ├─ lib/excel.js parsea/genera .xlsx en el servidor
+                                                                    └─ db/          Postgres: Supabase (prod) · pglite (dev)
 ```
 
-Corrige el doble descuento del Excel vigente: el cuadre da 0 aun con financiamientos/contracargos > 0.
+- **`engine.js`** — motor de cálculo (sección 6 / RN-01..16): fecha de liquidación T+n con precisión
+  de segundos, compensación, dispersión (RN-09), cuadre, utilidad, concepto.
+- **`server.js`** — API REST con auth JWT + bcrypt, **roles forzados por endpoint**, subida de Excel
+  (multer), generación de layout/reporte, **inmutabilidad de cortes**.
+- **`db/`** — esquema normalizado (`schema.sql`) + adaptador (`index.js`): usa `pg`/Supabase si hay
+  `DATABASE_URL`, o **pglite** (Postgres en proceso, `./.pgdata`) para desarrollo sin servicio externo.
+- **`index.html`** — cliente delgado: login por correo/contraseña, vistas que consultan la API y
+  pintan; ninguna lógica ni dato vive en el navegador.
+
+## Qué hace
+
+- **Ingesta** de transacciones del gateway por **Excel (.xlsx)** — el **servidor** parsea (elige la
+  hoja con más datos), reconoce el producto (insensible a acentos), mapea columnas por alias,
+  normaliza montos y calcula la **fecha de liquidación** (Nacional/INT T+1 · AMEX T+3, corte 23:00,
+  con segundos; parámetros configurables).
+- **Catálogos**: grupos/afiliaciones (tasas, %banca, costo x trx), estructura de costos, cuentas de
+  liquidación **por afiliación** (CLABE), bancos SPEI, feriados, parámetros.
+- **Cortes**: compensación/dispersión exacta, **cuadre** (diferencia 0), **layout SPEI** y **reporte
+  por cliente** en Excel generados por el servidor. **Cancelaciones** (monto negativo) restan.
+- **Segregación de funciones**: Operador calcula / Tesorería valida y dispersa / Admin catálogos —
+  forzado en el servidor. **Inmutabilidad**: un corte Dispersado/Cerrado no se puede editar.
+- **Bitácora** de acciones (usuario, rol, timestamp).
 
 ## Cómo correr
 
@@ -48,26 +43,30 @@ npm install
 npm start
 ```
 
-Abre http://localhost:4174. Entra con tu nombre y un rol. En este MVP el estado se guarda en el
-**localStorage** del navegador (modo sandbox); no requiere base de datos.
+Abre http://localhost:4174. **Sin `DATABASE_URL`** corre con **pglite** (base local en `./.pgdata`) —
+ideal para desarrollo. Usuarios sembrados (password inicial **`Polipay2026`**, cámbialo):
 
-### Flujo típico
+| Correo | Rol |
+|---|---|
+| `alfonso.garcia@polipay.io` | Administrador |
+| `operador@polipay.io` | Operador |
+| `tesoreria@polipay.io` | Tesorería |
 
-1. **Bancos SPEI** → "Cargar bancos comunes".
-2. **Días feriados** → "Feriados MX 2026".
-3. **Grupos y afiliaciones** → "Alta guiada" (o importar CSV con la plantilla).
-4. **Cuentas de liquidación** → registrar CLABE **por afiliación** (una cuenta por afiliación; o
-   “nivel grupo” como cuenta por defecto).
-5. **Ingesta de transacciones** → subir el Excel del gateway (descarga la plantilla .xlsx como referencia).
-6. **Cortes y liquidación** → "Nuevo corte" → elegir fecha objetivo → revisar compensación y
-   cuadre → exportar **Layout SPEI** y **Reporte por cliente** → validar/dispersar según rol.
+### Producción (Supabase)
 
-## Stack
+1. Crea un **proyecto Supabase NUEVO e independiente** (no el de gestion-operaciones).
+2. Define en el entorno (p.ej. Render): `DATABASE_URL` (cadena de Supabase) y `JWT_SECRET`.
+3. Al arrancar, `migrate()` crea el esquema y siembra los usuarios; `/api/estado` → `db:true`.
 
-`index.html` autocontenido (HTML/CSS/JS, sin framework) + `server.js` (Express) que lo sirve.
-Marca Polipay (Montserrat, azul Oxford `#04003A`, azul Eléctrico `#157BF6`). Puerto 4174.
-Modo dual preparado para Supabase en Fase 2 (`/api/estado` → `db:true`).
+## Pruebas
+
+```bash
+node test/engine.test.js      # 15/15 — RF-02, anexo 13.3, RN-09, precisión de segundos
+```
+
+Verificado end-to-end contra el cálculo manual (`EJEMPLO CALCULO MANUAL.xlsx`): el corte del
+04/08/2026 reproduce **942 transacciones / $1,104,510.37**.
 
 ## Referencia
 
-BRD-OP-AGR-001 v1.0 — Operaciones (Grupo BECM / Polipay).
+BRD-OP-AGR-001 — Operaciones (Grupo BECM / Polipay). Ver `CHANGELOG.md`.

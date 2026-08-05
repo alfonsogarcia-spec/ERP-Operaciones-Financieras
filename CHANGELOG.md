@@ -1,5 +1,25 @@
 # Changelog — Sistema de Conciliación y Liquidación T+1 (BRD-OP-AGR-001)
 
+## v0.5.0 — 2026-08-04 · Migración a backend real
+
+Reescritura a **backend-driven**: toda la lógica y los datos se movieron al servidor; el front quedó
+como espejo. Base de datos **Postgres** (Supabase en prod, independiente de gestion-operaciones;
+pglite en dev). Se conservó el motor probado (ahora 15/15 con el caso de segundos).
+
+- **`engine.js`**: motor puro (CommonJS), única fuente de verdad; lo consume el servidor y el test.
+- **`db/`**: `schema.sql` normalizado (usuarios, catálogos, transacciones, cortes, calculos, params,
+  bitácora) + adaptador `pg`/pglite con `migrate()` y siembra de usuarios.
+- **`lib/excel.js`**: parseo (elige la hoja con más datos) y generación de .xlsx en el servidor. Se
+  eliminó SheetJS del navegador.
+- **`server.js`**: API REST, auth **JWT + bcrypt**, **roles forzados por endpoint** (Operador/
+  Tesorería/Admin), subida de Excel con multer, **inmutabilidad** de cortes (Dispersado/Cerrado),
+  layout/reporte generados por el server, `/api/estado` → `db:true`.
+- **`index.html`**: cliente delgado (login por correo/contraseña, `api()` con Bearer, vistas que
+  consultan y pintan). Se quitó motor, localStorage y xlsx del front.
+- Corrección: lectura de columnas `date` con `::text` (evita corrimiento de zona horaria);
+  `withBusy` usa `setTimeout` (rAF se pausa en pestañas en segundo plano).
+- Verificado E2E: 942 trx / $1,104,510.37; segregación (operador→403); inmutabilidad; persistencia.
+
 ## v0.4.0 — 2026-08-04
 
 Versión conciliada contra el cálculo manual (`EJEMPLO CALCULO MANUAL.xlsx`): el corte del

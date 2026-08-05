@@ -3,12 +3,20 @@
   "version": "0.4.0",
   "description": "Sistema de Conciliación y Liquidación T+1 (Agregador/POS) — BRD-OP-AGR-001",
   "private": true,
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "@electric-sql/pglite": "^0.5.4",
+    "bcryptjs": "^3.0.3",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.2.0",
+    "pg": "^8.22.0",
+    "xlsx": "^0.18.5"
   }
 }

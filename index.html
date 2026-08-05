@@ -53,6 +53,8 @@
     .login-card input:focus,.login-card select:focus{outline:3px solid var(--accent-soft);border-color:var(--accent)}
     .login-card .btn{width:100%;justify-content:center;padding:12px;display:flex;margin-top:22px}
     .login-foot{font-size:11px;color:#9aa3b8;text-align:center;margin-top:18px}
+    .login-err{background:#FDEDED;border:1px solid #F3B4B4;color:#8a1f1f;font-size:12.5px;padding:9px 12px;border-radius:9px;margin:6px 0 0;display:none}
+    .login-err.show{display:block}
 
     .content{flex:1;padding:28px 34px;max-width:1560px}
     .page-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:20px}
@@ -167,16 +169,13 @@
     <img class="brand-logo" src="/public/logo.png" alt="Polipay" />
     <h1>Conciliación y Liquidación T+1</h1>
     <p class="sub">Agregador / POS · MCEB · Broxel BIN Sponsor</p>
-    <label for="lgNombre">Nombre del usuario</label>
-    <input id="lgNombre" placeholder="Ej. Alfonso García" autocomplete="off" />
-    <label for="lgRol">Rol (segregación de funciones)</label>
-    <select id="lgRol">
-      <option value="admin">Administrador — catálogos y todo</option>
-      <option value="operador">Operador (Operaciones) — calcula, no dispersa</option>
-      <option value="tesoreria">Tesorería — autoriza y marca dispersado</option>
-    </select>
+    <label for="lgEmail">Correo</label>
+    <input id="lgEmail" type="email" placeholder="tu.correo@polipay.io" autocomplete="username" />
+    <label for="lgPass">Contraseña</label>
+    <input id="lgPass" type="password" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()" />
+    <div class="login-err" id="lgErr"></div>
     <button class="btn" onclick="doLogin()">Entrar</button>
-    <div class="login-foot">Prototipo local v0.4.0 · datos en este navegador (localStorage)</div>
+    <div class="login-foot">v0.5.0 · backend + base de datos</div>
   </div>
 </div>
 
@@ -207,204 +206,83 @@
 <div class="busy" id="busy"><div class="box"><div class="spin"></div><div class="msg" id="busyMsg">Procesando…</div></div></div>
 <div class="toast" id="toast"></div>
 
-<script src="/public/vendor/xlsx.full.min.js"></script>
 <script>
 /* ============================================================================
-   Polipay · Sistema de Conciliación y Liquidación T+1  (BRD-OP-AGR-001)
-   MVP Fase 1 — motor exacto (sección 6 / RN-01..16) + catálogos + ingesta +
-   corte + cuadre + layout SPEI + reporte.  Sin dependencias externas.
+   Front DELGADO — solo consume la API y pinta. Sin motor ni base local.
+   Toda la lógica y los datos viven en el backend (server.js).
    ========================================================================= */
 'use strict';
-const LS='polipay_cl_v1';
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const el=(t,a={},...ch)=>{const n=document.createElement(t);for(const k in a){if(k==='class')n.className=a[k];else if(k==='html')n.innerHTML=a[k];else if(k.startsWith('on'))n.addEventListener(k.slice(2),a[k]);else if(a[k]!=null)n.setAttribute(k,a[k]);}ch.flat().forEach(c=>n.append(c==null?'':c));return n;};
 
-/* ---------- utilidades es-MX ---------- */
-const IVA_DEF=0.16;
+/* ---------- formato es-MX (solo presentación) ---------- */
 const round2=n=>Math.round((Number(n)+Number.EPSILON)*100)/100;
 const mxn=n=>new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN'}).format(round2(n||0));
 const num=n=>new Intl.NumberFormat('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2}).format(round2(n||0));
 const pct=n=>new Intl.NumberFormat('es-MX',{minimumFractionDigits:2,maximumFractionDigits:4}).format((n||0)*100)+'%';
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function toast(msg,kind){const t=$('#toast');t.textContent=msg;t.className='toast show'+(kind?' '+kind:'');clearTimeout(toast._t);toast._t=setTimeout(()=>t.className='toast',2600);}
-// Spinner para operaciones pesadas: muestra el overlay, cede 2 frames para que pinte y luego
-// corre fn (que puede ser síncrona/bloqueante como leer un .xlsx grande) sin congelar en silencio.
-function showBusy(msg){ $('#busyMsg').textContent=msg||'Procesando…'; $('#busy').classList.add('show'); }
-function hideBusy(){ $('#busy').classList.remove('show'); }
-async function withBusy(msg,fn){ showBusy(msg);
-  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
-  try{ return await fn(); } finally{ hideBusy(); } }
+const fmtISO=iso=>{if(!iso)return'';const m=String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);return m?`${m[3]}/${m[2]}/${m[1]}`:String(iso);};
+function toast(msg,kind){const t=$('#toast');t.textContent=msg;t.className='toast show'+(kind?' '+kind:'');clearTimeout(toast._t);toast._t=setTimeout(()=>t.className='toast',2800);}
+function showBusy(msg){$('#busyMsg').textContent=msg||'Procesando…';$('#busy').classList.add('show');}
+function hideBusy(){$('#busy').classList.remove('show');}
+async function withBusy(msg,fn){showBusy(msg);await new Promise(r=>setTimeout(r,0));try{return await fn();}finally{hideBusy();}}
 
-/* ---------- fechas dd/mm/yyyy ---------- */
-function parseFecha(str){
-  if(str instanceof Date) return new Date(str.getFullYear(),str.getMonth(),str.getDate());
-  if(!str) return null; str=String(str).trim();
-  let m=str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
-  if(m){let[_,d,mo,y]=m;y=+y;if(y<100)y+=2000;return new Date(y,+mo-1,+d);}
-  m=str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/); // yyyy-mm-dd
-  if(m){let[_,y,mo,d]=m;return new Date(+y,+mo-1,+d);}
-  const d=new Date(str); return isNaN(d)?null:new Date(d.getFullYear(),d.getMonth(),d.getDate());
+/* ---------- capa API ---------- */
+let SES=null; // {id,email,nombre,rol}
+const TOKEN=()=>localStorage.getItem('cl_token');
+async function api(method,path,body){
+  const headers={}; const tok=TOKEN(); if(tok)headers.authorization='Bearer '+tok; let b;
+  if(body instanceof FormData){b=body;} else if(body!=null){headers['content-type']='application/json';b=JSON.stringify(body);}
+  const r=await fetch(path,{method,headers,body:b});
+  if(r.status===401){forzarLogout();throw new Error('sesión expirada');}
+  if(!r.ok){let e;try{e=await r.json();}catch(_){e={error:r.statusText};}const err=new Error(e.error||'error');err.status=r.status;err.data=e;throw err;}
+  const ct=r.headers.get('content-type')||''; return ct.includes('application/json')?r.json():r;
 }
-const fmtFecha=d=>{if(!d)return'';const dd=String(d.getDate()).padStart(2,'0'),mm=String(d.getMonth()+1).padStart(2,'0');return `${dd}/${mm}/${d.getFullYear()}`;};
-const isoFecha=d=>{if(!d)return'';return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
-const addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x;};
-// Convierte una hora a SEGUNDOS del día (incluye segundos si vienen: "23:00:06" → post 23:00).
-// La comparación con la hora de corte usa segundos, para que 23:00:06 SÍ cuente como posterior a 23:00.
-const parseHoraSeg=h=>{if(h==null||h==='')return 0;const m=String(h).trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);return m?((+m[1])*3600+(+m[2])*60+(+(m[3]||0))):0;};
-// Parseo robusto de monto: acepta número, "$1,234.56", "1.234,56" (europeo), "1 234,56", "MXN 1000".
-function parseMonto(v){
-  if(typeof v==='number') return isFinite(v)?v:0;
-  let s=String(v==null?'':v).trim(); if(!s) return 0;
-  const neg=/^\(.*\)$/.test(s)||/-/.test(s);           // paréntesis o signo = negativo
-  s=s.replace(/[^\d.,]/g,'');                            // quita $, letras, espacios, signos
-  if(!s) return 0;
-  if(s.includes(',')&&s.includes('.')){                 // ambos separadores: el último es el decimal
-    if(s.lastIndexOf(',')>s.lastIndexOf('.')) s=s.replace(/\./g,'').replace(',','.'); // 1.234,56
-    else s=s.replace(/,/g,'');                            // 1,234.56
-  } else if(s.includes(',')){                            // solo coma
-    const p=s.split(',');
-    s=(p.length===2 && p[1].length<=2) ? p[0]+'.'+p[1] : s.replace(/,/g,'');
-  }
-  let n=parseFloat(s); if(isNaN(n)) return 0; return neg?-Math.abs(n):n;
-}
-// Normaliza hora desde texto, Date (celda Excel) o número (fracción de día) → "HH:MM"
-function horaStr(v){ if(v==null||v==='')return'';
-  if(v instanceof Date) return String(v.getHours()).padStart(2,'0')+':'+String(v.getMinutes()).padStart(2,'0');
-  if(typeof v==='number'){ let mins=Math.round((v%1)*1440); const h=Math.floor(mins/60)%24,m=mins%60; return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0'); }
-  return String(v).trim(); }
-
-/* ============================================================================
-   MOTOR DE CÁLCULO  (funciones puras — expuestas en window.MOTOR para test)
-   ========================================================================= */
-// Quita acentos/diacríticos y normaliza (maneja é NFC vs NFD de exportaciones de Excel).
-function normStr(s){ return String(s==null?'':s).trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g,' '); }
-// Nomenclatura oficial: American Express, Crédito, Débito, Internacional (+ alias/códigos comunes).
-const PROD={
-  'debito':'tdd','tdd':'tdd','td':'tdd','tarjeta de debito':'tdd','debito nacional':'tdd','nacional debito':'tdd',
-  'credito':'tdc','tdc':'tdc','tc':'tdc','tarjeta de credito':'tdc','credito nacional':'tdc','nacional credito':'tdc',
-  'american express':'amex','americanexpress':'amex','amex':'amex','ax':'amex',
-  'internacional':'int','int':'int','internac':'int','intl':'int','international':'int' };
-function prodKey(p){ if(p==null||p==='') return null; return PROD[normStr(p)]||null; }
-
-let _ferKey=null,_ferSet=null;
-function feriadoSet(feriados){ const arr=feriados||[]; const key=arr.join(','); if(key===_ferKey&&_ferSet) return _ferSet;
-  _ferKey=key; _ferSet=new Set(arr.map(f=>typeof f==='string'?f:isoFecha(parseFecha(f)))); return _ferSet; }
-function esHabil(d,fset){ const w=d.getDay(); if(w===0||w===6) return false; return !fset.has(isoFecha(d)); }
-// n-ésimo día hábil DESPUÉS de `base` (no cuenta base)
-function nEsimoDiaHabil(base,n,fset){ let d=new Date(base),c=0; let guard=0;
-  while(c<n && guard++<3660){ d=addDays(d,1); if(esHabil(d,fset)) c++; } return d; }
-
-// RN-12: fecha de liquidación T+n por producto con hora de corte
-function fechaLiquidacion(fecha,hora,producto,params,feriados){
-  const pk=prodKey(producto);
-  const esAmex = pk==='amex';
-  const pp = esAmex ? params.prodParams.amex : params.prodParams.nacional;
-  const fset=feriadoSet(feriados);
-  let base=parseFecha(fecha); if(!base) return null;
-  if(parseHoraSeg(hora) > parseHoraSeg(pp.corte)) base=addDays(base,1);
-  return nEsimoDiaHabil(base, pp.n, fset);
+async function descargar(path,filename){
+  const r=await fetch(path,{headers:{authorization:'Bearer '+TOKEN()}});
+  if(!r.ok){let e;try{e=await r.json();}catch(_){e={};}const err=new Error(e.error||'error');err.status=r.status;err.data=e;throw err;}
+  const blob=await r.blob();const u=URL.createObjectURL(blob);const a=el('a',{href:u,download:filename});document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1500);
 }
 
-const ult3=af=>{const s=String(af||'').replace(/\D/g,'');return s.slice(-3).padStart(3,'0');};
-const concepto=(af,idGrupo)=>`DISPERSION ${ult3(af)}CPPX00${idGrupo}`;
-
-// RN-02..RN-11 + sección 6.  txs: transacciones APROBADAS de un CLIENTE+AFILIACION del corte.
-// cat: {tasas:{pac_tdd,...,costo_x_trx,pct_banca}, costos:{int_tdd,int_tdc,int_amex,int_int,fee_broxel}}
-// ajustes: {financiamientos, contracargos_dom, contracargos_amex}
-function calcularCompensacion(txs,cat,params,ajustes){
-  const IVA=params.IVA;
-  const t=cat.tasas||{}, c=cat.costos||{}, aj=ajustes||{};
-  const fin=+aj.financiamientos||0, cc_dom=+aj.contracargos_dom||0, cc_amex=+aj.contracargos_amex||0;
-  let num_trx=txs.length, m_tdd=0,m_tdc=0,m_amex=0,m_int=0;
-  for(const x of txs){ const k=prodKey(x.producto); const mo=+x.monto||0;
-    if(k==='tdd')m_tdd+=mo; else if(k==='tdc')m_tdc+=mo; else if(k==='amex')m_amex+=mo; else if(k==='int')m_int+=mo; }
-  // costos adquirente (RN-04)
-  const _int_tdd=m_tdd*(c.int_tdd||0), _int_tdc=m_tdc*(c.int_tdc||0),
-        _int_amex=m_amex*(c.int_amex!=null?c.int_amex:params.tasa_int_amex),
-        _int_int=m_int*(c.int_int!=null?c.int_int:params.tasa_int_int);
-  const feeB=(c.fee_broxel!=null?c.fee_broxel:params.fee_broxel);
-  const broxel=(m_tdd+m_tdc+m_amex+m_int)*feeB;
-  // comisiones ingreso (RN-05/RN-06)
-  const com_tdd=m_tdd*(t.pac_tdd||0), com_tdc=m_tdc*(t.pac_tdc||0),
-        com_amex=m_amex*(t.pac_amex||0), com_int=m_int*(t.pac_int||0),
-        com_trx=num_trx*(t.costo_x_trx||0);
-  const iva_com_tdd=com_tdd*IVA, iva_com_tdc=com_tdc*IVA, iva_com_amex=com_amex*IVA,
-        iva_com_int=com_int*IVA, iva_com_trx=com_trx*IVA;
-  // importe a compensar (RN-07)
-  const comp_tdd=m_tdd-(com_tdd+iva_com_tdd)-(com_trx+iva_com_trx);
-  const comp_tdc=m_tdc-(com_tdc+iva_com_tdc);
-  const comp_amex=m_amex-(com_amex+iva_com_amex);
-  const comp_int=m_int-(com_int+iva_com_int);
-  const comp_total=comp_tdd+comp_tdc+comp_amex+comp_int;
-  // banca Telematic (RN-08) — informativo total
-  const pct_banca=(t.pct_banca||0);
-  const banca=comp_total*pct_banca, iva_banca=banca*IVA;
-  // importe a dispersar (RN-09, regla confirmada: cada CC una vez en su bloque)
-  const base_dom=comp_tdd+comp_tdc+comp_int;
-  const banca_dom=base_dom*pct_banca, iva_banca_dom=banca_dom*IVA;
-  const disp_dom=base_dom-banca_dom-iva_banca_dom-fin-cc_dom;
-  const banca_amex=comp_amex*pct_banca, iva_banca_amex=banca_amex*IVA;
-  const disp_amex=comp_amex-banca_amex-iva_banca_amex-cc_amex;
-  const disp_total=disp_dom+disp_amex;
-  // comprobación (RN-10)
-  const comprobacion=disp_dom+disp_amex;
-  const diferencia=comprobacion-disp_total;
-  // utilidad (RN-11)
-  const utilidad=(com_tdd+com_tdc+com_amex+com_int)-(_int_tdd+_int_tdc+_int_amex+_int_int)-broxel;
-  return {num_trx,m_tdd,m_tdc,m_amex,m_int,
-    int_tdd:_int_tdd,int_tdc:_int_tdc,int_amex:_int_amex,int_int:_int_int,broxel,
-    com_tdd,com_tdc,com_amex,com_int,com_trx,
-    iva_com_tdd,iva_com_tdc,iva_com_amex,iva_com_int,iva_com_trx,
-    comp_tdd,comp_tdc,comp_amex,comp_int,comp_total,
-    pct_banca,banca,iva_banca,
-    financiamientos:fin,contracargos_dom:cc_dom,contracargos_amex:cc_amex,
-    base_dom,disp_dom,disp_amex,disp_total,comprobacion,diferencia,utilidad};
-}
-window.MOTOR={fechaLiquidacion,calcularCompensacion,concepto,nEsimoDiaHabil,prodKey,parseFecha,fmtFecha};
-
-/* ============================================================================
-   ESTADO  (localStorage)
-   ========================================================================= */
-let DB=null, SES=null;
-const PARAMS_DEF=()=>({IVA:0.16,tasa_int_amex:0.0247,tasa_int_int:0.0302,fee_broxel:0.0028,
-  prodParams:{nacional:{n:1,corte:'23:00'},amex:{n:3,corte:'23:00'}}});
-function emptyDB(){return{
-  grupos:[], afiliaciones:[], afilGrupo:[], costos:[], cuentas:[], bancos:[], feriados:[],
-  transacciones:[], cortes:[], params:PARAMS_DEF(), bitacora:[], _seq:{tx:1,corte:1}
-};}
-function load(){ try{DB=JSON.parse(localStorage.getItem(LS));}catch(e){DB=null;}
-  if(!DB){DB=emptyDB();save();}
-  DB.params=Object.assign(PARAMS_DEF(),DB.params||{});
-  DB.params.prodParams=Object.assign(PARAMS_DEF().prodParams,DB.params.prodParams||{});
-  DB._seq=DB._seq||{tx:1,corte:1};
-  // Migración una sola vez: AMEX pasó de corte 20:00 (BRD) a 23:00 (operación real).
-  // Actualiza el valor persistido y recalcula fechas de liquidación ya cargadas.
-  if(!DB._migAmex23){
-    if(DB.params.prodParams.amex && DB.params.prodParams.amex.corte==='20:00') DB.params.prodParams.amex.corte='23:00';
-    DB._migAmex23=true; save();
-    if(DB.transacciones && DB.transacciones.length) recalcularFechasLiq();
-  }
-}
-function save(){ localStorage.setItem(LS,JSON.stringify(DB)); }
-function bit(accion,detalle){ DB.bitacora.unshift({ts:new Date().toISOString(),usuario:SES?SES.nombre:'—',rol:SES?SES.rol:'—',accion,detalle:detalle||''}); if(DB.bitacora.length>1000)DB.bitacora.length=1000; save(); }
-const nextId=k=>{DB._seq[k]=(DB._seq[k]||1);return DB._seq[k]++;};
-
-/* ---------- sesión / roles ---------- */
+/* ---------- roles ---------- */
 const ROLES={admin:'Administrador',operador:'Operador (Operaciones)',tesoreria:'Tesorería'};
-function can(cap){ if(!SES)return false; const r=SES.rol;
-  const M={
-    catalogos:['admin'], ingesta:['admin','operador'], corte:['admin','operador'],
-    validar:['admin','tesoreria'], dispersar:['admin','tesoreria'],
-    params:['admin'], ver:['admin','operador','tesoreria']
-  };
-  return (M[cap]||[]).includes(r);
+function can(cap){if(!SES)return false;const M={catalogos:['admin'],ingesta:['admin','operador'],corte:['admin','operador'],validar:['admin','tesoreria'],dispersar:['admin','tesoreria'],params:['admin'],ver:['admin','operador','tesoreria']};return (M[cap]||[]).includes(SES.rol);}
+
+/* ---------- login ---------- */
+async function doLogin(){
+  const email=$('#lgEmail').value.trim(), password=$('#lgPass').value;
+  const errBox=$('#lgErr'); errBox.className='login-err';
+  if(!email||!password){errBox.textContent='Escribe correo y contraseña';errBox.className='login-err show';return;}
+  try{
+    const r=await withBusy('Entrando…',()=>fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,password})}).then(x=>x.json().then(j=>({ok:x.ok,j}))));
+    if(!r.ok){errBox.textContent=r.j.error==='credenciales'?'Correo o contraseña incorrectos':('Error: '+(r.j.error||''));errBox.className='login-err show';return;}
+    localStorage.setItem('cl_token',r.j.token); localStorage.setItem('cl_user',JSON.stringify(r.j.user)); SES=r.j.user;
+    mountApp();
+  }catch(e){errBox.textContent='No se pudo conectar con el servidor';errBox.className='login-err show';}
 }
-function doLogin(){ const nombre=$('#lgNombre').value.trim(); const rol=$('#lgRol').value;
-  if(!nombre){toast('Escribe tu nombre','err');return;}
-  SES={nombre,rol}; sessionStorage.setItem('cl_ses',JSON.stringify(SES));
-  bit('login',`${nombre} (${ROLES[rol]})`); mountApp();
-}
-function logout(){ SES=null; sessionStorage.removeItem('cl_ses'); $('#app').style.display='none'; $('#loginScreen').style.display='grid'; }
+function logout(){localStorage.removeItem('cl_token');localStorage.removeItem('cl_user');SES=null;$('#app').style.display='none';$('#loginScreen').style.display='grid';}
+function forzarLogout(){logout();toast('Sesión expirada, vuelve a entrar','err');}
+
+/* ---------- modales / util UI ---------- */
+function modal(title,bodyNode,footNode,wide){const m=$('#modal');m.className='modal'+(wide?' wide':'');m.innerHTML='';
+  m.append(el('div',{class:'mh'},el('h3',{},title),el('button',{class:'x',onclick:closeModal},'×')));
+  const mb=el('div',{class:'mb'});mb.append(bodyNode);m.append(mb);
+  if(footNode){const mf=el('div',{class:'mf'});mf.append(footNode);m.append(mf);}
+  $('#ov').classList.add('show');}
+function closeModal(){$('#ov').classList.remove('show');}
+$('#ov').addEventListener('click',e=>{if(e.target.id==='ov')closeModal();});
+function fld(label,input){return el('label',{class:'field'},label,input);}
+function cards(items){const c=el('div',{class:'cards'});items.forEach(([label,value,hint])=>c.append(el('div',{class:'card'},el('div',{class:'label'},label),el('div',{class:'value'},String(value)),hint?el('div',{class:'hint'},hint):'')));return c;}
+function tableWrap(head,rows,opts){const w=el('div',{class:'tablewrap'});const t=el('table');const thead=el('thead');const htr=el('tr');
+  head.forEach(h=>{const isNum=typeof h==='object';htr.append(el('th',{class:(isNum?'num':'')},isNum?h.t:h));});thead.append(htr);t.append(thead);
+  const tb=el('tbody');
+  if(!rows.length)tb.append(el('tr',{},el('td',{colspan:head.length},el('div',{class:'empty'},(opts&&opts.empty)||'Sin registros'))));
+  rows.forEach(r=>{const tr=el('tr',{});if(r._onclick){tr.style.cursor='pointer';tr.addEventListener('click',r._onclick);}
+    r.forEach(cell=>{if(cell&&typeof cell==='object'&&'num'in cell)tr.append(el('td',{class:'num',html:cell.num}));else tr.append(el('td',{html:cell==null?'':String(cell)}));});tb.append(tr);});
+  t.append(tb);w.append(t);return w;}
+const badgeEstado=e=>{const m={'Borrador':'g','Validado':'b','Dispersado':'v','Cerrado':'ok'};return `<span class="badge ${m[e]||'g'}">${esc(e)}</span>`;};
+const badgeProd=p=>{const m={'Débito':'b','Crédito':'v','American Express':'g','Internacional':'w'};return `<span class="badge ${m[p]||'d'}">${esc(p||'—')}</span>`;};
+function errMsg(e){const d=e&&e.data||{};if(e.status===403)return'No tienes permiso para esta acción ('+SES.rol+')';if(d.error==='no_cuadra_o_bloqueado')return'El corte no cuadra o tiene órdenes sin CLABE';if(d.error==='corte_inmutable')return'El corte ya está '+d.estado+' (inmutable)';if(d.error==='transicion_invalida')return'Transición no válida (estado '+d.estado+')';return d.error||e.message||'Error';}
 
 /* ============================================================================
    NAV / ROUTER
@@ -413,757 +291,313 @@ let VIEW='dashboard';
 const NAV=[
   {sec:'Operación'},
   {id:'dashboard',t:'Panel',ic:'ic_01'},
-  {id:'ingesta',t:'Ingesta de transacciones',ic:'ic_04',cap:'ver'},
-  {id:'cortes',t:'Cortes y liquidación',ic:'ic_06',cap:'ver'},
+  {id:'ingesta',t:'Ingesta de transacciones',ic:'ic_04'},
+  {id:'cortes',t:'Cortes y liquidación',ic:'ic_06'},
   {sec:'Catálogos'},
-  {id:'grupos',t:'Grupos y afiliaciones',ic:'ic_09',cap:'ver'},
-  {id:'cuentas',t:'Cuentas de liquidación',ic:'ic_11',cap:'ver'},
-  {id:'bancos',t:'Bancos SPEI',ic:'ic_12',cap:'ver'},
-  {id:'feriados',t:'Días feriados',ic:'ic_13',cap:'ver'},
+  {id:'grupos',t:'Grupos y afiliaciones',ic:'ic_09'},
+  {id:'cuentas',t:'Cuentas de liquidación',ic:'ic_11'},
+  {id:'bancos',t:'Bancos SPEI',ic:'ic_12'},
+  {id:'feriados',t:'Días feriados',ic:'ic_13'},
   {sec:'Sistema'},
-  {id:'parametros',t:'Parámetros',ic:'ic_16',cap:'ver'},
-  {id:'pruebas',t:'Auto-pruebas del motor',ic:'ic_18'},
-  {id:'bitacora',t:'Bitácora',ic:'ic_20',cap:'ver'},
+  {id:'parametros',t:'Parámetros',ic:'ic_16'},
+  {id:'bitacora',t:'Bitácora',ic:'ic_20'},
 ];
-function renderNav(){ const nav=$('#nav'); nav.innerHTML='';
-  NAV.forEach(item=>{
-    if(item.sec){ nav.append(el('div',{class:'navlbl'},item.sec)); return; }
-    const a=el('a',{class:VIEW===item.id?'active':'',onclick:()=>go(item.id)},
-      el('img',{src:`/public/brand-icons/${item.ic}.png`,alt:''}), el('span',{},item.t));
-    const cnt=navCount(item.id); if(cnt) a.append(el('span',{class:'count'},cnt));
-    nav.append(a);
-  });
+function renderNav(){const nav=$('#nav');nav.innerHTML='';NAV.forEach(item=>{
+  if(item.sec){nav.append(el('div',{class:'navlbl'},item.sec));return;}
+  nav.append(el('a',{class:VIEW===item.id?'active':'',onclick:()=>go(item.id)},el('img',{src:`/public/brand-icons/${item.ic}.png`,alt:''}),el('span',{},item.t)));});}
+const TITLES={dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],bitacora:['Bitácora','Trazabilidad de acciones']};
+function go(v){VIEW=v;render();}
+async function render(){renderNav();const[t,s]=TITLES[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
+  const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
+  try{await ({dashboard:vDashboard,ingesta:vIngesta,cortes:vCortes,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,bitacora:vBitacora}[VIEW]||vDashboard)(v);}
+  catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
 }
-function navCount(id){ if(id==='ingesta')return DB.transacciones.length||''; if(id==='cortes')return DB.cortes.length||''; if(id==='grupos')return DB.grupos.length||''; return ''; }
-function go(v){ VIEW=v; render(); }
-const TITLES={dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) y cálculo de fecha de liquidación'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],pruebas:['Auto-pruebas del motor','Casos verificados del BRD (RF-02 y anexo 13.3)'],bitacora:['Bitácora','Trazabilidad de acciones']};
-function render(){ renderNav();
-  const[t,s]=TITLES[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
-  const v=$('#view'); v.innerHTML='';
-  ({dashboard:vDashboard,ingesta:vIngesta,cortes:vCortes,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,pruebas:vPruebas,bitacora:vBitacora}[VIEW]||vDashboard)(v);
-}
-
-/* ============================================================================
-   MODALES
-   ========================================================================= */
-function modal(title,bodyNode,footNode,wide){ const m=$('#modal'); m.className='modal'+(wide?' wide':'');
-  m.innerHTML='';
-  m.append(el('div',{class:'mh'},el('h3',{},title),el('button',{class:'x',onclick:closeModal},'×')));
-  const mb=el('div',{class:'mb'}); mb.append(bodyNode); m.append(mb);
-  if(footNode){const mf=el('div',{class:'mf'});mf.append(footNode);m.append(mf);}
-  $('#ov').classList.add('show');
-}
-function closeModal(){ $('#ov').classList.remove('show'); }
-$('#ov').addEventListener('click',e=>{if(e.target.id==='ov')closeModal();});
-
-// Modal genérico de importación (archivo Excel/CSV o pegado). importer(objs)->n
-function importModal(title,help,placeholder,importer,unidad){
-  const body=el('div',{}); body.append(el('div',{class:'banner'},help));
-  const info=el('div',{class:'req-note'});
-  const ta=el('textarea',{style:'min-height:140px',placeholder});
-  let pending=null;
-  const file=el('input',{type:'file',accept:'.xlsx,.xls,.csv,.tsv,.txt'});
-  file.addEventListener('change',async()=>{ pending=null; info.textContent='';
-    if(file.files[0]){ try{ pending=await withBusy('Leyendo archivo…',()=>readTabular(file.files[0])); info.innerHTML=`Archivo: <b>${esc(file.files[0].name)}</b> — ${pending.length} fila(s).`; ta.value=''; }
-      catch(e){ info.textContent='Error al leer: '+e.message; } } });
-  body.append(el('label',{class:'field'},'Archivo Excel (.xlsx) o CSV',file),info,el('label',{class:'field'},'…o pega CSV',ta));
-  const foot=el('div',{}); foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
-    const objs=(pending&&pending.length)?pending:csvToObjects(ta.value);
-    if(!objs.length){toast('Sube un archivo o pega datos','err');return;}
-    const n=await withBusy('Importando…',async()=>importer(objs)); closeModal(); render(); toast(`${n} ${unidad} importadas`,'ok');
-  }},'Importar'));
-  modal(title,body,foot,true);
-}
-
-/* ============================================================================
-   HELPERS CSV
-   ========================================================================= */
-function parseCSV(text){ // soporta , o tab, comillas
-  text=text.replace(/\r\n?/g,'\n').replace(/^﻿/,''); const rows=[]; let i=0,f='',row=[],q=false;
-  const delim = (text.split('\n')[0]||'').includes('\t') && !(text.split('\n')[0]||'').includes(',') ? '\t' : ',';
-  while(i<text.length){ const ch=text[i];
-    if(q){ if(ch==='"'){ if(text[i+1]==='"'){f+='"';i+=2;continue;} q=false;i++;continue;} f+=ch;i++;continue; }
-    if(ch==='"'){q=true;i++;continue;}
-    if(ch===delim){row.push(f);f='';i++;continue;}
-    if(ch==='\n'){row.push(f);rows.push(row);row=[];f='';i++;continue;}
-    f+=ch;i++;
-  }
-  if(f!==''||row.length){row.push(f);rows.push(row);}
-  return rows.filter(r=>r.some(c=>String(c).trim()!==''));
-}
-// Normaliza un encabezado: sin acentos, minúsculas, guion_bajo (ej. "Número de Afiliación" → numero_de_afiliacion)
-function normHeader(h){ return normStr(h).replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,''); }
-function csvToObjects(text){ const rows=parseCSV(text); if(!rows.length)return[]; const head=rows[0].map(normHeader);
-  return rows.slice(1).map(r=>{const o={};head.forEach((h,idx)=>o[h]=(r[idx]!=null?String(r[idx]).trim():''));return o;}); }
-function toCSV(head,rows){ const q=v=>{v=v==null?'':String(v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
-  return [head.map(q).join(','),...rows.map(r=>r.map(q).join(','))].join('\n'); }
-function download(name,text,mime){ const b=new Blob(['﻿'+text],{type:mime||'text/csv;charset=utf-8'});
-  const u=URL.createObjectURL(b); const a=el('a',{href:u,download:name}); document.body.append(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u),1500); }
-
-/* ---------- Excel (SheetJS) ---------- */
-// Genera y descarga un .xlsx. sheets: [{name, aoa}]. Los valores string en el aoa
-// se guardan como texto (preserva CLABE con ceros); los números como número.
-function saveXLSX(filename, sheets){
-  const wb=XLSX.utils.book_new();
-  sheets.forEach(s=>{ const ws=XLSX.utils.aoa_to_sheet(s.aoa);
-    if(s.cols) ws['!cols']=s.cols;
-    XLSX.utils.book_append_sheet(wb, ws, (s.name||'Hoja1').slice(0,31)); });
-  XLSX.writeFile(wb, filename);
-}
-// aoa (matriz) → objetos con encabezados normalizados (minúsculas, guion bajo). Conserva Date y números.
-function aoaToObjects(aoa){ if(!aoa||!aoa.length)return[];
-  const head=aoa[0].map(normHeader);
-  return aoa.slice(1).filter(r=>r&&r.some(c=>c!=null&&String(c).trim()!==''))
-    .map(r=>{const o={};head.forEach((h,i)=>o[h]=(r[i]!=null?r[i]:''));return o;}); }
-// Lee un archivo (.xlsx/.xls o .csv/.tsv/.txt) → array de objetos. Fechas como Date, resto crudo.
-async function readTabular(file){
-  const name=(file.name||'').toLowerCase();
-  if(/\.(csv|tsv|txt)$/.test(name)) return csvToObjects(await file.text());
-  const buf=await file.arrayBuffer();
-  const wb=XLSX.read(buf,{type:'array',cellDates:true});
-  const ws=wb.Sheets[wb.SheetNames[0]];
-  const aoa=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:true});
-  return aoaToObjects(aoa);
-}
-
-/* ============================================================================
-   RESOLUCIÓN DE CATÁLOGO
-   ========================================================================= */
-function grupoPorNombre(nombre){ return DB.grupos.find(g=>String(g.nombre_cliente).trim().toLowerCase()===String(nombre).trim().toLowerCase()); }
-function grupoById(id){ return DB.grupos.find(g=>String(g.id_grupo)===String(id)); }
-function tasasDe(idGrupo,afil){ return DB.afilGrupo.find(a=>String(a.id_grupo)===String(idGrupo)&&String(a.numero_afiliacion)===String(afil)); }
-function costosDe(afil){ return DB.costos.find(c=>String(c.numero_afiliacion)===String(afil)); }
-// Resuelve la cuenta de liquidación por AFILIACIÓN dentro del grupo; si no hay una
-// específica por afiliación, cae a una cuenta del grupo sin afiliación (default) o la primera.
-function cuentaDe(idGrupo,afil){
-  const L=DB.cuentas;
-  if(afil){ const m=L.find(c=>String(c.id_grupo)===String(idGrupo)&&String(c.numero_afiliacion||'')===String(afil)); if(m)return m; }
-  return L.find(c=>String(c.id_grupo)===String(idGrupo)&&!String(c.numero_afiliacion||''))
-      || L.find(c=>String(c.id_grupo)===String(idGrupo));
-}
-function bancoCodigo(nombre){ const b=DB.bancos.find(b=>String(b.nombre).trim().toLowerCase()===String(nombre).trim().toLowerCase()); return b?b.codigo_spei:''; }
+function setView(v,node){v.innerHTML='';v.append(node);}
 
 /* ============================================================================
    VISTAS
    ========================================================================= */
-function vDashboard(v){
-  const tx=DB.transacciones, apro=tx.filter(t=>String(t.estatus).toUpperCase()==='APROBADO');
-  const montoTot=apro.reduce((s,t)=>s+(+t.monto||0),0);
-  const cortes=DB.cortes;
-  const cuadrados=cortes.filter(c=>c._cuadra).length;
+async function vDashboard(v){
+  const [cortes,tx]=await Promise.all([api('GET','/api/cortes'),api('GET','/api/transacciones')]);
+  v.innerHTML='';
   v.append(cards([
-    ['Transacciones cargadas',tx.length,'','ic_04'],
-    ['Aprobadas (liquidables)',apro.length,mxn(montoTot)],
-    ['Grupos activos',DB.grupos.filter(g=>g.activo!==false).length],
-    ['Cortes generados',cortes.length, cortes.length?`${cuadrados} cuadran`:''],
+    ['Transacciones cargadas',tx.total],
+    ['Aprobadas',tx.aprobadas,mxn(tx.montoAprobado)],
+    ['Cortes generados',cortes.length,cortes.filter(c=>c.cuadra).length+' cuadran'],
+    ['Cancelaciones',tx.diagnostico?tx.diagnostico.cancelaciones:0,tx.diagnostico?mxn(tx.diagnostico.montoCancel):''],
   ]));
-  // guía de arranque
-  const pend=[];
-  if(!DB.bancos.length)pend.push('Cargar catálogo de <b>Bancos SPEI</b>');
-  if(!DB.grupos.length)pend.push('Dar de alta <b>Grupos y afiliaciones</b> (tasas, costos)');
-  if(!DB.cuentas.length)pend.push('Registrar <b>Cuentas de liquidación</b> (CLABE)');
-  if(!DB.transacciones.length)pend.push('Hacer <b>ingesta de transacciones</b> (CSV del gateway)');
-  const p=el('div',{class:'panel'}); p.append(el('h3',{},'Guía de arranque'));
-  if(pend.length){ const ul=el('div',{class:'banner'}); ul.innerHTML='Para tu primer corte: <ol style="margin:8px 0 0 18px;padding:0">'+pend.map(x=>`<li style="margin:3px 0">${x}</li>`).join('')+'</ol>'; p.append(ul); }
-  else p.append(el('div',{class:'banner ok'},'Catálogos listos. Ve a “Cortes y liquidación” para generar un corte.'));
+  const p=el('div',{class:'panel'});p.append(el('h3',{},'Guía de arranque'));
+  const [bancos,grupos,cuentas]=await Promise.all([api('GET','/api/catalogo/bancos'),api('GET','/api/catalogo/grupos'),api('GET','/api/catalogo/cuentas')]);
+  const pend=[];if(!bancos.length)pend.push('Cargar <b>Bancos SPEI</b>');if(!grupos.length)pend.push('Dar de alta <b>Grupos y afiliaciones</b>');if(!cuentas.length)pend.push('Registrar <b>Cuentas de liquidación</b>');if(!tx.total)pend.push('Hacer <b>ingesta de transacciones</b>');
+  if(pend.length)p.append(el('div',{class:'banner',html:'Para tu primer corte: <ol style="margin:8px 0 0 18px">'+pend.map(x=>`<li style="margin:3px 0">${x}</li>`).join('')+'</ol>'}));
+  else p.append(el('div',{class:'banner ok'},'Catálogos listos. Ve a “Cortes y liquidación”.'));
   v.append(p);
-  // últimos cortes
-  if(cortes.length){ const pc=el('div',{class:'panel'}); pc.append(el('h3',{},'Últimos cortes'));
-    pc.append(tableWrap(['Corte','Fecha liq.','Estado','Grupos','A dispersar','Cuadre'],
-      cortes.slice(-8).reverse().map(c=>[`#${c.id_corte}`,c.fecha_liq,badgeEstado(c.estado),c.calculos.length,{num:mxn(c.total_disp)},c._cuadra?'<span class="flagok">✓ 0.00</span>':'<span class="flagbad">✗</span>'])));
-    v.append(pc);
-  }
+  if(cortes.length){const pc=el('div',{class:'panel'});pc.append(el('h3',{},'Últimos cortes'));
+    pc.append(tableWrap(['Corte','Fecha liq.','Estado',{t:'Trx'},{t:'A dispersar'},'Cuadre'],cortes.slice(0,8).map(c=>{const r=[`#${c.id_corte}`,c.fecha_liq,badgeEstado(c.estado),{num:c.n_trx},{num:mxn(c.total_disp)},c.cuadra?'<span class="flagok">✓</span>':'<span class="flagbad">✗</span>'];r._onclick=()=>abrirCorte(c.id_corte);return r;})));
+    v.append(pc);}
 }
-function cards(items){ const c=el('div',{class:'cards'});
-  items.forEach(([label,value,hint,ic])=>{ c.append(el('div',{class:'card'},el('div',{class:'label'},label),el('div',{class:'value'},String(value)),hint?el('div',{class:'hint'},hint):'')); });
-  return c;
-}
-function tableWrap(head,rows,opts){ const w=el('div',{class:'tablewrap'}); const t=el('table');
-  const thead=el('thead'); const htr=el('tr'); head.forEach(h=>{const isNum=typeof h==='object'; htr.append(el('th',{class:(isNum?'num':'')},isNum?h.t:h));}); thead.append(htr); t.append(thead);
-  const tb=el('tbody');
-  if(!rows.length){ tb.append(el('tr',{},el('td',{colspan:head.length},el('div',{class:'empty'},(opts&&opts.empty)||'Sin registros')))); }
-  rows.forEach(r=>{ const tr=el('tr',{}); if(r._onclick){tr.style.cursor='pointer';tr.addEventListener('click',r._onclick);}
-    r.forEach(cell=>{ if(cell&&typeof cell==='object'&&'num'in cell){tr.append(el('td',{class:'num',html:cell.num}));}
-      else tr.append(el('td',{html:cell==null?'':String(cell)})); }); tb.append(tr); });
-  t.append(tb); w.append(t); return w;
-}
-function badgeEstado(e){ const m={'Borrador':'g','Validado':'b','Dispersado':'v','Cerrado':'ok'}; return `<span class="badge ${m[e]||'g'}">${esc(e)}</span>`; }
 
 /* ---------- INGESTA ---------- */
-const TX_COLS=['fecha','hora','cliente','comercio','numero_afiliacion','estatus','metodo','producto','monto','folio','referencia','autorizacion','terminal'];
-function vIngesta(v){
-  if(can('ingesta')){
-    $('#pageAction').append(el('button',{class:'btn secondary sm',onclick:tplTransacciones},'⬇ Plantilla Excel'),el('span',{},' '),
-      DB.transacciones.length?el('button',{class:'btn secondary sm',onclick:exportarTransacciones},'⬇ Exportar cargadas'):'',el('span',{},' '),
-      DB.transacciones.length?el('button',{class:'btn secondary sm',onclick:async()=>{const n=await withBusy('Recalculando fechas…',async()=>recalcularFechasLiq());toast(`${n} fecha(s) recalculada(s) con los parámetros vigentes`,'ok');render();}},'↻ Recalcular fechas'):'',el('span',{},' '),
-      el('button',{class:'btn',onclick:openIngesta},'Cargar transacciones'));
-  }
-  const P=DB.params;
-  v.append(el('div',{class:'banner',html:`<b>Fecha de liquidación</b> — se calcula al cargar y con estos parámetros (Sistema → Parámetros): Nacional/INT → T+${P.prodParams.nacional.n}, corte ${P.prodParams.nacional.corte} · AMEX → T+${P.prodParams.amex.n}, corte ${P.prodParams.amex.corte} · Feriados: ${DB.feriados.length}. Si cambias los parámetros, se recalculan automáticamente.`}));
-  const tx=DB.transacciones;
-  const sinProd=tx.filter(t=>!prodKey(t.producto));
-  const sinLiq=tx.filter(t=>String(t.estatus).toUpperCase()==='APROBADO' && !t.fecha_liq);
+async function vIngesta(v){
+  if(can('ingesta'))$('#pageAction').append(
+    el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/plantilla/transacciones.xlsx','plantilla_transacciones.xlsx')},'⬇ Plantilla Excel'),el('span',{},' '),
+    el('button',{class:'btn',onclick:openIngesta},'Cargar transacciones'));
+  const d=await api('GET','/api/transacciones');const dg=d.diagnostico||{};
+  v.innerHTML='';
+  const P=await api('GET','/api/catalogo/params');
   v.append(cards([
-    ['Total cargadas',tx.length],
-    ['Aprobadas',tx.filter(t=>String(t.estatus).toUpperCase()==='APROBADO').length],
-    ['Monto aprobado',mxn(tx.filter(t=>String(t.estatus).toUpperCase()==='APROBADO').reduce((s,t)=>s+(+t.monto||0),0))],
-    ['Producto no reconocido',sinProd.length],
+    ['Total cargadas',d.total],
+    ['Aprobadas',d.aprobadas],
+    ['Monto aprobado',mxn(d.montoAprobado)],
+    ['Cancelaciones',dg.cancelaciones||0,mxn(dg.montoCancel||0)],
   ]));
-  if(tx.length) diagIngesta(v);
+  v.append(el('div',{class:'banner',html:`<b>Fecha de liquidación</b> (la calcula el servidor): Nacional/INT → T+${P.prodParams.nacional.n} corte ${P.prodParams.nacional.corte} · AMEX → T+${P.prodParams.amex.n} corte ${P.prodParams.amex.corte}. Cámbialo en Parámetros.`}));
+  if(d.total)diagIngesta(v,dg);
   const p=el('div',{class:'panel'});
-  p.append(el('h3',{},'Transacciones',el('span',{class:'right'}, tx.length?el('button',{class:'btn ghost sm',onclick:()=>{if(confirm('¿Vaciar todas las transacciones cargadas? (No borra los cortes ya generados)')){DB.transacciones=[];DB._seq.tx=1;bit('ingesta','vació transacciones');save();render();}}},'Vaciar transacciones'):'')));
-  const rows=tx.slice(0,400).map(t=>{ const neg=(+t.monto)<0; const inval=!/^\d+$/.test(String(t.numero_afiliacion))||!prodKey(t.producto)||!Number.isFinite(+t.monto);
-    const estatus = String(t.estatus).toUpperCase()==='APROBADO'?'<span class="badge ok">APROBADO</span>':`<span class="pill">${esc(t.estatus)}</span>`;
-    return [fmtFecha(parseFecha(t.fecha)),t.hora||'',esc(t.cliente),esc(t.numero_afiliacion),badgeProd(t.producto),estatus + (neg?' <span class="badge w">cancelación</span>':''),{num:(neg?'<span style="color:var(--danger)">':'')+mxn(t.monto)+(neg?'</span>':'')},t.fecha_liq?fmtFecha(parseFecha(t.fecha_liq)):(inval?'<span class="flagbad">revisar</span>':'')]; });
-  p.append(tableWrap(['Fecha','Hora','Cliente','Afiliación','Producto','Estatus',{t:'Monto'},'Fecha liq.'],rows,{empty:'Aún no hay transacciones. Usa “Cargar transacciones”.'}));
-  if(tx.length>400)p.append(el('div',{class:'muted',style:'margin-top:8px'},`Mostrando 400 de ${tx.length}.`));
+  p.append(el('h3',{},'Transacciones',el('span',{class:'right'},can('ingesta')&&d.total?el('button',{class:'btn ghost sm',onclick:async()=>{if(confirm('¿Vaciar todas las transacciones? (No borra cortes)')){await api('DELETE','/api/transacciones');render();}}},'Vaciar transacciones'):'')));
+  const rows=d.items.map(t=>{const neg=t.monto<0;return[fmtISO(t.fecha)||esc(t.fecha),t.hora||'',esc(t.cliente),esc(t.numero_afiliacion),badgeProd(t.producto),String(t.estatus).toUpperCase()==='APROBADO'?'<span class="badge ok">APROBADO</span>'+(neg?' <span class="badge w">cancelación</span>':''):`<span class="pill">${esc(t.estatus)}</span>`,{num:(neg?'<span style="color:var(--danger)">':'')+mxn(t.monto)+(neg?'</span>':'')},t.fecha_liq?fmtISO(t.fecha_liq):(t.invalida?'<span class="flagbad">revisar</span>':'')];});
+  p.append(tableWrap(['Fecha','Hora','Cliente','Afiliación','Producto','Estatus',{t:'Monto'},'Fecha liq.'],rows,{empty:'Aún no hay transacciones.'}));
+  if(d.total>d.items.length)p.append(el('div',{class:'muted',style:'margin-top:8px'},`Mostrando ${d.items.length} de ${d.total}.`));
   v.append(p);
 }
-// Diagnóstico: por qué una transacción podría no calcular / no entrar al corte
-function diagIngesta(v){
-  const tx=DB.transacciones.filter(t=>String(t.estatus).toUpperCase()==='APROBADO');
-  const cuenta=(map,key)=>{map[key]=(map[key]||0)+1;};
-  const prods={}, prodMonto={}, clientes={}, afils={};
-  tx.forEach(t=>{ const pk=String(t.producto||'(vacío)'); cuenta(prods,pk); prodMonto[pk]=(prodMonto[pk]||0)+(+t.monto||0); cuenta(clientes,String(t.cliente||'(vacío)')); cuenta(afils,String(t.numero_afiliacion||'(vacío)')); });
-  const montoTotal=tx.reduce((s,t)=>s+(+t.monto||0),0);
-  const conMonto0=tx.filter(t=>(+t.monto||0)===0).length;
-  const cancelaciones=tx.filter(t=>(+t.monto||0)<0);
-  const montoCancel=cancelaciones.reduce((s,t)=>s+(+t.monto||0),0);
-  const prodRows=Object.entries(prods).sort((a,b)=>b[1]-a[1]).map(([k,n])=>{const ok=!!prodKey(k);return [esc(k),{num:n},{num:mxn(prodMonto[k]||0)},ok?'<span class="badge ok">'+prodKey(k).toUpperCase()+'</span>':'<span class="badge d">no reconocido</span>'];});
-  const cliRows=Object.entries(clientes).sort((a,b)=>b[1]-a[1]).map(([k,n])=>{const g=grupoPorNombre(k);return [esc(k),{num:n},g?'<span class="badge ok">grupo '+g.id_grupo+'</span>':'<span class="badge d">sin grupo en catálogo</span>'];});
-  const afRows=Object.entries(afils).sort((a,b)=>b[1]-a[1]).map(([k,n])=>{const hasTasa=DB.afilGrupo.some(a=>String(a.numero_afiliacion)===String(k));const hasCosto=!!costosDe(k);return [`<span class="mono">${esc(k)}</span>`,{num:n},hasTasa?'<span class="badge ok">con tasas</span>':'<span class="badge d">sin tasas</span>',hasCosto?'<span class="badge ok">con costos</span>':'<span class="badge w">sin costos</span>'];});
-  // mapeo de columnas del último archivo cargado
-  const LI=DB._lastImport||{headers:[],mapped:{}};
-  const criticas=['fecha','cliente','numero_afiliacion','estatus','producto','monto'];
-  const mapRows=TX_COLS.map(f=>{const h=LI.mapped[f]; const crit=criticas.includes(f); return [esc(f),h?`<span class="mono">${esc(h)}</span>`:(crit?'<span class="badge d">NO ENCONTRADA</span>':'<span class="pill">—</span>')];});
-  const montoNoMapeada=!LI.mapped.monto;
-  const prob = montoTotal<=0 || montoNoMapeada || prodRows.some(r=>String(r[3]).includes('no reconocido')) || cliRows.some(r=>String(r[2]).includes('sin grupo')) || afRows.some(r=>String(r[2]).includes('sin tasas'));
-  const p=el('div',{class:'panel'});
-  p.append(el('h3',{},'Diagnóstico de la carga'));
-  if(montoTotal<=0 || montoNoMapeada)
-    p.append(el('div',{class:'banner err',html:`⛔ <b>El monto total leído es ${mxn(montoTotal)}.</b> ${montoNoMapeada?'No se encontró la columna de <b>monto</b> en tu archivo':'Los montos se están leyendo en cero'}. Revisa el <b>Mapeo de columnas</b> abajo: la columna de tu Excel con el importe debe llamarse <b>monto</b> (o importe/venta/monto de venta…). Sin monto, la compensación sale negativa (solo comisiones).`}));
-  p.append(el('div',{class:'banner '+(prob?'warn':'ok'),html: prob
-    ? 'Hay valores que <b>no coinciden</b>. Producto “no reconocido” → no entra al corte; cliente “sin grupo” o afiliación “sin tasas” → se calcula sin comisiones; monto en cero → compensación negativa. Corrige el Excel o el catálogo.'
-    : 'Columnas, productos, clientes, afiliaciones y montos coinciden con el catálogo. ✓'}));
-  // Mapeo de columnas
-  p.append(el('h3',{style:'font-size:14px'},'Mapeo de columnas',el('span',{class:'right'},el('span',{class:'muted',style:'font-weight:400;font-size:12px'},`Encabezados del archivo: ${esc((LI.headers||[]).join(', '))||'—'}`))));
-  p.append(tableWrap(['Campo del sistema','Columna de tu archivo'],mapRows));
-  const g=el('div',{class:'grid2',style:'margin-top:16px'});
-  const c1=el('div',{}); c1.append(el('h3',{style:'font-size:14px'},'Productos detectados')); c1.append(tableWrap(['Producto',{t:'#'},{t:'Monto'},'Reconocido'],prodRows));
-  const c2=el('div',{}); c2.append(el('h3',{style:'font-size:14px'},'Clientes detectados')); c2.append(tableWrap(['Cliente',{t:'#'},'Grupo'],cliRows));
-  g.append(c1,c2); p.append(g);
-  p.append(el('h3',{style:'font-size:14px;margin-top:16px'},'Afiliaciones detectadas',el('span',{class:'right'},el('span',{class:'muted',style:'font-weight:400;font-size:12px'},`${tx.length} aprobadas · ${conMonto0} con monto 0 · ${cancelaciones.length} cancelaciones (${mxn(montoCancel)})`))));
-  p.append(tableWrap([{t:'Afiliación'},{t:'#'},'Tasas','Costos'],afRows));
+function diagIngesta(v,dg){
+  const prob=(dg.montoTotal<=0)||(dg.productos||[]).some(p=>!p.key)||(dg.clientes||[]).some(c=>!c.grupo)||(dg.afiliaciones||[]).some(a=>!a.tasas);
+  const p=el('div',{class:'panel'});p.append(el('h3',{},'Diagnóstico de la carga'));
+  if(dg.montoTotal<=0)p.append(el('div',{class:'banner err',html:`⛔ Monto total leído: <b>${mxn(dg.montoTotal)}</b>. Revisa la columna de importe en tu Excel (debe llamarse <b>monto</b>/importe/venta…).`}));
+  p.append(el('div',{class:'banner '+(prob?'warn':'ok'),html:prob?'Hay valores que no cruzan con el catálogo (producto no reconocido, cliente sin grupo, afiliación sin tasas o monto en cero). Corrige el Excel o el catálogo.':'Productos, clientes, afiliaciones y montos coinciden con el catálogo. ✓'}));
+  const g=el('div',{class:'grid2'});
+  const c1=el('div',{});c1.append(el('h3',{style:'font-size:14px'},'Productos'));c1.append(tableWrap(['Producto',{t:'#'},{t:'Monto'},'Reconocido'],(dg.productos||[]).map(p=>[esc(p.k),{num:p.n},{num:mxn(p.monto)},p.key?`<span class="badge ok">${p.key.toUpperCase()}</span>`:'<span class="badge d">no reconocido</span>'])));
+  const c2=el('div',{});c2.append(el('h3',{style:'font-size:14px'},'Clientes'));c2.append(tableWrap(['Cliente',{t:'#'},'Grupo'],(dg.clientes||[]).map(c=>[esc(c.k),{num:c.n},c.grupo?`<span class="badge ok">grupo ${c.grupo}</span>`:'<span class="badge d">sin grupo</span>'])));
+  g.append(c1,c2);p.append(g);
+  p.append(el('h3',{style:'font-size:14px;margin-top:16px'},'Afiliaciones'));
+  p.append(tableWrap([{t:'Afiliación'},{t:'#'},'Tasas','Costos'],(dg.afiliaciones||[]).map(a=>[`<span class="mono">${esc(a.k)}</span>`,{num:a.n},a.tasas?'<span class="badge ok">con tasas</span>':'<span class="badge d">sin tasas</span>',a.costos?'<span class="badge ok">con costos</span>':'<span class="badge w">sin costos</span>'])));
   v.append(p);
 }
-function badgeProd(p){ const k=prodKey(p); const m={tdd:'b',tdc:'v',amex:'g',int:'w'}; return `<span class="badge ${m[k]||'d'}">${esc(p||'—')}</span>`; }
-// Exporta EXACTAMENTE lo que está cargado (con fecha_liq calculada) para auditar/conciliar
-function exportarTransacciones(){
-  const head=['fecha','hora','cliente','numero_afiliacion','estatus','producto','monto','fecha_liquidacion','cancelacion'];
-  const rows=DB.transacciones.map(t=>[t.fecha,t.hora,t.cliente,String(t.numero_afiliacion),t.estatus,t.producto,round2(+t.monto||0),t.fecha_liq?fmtFecha(parseFecha(t.fecha_liq)):'',((+t.monto)<0?'SÍ':'')]);
-  const apro=DB.transacciones.filter(t=>String(t.estatus).toUpperCase()==='APROBADO');
-  const montoApro=apro.reduce((s,t)=>s+(+t.monto||0),0);
-  rows.push([]); rows.push(['TOTAL cargadas',DB.transacciones.length,'','','','','','','']);
-  rows.push(['Aprobadas',apro.length,'','','','','MONTO APROBADO',round2(montoApro),'']);
-  saveXLSX('transacciones_cargadas_sistema.xlsx',[{name:'Cargadas',aoa:[head,...rows]}]);
-  toast(`Exportadas ${DB.transacciones.length} transacciones · monto aprobado ${mxn(montoApro)}`,'ok');
-}
-function tplTransacciones(){ saveXLSX('plantilla_transacciones.xlsx',[{name:'Transacciones',aoa:[TX_COLS,
-  ['03/08/2026','14:20','DEAL','Comercio Demo','7194416','APROBADO','VISA','Débito',1000,'F001','REF001','A12345','T01']],
-  cols:TX_COLS.map(c=>({wch:c==='numero_afiliacion'?14:(c==='comercio'?16:12)}))}]); toast('Plantilla Excel descargada'); }
 function openIngesta(){
   const body=el('div',{});
-  body.append(el('div',{class:'banner'},'Sube el archivo Excel (.xlsx) del gateway o pega el contenido. Columnas obligatorias: fecha, cliente, numero_afiliacion, estatus, producto, monto (la hora se usa para el corte por hora de corte).'));
-  let pending=null; // objetos leídos del archivo
+  body.append(el('div',{class:'banner'},'Sube el Excel (.xlsx) del gateway o pega CSV. El servidor lo parsea. Columnas: fecha, cliente, numero_afiliacion, estatus, producto, monto (hora recomendada).'));
   const file=el('input',{type:'file',accept:'.xlsx,.xls,.csv,.tsv,.txt'});
-  const fileInfo=el('div',{class:'req-note'});
-  const ta=el('textarea',{placeholder:'fecha,hora,cliente,...\n03/08/2026,14:20,DEAL,...',style:'min-height:160px'});
-  file.addEventListener('change',async()=>{ pending=null; fileInfo.textContent='';
-    if(file.files[0]){ try{ pending=await withBusy('Leyendo archivo…',()=>readTabular(file.files[0])); fileInfo.innerHTML=`Archivo leído: <b>${esc(file.files[0].name)}</b> — ${pending.length} fila(s) detectada(s). Da clic en <b>Procesar</b>.`; ta.value=''; }
-      catch(e){ fileInfo.textContent='No se pudo leer el archivo: '+e.message; } } });
-  const modo=el('label',{class:'field'},'Modo de carga',(()=>{const s=el('select');s.append(el('option',{value:'append'},'Agregar a lo existente'),el('option',{value:'replace'},'Reemplazar todo'));return s;})());
-  body.append(el('label',{class:'field'},'Archivo Excel (.xlsx) o CSV',file),fileInfo,modo,el('label',{class:'field'},'…o pega el contenido (CSV/TSV)',ta),el('div',{class:'req-note'},'Descarga la plantilla Excel para ver el formato exacto de columnas.'));
+  const info=el('div',{class:'req-note'}); file.addEventListener('change',()=>{info.innerHTML=file.files[0]?`Archivo: <b>${esc(file.files[0].name)}</b>. Da clic en Procesar.`:'';});
+  const modo=(()=>{const s=el('select');s.append(el('option',{value:'append'},'Agregar a lo existente'),el('option',{value:'replace'},'Reemplazar todo'));return s;})();
+  const ta=el('textarea',{style:'min-height:150px',placeholder:'fecha,hora,cliente,...'});
+  body.append(el('label',{class:'field'},'Archivo Excel (.xlsx) o CSV',file),info,el('label',{class:'field'},'Modo de carga',modo),el('label',{class:'field'},'…o pega CSV',ta));
   const foot=el('div',{});
-  const btn=el('button',{class:'btn',onclick:async()=>{ const modoV=modo.querySelector('select').value;
-    const txt=ta.value.trim();
-    if(!(pending&&pending.length) && !txt){toast('Sube un archivo o pega el contenido','err');return;}
-    const res=await withBusy('Procesando transacciones…',async()=> (pending&&pending.length)?ingestarObjs(pending,modoV):ingestar(txt,modoV));
-    closeModal(); render();
-    toast(`Cargadas ${res.validas} · ${res.invalidas} inválidas · ${mxn(res.monto)}`, res.invalidas?'':'ok');
-  }},'Procesar');
-  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'),btn);
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'),el('button',{class:'btn',onclick:async()=>{
+    const fd=new FormData();fd.append('modo',modo.value);
+    if(file.files[0])fd.append('archivo',file.files[0]);else if(ta.value.trim())fd.append('csv',ta.value.trim());else{toast('Sube un archivo o pega CSV','err');return;}
+    try{const res=await withBusy('Procesando en el servidor…',()=>api('POST','/api/transacciones/ingesta',fd));closeModal();render();toast(`Cargadas ${res.validas} · ${res.invalidas} inválidas · ${mxn(res.monto)}`,res.invalidas?'':'ok');}
+    catch(e){toast('Error: '+errMsg(e),'err');}
+  }},'Procesar'));
   modal('Ingesta de transacciones',body,foot,true);
-}
-// Alias de encabezados: mapea nombres comunes del gateway a las columnas canónicas.
-const TX_ALIAS={
-  fecha:['fecha','fecha_operacion','fecha_transaccion','fecha_venta','fecha_de_operacion','date'],
-  hora:['hora','time','hora_operacion','hora_transaccion'],
-  cliente:['cliente','grupo','nombre_cliente','nombre_del_cliente','razon_social_cliente'],
-  comercio:['comercio','nombre_comercio','nombre_del_comercio','merchant'],
-  numero_afiliacion:['numero_afiliacion','afiliacion','no_afiliacion','num_afiliacion','numero_de_afiliacion','no_de_afiliacion','id_afiliacion'],
-  estatus:['estatus','estado','status'],
-  metodo:['metodo','marca','red','tipo_de_tarjeta','tarjeta'],
-  producto:['producto','tipo_producto','tipo_de_producto','producto_tarjeta'],
-  monto:['monto','importe','monto_venta','monto_de_venta','monto_operacion','monto_de_la_operacion','monto_transaccion','monto_de_la_transaccion','monto_mxn','importe_venta','importe_transaccion','importe_de_la_transaccion','importe_mxn','venta','valor','amount','total'],
-  folio:['folio','no_folio'], referencia:['referencia','ref'],
-  autorizacion:['autorizacion','codigo_autorizacion','no_autorizacion','auth'], terminal:['terminal','no_terminal']
-};
-function pickCol(o,field){ for(const a of (TX_ALIAS[field]||[field])){ if(o[a]!=null && String(o[a]).trim()!=='') return o[a]; } return o[field]!=null?o[field]:''; }
-function ingestarObjs(objs,modo){
-  let validas=0,invalidas=0,monto=0; const nuevas=[];
-  // captura el mapeo de columnas del archivo (para el diagnóstico)
-  const headers = objs.length ? Object.keys(objs[0]) : [];
-  const mapped = {}; TX_COLS.forEach(f=>{ mapped[f]=(TX_ALIAS[f]||[f]).find(a=>headers.includes(a)&&String(objs[0][a]).trim()!=='')|| (TX_ALIAS[f]||[f]).find(a=>headers.includes(a)) || null; });
-  DB._lastImport={headers, mapped};
-  for(const o of objs){
-    const t={}; TX_COLS.forEach(c=>t[c]=pickCol(o,c));
-    // normalización de tipos (soporta crudo de Excel: Date, números)
-    t.cliente=String(t.cliente||'').trim(); t.comercio=String(t.comercio||'').trim();
-    t.metodo=String(t.metodo||'').trim(); t.producto=String(t.producto||'').trim();
-    t.numero_afiliacion=String(t.numero_afiliacion).replace(/\D/g,'');
-    t.monto=parseMonto(t.monto);
-    t.estatus=String(t.estatus||'').toUpperCase();
-    t.hora=horaStr(t.hora);
-    const rawFecha=t.fecha; const fparsed=parseFecha(rawFecha);
-    t.fecha = fparsed ? fmtFecha(fparsed) : String(rawFecha||'').trim();
-    const pk=prodKey(t.producto);
-    t.cancelacion = t.monto<0;  // monto negativo = cancelación/reembolso (resta en el corte)
-    const ok = /^\d+$/.test(t.numero_afiliacion) && !!pk && !!fparsed && Number.isFinite(t.monto);
-    if(!ok){invalidas++; t._invalida=true;} else validas++;
-    // fecha de liquidación (RN-12)
-    if(pk && fparsed){ const fl=fechaLiquidacion(t.fecha,t.hora,t.producto,DB.params,DB.feriados); t.fecha_liq=fl?isoFecha(fl):''; }
-    t.id=nextId('tx'); if(t.estatus==='APROBADO')monto+=t.monto;
-    nuevas.push(t);
-  }
-  if(modo==='replace')DB.transacciones=nuevas; else DB.transacciones=DB.transacciones.concat(nuevas);
-  bit('ingesta',`${validas} válidas, ${invalidas} inválidas (${modo})`); save();
-  return {validas,invalidas,monto};
-}
-function ingestar(text,modo){ return ingestarObjs(csvToObjects(text),modo); }
-// Recalcula fecha_liq de TODAS las transacciones con los parámetros y feriados vigentes.
-function recalcularFechasLiq(){ let n=0;
-  DB.transacciones.forEach(t=>{ const pk=prodKey(t.producto); const f=parseFecha(t.fecha);
-    let iso='';
-    if(pk && f){ const fl=fechaLiquidacion(t.fecha,t.hora,t.producto,DB.params,DB.feriados); iso=fl?isoFecha(fl):''; }
-    if(t.fecha_liq!==iso){ t.fecha_liq=iso; n++; }
-  });
-  bit('params',`recalculó fecha de liquidación de ${n} transacción(es)`); save(); return n;
 }
 
 /* ---------- CORTES ---------- */
-function vCortes(v){
-  if(can('corte')) $('#pageAction').append(
-    DB.cortes.length?el('button',{class:'btn ghost sm',onclick:()=>{if(confirm('¿Vaciar TODOS los cortes generados? (No borra transacciones ni catálogos)')){DB.cortes=[];DB._seq.corte=1;bit('corte','vació cortes');save();render();}}},'Vaciar cortes'):'',
-    el('span',{},' '), el('button',{class:'btn',onclick:openNuevoCorte},'+ Nuevo corte'));
-  const p=el('div',{class:'panel'}); p.append(el('h3',{},'Cortes'));
-  const rows=DB.cortes.slice().reverse().map(c=>{ const r=[`#${c.id_corte}`,c.fecha_liq,badgeEstado(c.estado),{num:c.n_trx||0},c.calculos.length,{num:mxn(c.total_monto)},{num:mxn(c.total_comp)},{num:mxn(c.total_disp)},c._cuadra?'<span class="flagok">✓</span>':'<span class="flagbad">✗</span>',fmtFecha(parseFecha(c.creado))]; r._onclick=()=>abrirCorte(c.id_corte); return r; });
-  p.append(tableWrap(['Corte','Fecha liq.','Estado',{t:'Trx'},'Grupos',{t:'Monto'},{t:'A compensar'},{t:'A dispersar'},'Cuadre','Creado'],rows,{empty:'Aún no hay cortes. Crea uno con “+ Nuevo corte”.'}));
+async function vCortes(v){
+  if(can('corte'))$('#pageAction').append(el('button',{class:'btn',onclick:openNuevoCorte},'+ Nuevo corte'));
+  const cortes=await api('GET','/api/cortes');
+  if(can('corte')&&cortes.length)$('#pageAction').prepend(el('button',{class:'btn ghost sm',onclick:async()=>{if(confirm('¿Vaciar TODOS los cortes?')){await api('DELETE','/api/cortes');render();}}},'Vaciar cortes'),el('span',{},' '));
+  v.innerHTML='';const p=el('div',{class:'panel'});p.append(el('h3',{},'Cortes'));
+  p.append(tableWrap(['Corte','Fecha liq.','Estado',{t:'Trx'},'Grupos',{t:'Monto'},{t:'A compensar'},{t:'A dispersar'},'Cuadre'],cortes.map(c=>{const r=[`#${c.id_corte}`,c.fecha_liq,badgeEstado(c.estado),{num:c.n_trx},c.bloqueos!=null?'':'',{num:mxn(c.total_monto)},{num:mxn(c.total_comp)},{num:mxn(c.total_disp)},c.cuadra?'<span class="flagok">✓</span>':'<span class="flagbad">✗</span>'];r._onclick=()=>abrirCorte(c.id_corte);return r;}),{empty:'Aún no hay cortes. Crea uno con “+ Nuevo corte”.'}));
   v.append(p);
 }
-function openNuevoCorte(){
-  const fechas=[...new Set(DB.transacciones.filter(t=>t.fecha_liq).map(t=>t.fecha_liq))].sort();
+async function openNuevoCorte(){
+  const {fechas,sinLiq}=await api('GET','/api/cortes/fechas');
   const body=el('div',{});
-  const sinLiq=DB.transacciones.filter(t=>String(t.estatus).toUpperCase()==='APROBADO' && !t.fecha_liq).length;
-  if(!fechas.length){ body.append(el('div',{class:'banner warn',html:sinLiq?`Hay <b>${sinLiq}</b> transacciones aprobadas sin fecha de liquidación (producto no reconocido). Revisa el <b>Diagnóstico</b> en Ingesta y corrige la columna producto.`:'No hay transacciones con fecha de liquidación. Carga transacciones primero.'})); modal('Nuevo corte',body,el('button',{class:'btn ghost',onclick:closeModal},'Cerrar')); return; }
-  const sel=el('select'); fechas.forEach(f=>{const n=DB.transacciones.filter(t=>t.fecha_liq===f&&String(t.estatus).toUpperCase()==='APROBADO').length; sel.append(el('option',{value:f},`${fmtFecha(parseFecha(f))} — ${n} aprobadas`));});
-  body.append(el('div',{class:'banner',html:'El corte selecciona las transacciones <b>APROBADAS</b> cuya fecha de liquidación coincide con la fecha objetivo y agrupa por CLIENTE + AFILIACIÓN.'}));
-  if(sinLiq)body.append(el('div',{class:'banner warn',html:`⚠️ <b>${sinLiq}</b> transacciones aprobadas quedaron sin fecha de liquidación (producto no reconocido) y no entrarán a ningún corte. Revisa el Diagnóstico en Ingesta.`}));
-  body.append(el('label',{class:'field'},'Fecha de liquidación objetivo',sel));
-  const foot=el('div',{}); foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{const f=sel.value; await withBusy('Generando corte…',async()=>crearCorte(f));}},'Generar corte'));
+  if(!fechas.length){body.append(el('div',{class:'banner warn',html:sinLiq?`Hay <b>${sinLiq}</b> aprobadas sin fecha de liquidación (producto no reconocido). Revisa el diagnóstico en Ingesta.`:'No hay transacciones con fecha de liquidación. Carga transacciones primero.'}));modal('Nuevo corte',body,el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'));return;}
+  const sel=el('select');fechas.forEach(f=>sel.append(el('option',{value:f.iso},`${fmtISO(f.iso)} — ${f.n} aprobadas`)));
+  body.append(el('div',{class:'banner',html:'El corte toma las transacciones <b>APROBADAS</b> cuya fecha de liquidación coincide con la objetivo y agrupa por CLIENTE + AFILIACIÓN.'}),el('label',{class:'field'},'Fecha de liquidación objetivo',sel));
+  if(sinLiq)body.append(el('div',{class:'banner warn',html:`⚠️ ${sinLiq} aprobadas sin fecha de liquidación no entrarán a ningún corte.`}));
+  const foot=el('div',{});foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    try{const {id_corte}=await withBusy('Generando corte en el servidor…',()=>api('POST','/api/cortes',{fecha_liq:sel.value}));closeModal();abrirCorte(id_corte);}catch(e){toast('Error: '+errMsg(e),'err');}
+  }},'Generar corte'));
   modal('Nuevo corte',body,foot);
 }
-function crearCorte(fechaLiq){
-  const txs=DB.transacciones.filter(t=>t.fecha_liq===fechaLiq && String(t.estatus).toUpperCase()==='APROBADO');
-  // agrupar CLIENTE + AFILIACION
-  const groups={};
-  for(const t of txs){ const k=`${t.cliente}||${t.numero_afiliacion}`; (groups[k]=groups[k]||[]).push(t); }
-  const calculos=[]; let total_comp=0,total_disp=0,total_monto=0;
-  for(const k in groups){ const arr=groups[k]; const [cliente,afil]=k.split('||');
-    const g=grupoPorNombre(cliente); const idGrupo=g?g.id_grupo:null;
-    const tasas=idGrupo?tasasDe(idGrupo,afil):null; const costos=costosDe(afil); const cuenta=idGrupo?cuentaDe(idGrupo,afil):null;
-    const cat={tasas:tasas?{pac_tdd:+tasas.tasa_pac_tdd||0,pac_tdc:+tasas.tasa_pac_tdc||0,pac_amex:+tasas.tasa_pac_amex||0,pac_int:+tasas.tasa_pac_int||0,costo_x_trx:+tasas.costo_x_trx||0,pct_banca:+tasas.pct_banca||0}:{},
-      costos:costos?{int_tdd:+costos.int_tdd||0,int_tdc:+costos.int_tdc||0,int_amex:costos.int_amex!==''&&costos.int_amex!=null?+costos.int_amex:null,int_int:costos.int_int!==''&&costos.int_int!=null?+costos.int_int:null,fee_broxel:costos.fee_broxel!==''&&costos.fee_broxel!=null?+costos.fee_broxel:null}:{}};
-    const r=calcularCompensacion(arr,cat,DB.params,{});
-    const faltantes=[]; if(!g)faltantes.push('grupo'); if(!tasas)faltantes.push('tasas'); if(!costos)faltantes.push('costos'); if(!cuenta&&Math.abs(r.disp_total)>0.005)faltantes.push('cuenta');
-    calculos.push({cliente,afil,id_grupo:idGrupo,razon:g?g.nombre_cliente:cliente,
-      concepto: idGrupo?concepto(afil,idGrupo):'',
-      clabe:cuenta?cuenta.clabe:'',codigo_banco:cuenta?(cuenta.codigo_banco||bancoCodigo(cuenta.banco)):'',banco:cuenta?cuenta.banco:'',beneficiario:cuenta?(cuenta.razon_social_beneficiario||cuenta.nombre_comercial):'',
-      calc:r, faltantes, ajustes:{financiamientos:0,contracargos_dom:0,contracargos_amex:0}});
-    total_comp+=r.comp_total; total_disp+=r.disp_total; total_monto+=r.m_tdd+r.m_tdc+r.m_amex+r.m_int;
-  }
-  const corte={id_corte:nextId('corte'),fecha_liq:fmtFecha(parseFecha(fechaLiq)),fecha_liq_iso:fechaLiq,estado:'Borrador',
-    creado:isoFecha(new Date()),creado_por:SES.nombre,validado_por:'',dispersado_por:'',
-    calculos,total_comp:round2(total_comp),total_disp:round2(total_disp),total_monto:round2(total_monto),n_trx:txs.length};
-  recalcCuadre(corte);
-  DB.cortes.push(corte); bit('corte',`generó corte #${corte.id_corte} (${corte.fecha_liq}), ${calculos.length} grupos`); save();
-  closeModal(); abrirCorte(corte.id_corte);
-}
-function recalcCuadre(corte){ let ok=true; corte.calculos.forEach(c=>{ if(Math.abs(c.calc.diferencia)>0.01)ok=false; });
-  // bloqueo por cuenta faltante en grupos con importe
-  corte._cuadra=ok; corte._bloqueos=corte.calculos.filter(c=>Math.abs(c.calc.disp_total)>0.005 && (!c.clabe||!c.codigo_banco)).length;
-}
-function abrirCorte(id){ const c=DB.cortes.find(x=>x.id_corte===id); if(!c)return; VIEW='cortes'; render();
-  const v=$('#view'); v.innerHTML=''; $('#viewSub').textContent=`Corte #${c.id_corte} · liquidación ${c.fecha_liq}`;
-  $('#pageAction').innerHTML=''; $('#pageAction').append(el('button',{class:'btn ghost sm',onclick:()=>go('cortes')},'← Cortes'));
-  // pasos
+async function abrirCorte(id){
+  VIEW='cortes';renderNav();$('#viewTitle').textContent='Cortes y liquidación';
+  const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
+  let data;try{data=await api('GET','/api/cortes/'+id);}catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},errMsg(e)));return;}
+  const c=data.corte, cal=data.calculos;
+  $('#viewSub').textContent=`Corte #${c.id_corte} · liquidación ${c.fecha_liq}`;
+  $('#pageAction').innerHTML='';$('#pageAction').append(el('button',{class:'btn ghost sm',onclick:()=>go('cortes')},'← Cortes'));
+  v.innerHTML='';
   const steps=el('div',{class:'steps'});
-  [['Compensación',true],['Cuadre',c._cuadra],['Layout SPEI',c._cuadra&&!c._bloqueos],['Dispersado',c.estado==='Dispersado'||c.estado==='Cerrado']].forEach((s,i)=>{
-    steps.append(el('div',{class:'step '+(s[1]?'done':(i===1?'cur':''))},el('span',{class:'n'},s[1]?'✓':(i+1)),s[0]));
-  });
+  [['Compensación',true],['Cuadre',c.cuadra],['Layout SPEI',c.cuadra&&!c.bloqueos],['Dispersado',c.estado==='Dispersado'||c.estado==='Cerrado']].forEach((s,i)=>steps.append(el('div',{class:'step '+(s[1]?'done':(i===1?'cur':''))},el('span',{class:'n'},s[1]?'✓':(i+1)),s[0])));
   v.append(steps);
-  // resumen
-  v.append(cards([
-    ['Grupos',c.calculos.length],
-    ['A compensar',mxn(c.total_comp)],
-    ['A dispersar',mxn(c.total_disp)],
-    ['Cuadre',c._cuadra?'✓ 0.00':'✗',c._cuadra?'diferencia = 0':'revisar diferencias'],
-  ]));
-  // estado / acciones
-  const pa=el('div',{class:'panel'}); pa.append(el('h3',{},'Estado del corte: ',badgeEstadoNode(c.estado)));
+  v.append(cards([['Grupos',cal.length],['A compensar',mxn(c.total_comp)],['A dispersar',mxn(c.total_disp)],['Cuadre',c.cuadra?'✓ 0.00':'✗',c.cuadra?'diferencia = 0':'revisar']]));
+  const pa=el('div',{class:'panel'});pa.append(el('h3',{},'Estado del corte: ',el('span',{html:badgeEstado(c.estado)})));
+  if(c.bloqueos)pa.append(el('div',{class:'banner err'},`⛔ ${c.bloqueos} grupo(s) con importe sin CLABE/banco. Corrige en Cuentas antes del layout.`));
+  if(!c.cuadra)pa.append(el('div',{class:'banner err'},'⛔ El corte no cuadra. No se puede validar/dispersar.'));
+  else if(c.estado==='Borrador')pa.append(el('div',{class:'banner ok'},'✓ Todos los grupos cuadran (diferencia = 0).'));
   const acc=el('div',{class:'kpi-row'});
-  if(c._bloqueos) pa.append(el('div',{class:'banner err'},`⛔ ${c._bloqueos} grupo(s) con importe a dispersar sin CLABE/banco. Corrige en Cuentas de liquidación antes de generar el layout.`));
-  if(!c._cuadra) pa.append(el('div',{class:'banner err'},'⛔ El corte no cuadra (hay grupos con diferencia > 0.01). No se puede validar/dispersar.'));
-  else if(c.estado==='Borrador') pa.append(el('div',{class:'banner ok'},'✓ Todos los grupos cuadran (diferencia = 0).'));
-  // botones por rol
-  acc.append(el('button',{class:'btn secondary sm',onclick:()=>genLayout(c)},'⬇ Layout SPEI'));
-  acc.append(el('button',{class:'btn secondary sm',onclick:()=>genReporteCliente(c)},'⬇ Reporte por cliente'));
-  if(c.estado==='Borrador' && can('validar')) acc.append(el('button',{class:'btn ok sm',disabled:(!c._cuadra||c._bloqueos)?true:null,onclick:()=>{c.estado='Validado';c.validado_por=SES.nombre;bit('validar',`validó corte #${c.id_corte}`);save();abrirCorte(id);}},'Validar corte'));
-  if(c.estado==='Validado' && can('dispersar')) acc.append(el('button',{class:'btn violet sm',style:'background:var(--violet);color:#fff',onclick:()=>{c.estado='Dispersado';c.dispersado_por=SES.nombre;bit('dispersar',`marcó dispersado corte #${c.id_corte}`);save();abrirCorte(id);toast('Corte marcado como dispersado','ok');}},'Marcar dispersado'));
-  if(c.estado==='Dispersado' && can('validar')) acc.append(el('button',{class:'btn sm',onclick:()=>{c.estado='Cerrado';bit('cerrar',`cerró corte #${c.id_corte}`);save();abrirCorte(id);}},'Cerrar corte (inmutable)'));
+  acc.append(el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/cortes/'+id+'/layout.xlsx','layout_corte_'+id+'.xlsx').catch(e=>toast(e.status===409?'Layout bloqueado: hay órdenes sin CLABE/banco':errMsg(e),'err'))},'⬇ Layout SPEI'));
+  acc.append(el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/cortes/'+id+'/reporte.xlsx','reporte_corte_'+id+'.xlsx')},'⬇ Reporte por cliente'));
+  const trans=async(a,label)=>{try{await api('POST','/api/cortes/'+id+'/'+a);toast(label,'ok');abrirCorte(id);}catch(e){toast(errMsg(e),'err');}};
+  if(c.estado==='Borrador'&&can('validar'))acc.append(el('button',{class:'btn ok sm',disabled:(!c.cuadra||c.bloqueos)?true:null,onclick:()=>trans('validar','Corte validado')},'Validar corte'));
+  if(c.estado==='Validado'&&can('dispersar'))acc.append(el('button',{class:'btn sm',style:'background:var(--violet);color:#fff',onclick:()=>trans('dispersar','Marcado como dispersado')},'Marcar dispersado'));
+  if(c.estado==='Dispersado'&&can('validar'))acc.append(el('button',{class:'btn sm',onclick:()=>trans('cerrar','Corte cerrado')},'Cerrar corte (inmutable)'));
   pa.append(acc);
-  pa.append(el('div',{class:'foot-links'},`Creado por ${esc(c.creado_por||'—')}`, c.validado_por?`· Validado por ${esc(c.validado_por)}`:'', c.dispersado_por?`· Dispersado por ${esc(c.dispersado_por)}`:''));
+  pa.append(el('div',{class:'foot-links'},`Creado por ${esc(c.creado_por||'—')}`,c.validado_por?`· Validado por ${esc(c.validado_por)}`:'',c.dispersado_por?`· Dispersado por ${esc(c.dispersado_por)}`:''));
   v.append(pa);
-  // tabla compensación / dispersión
-  const pt=el('div',{class:'panel'}); pt.append(el('h3',{},'Compensación y dispersión por grupo'));
-  const rows=c.calculos.map(cc=>{ const r=cc.calc;
-    const tr=[
-      `<div class="tt">${esc(cc.razon)}<small>Afil. ${esc(cc.afil)} · ${esc(cc.concepto||'sin grupo')}</small></div>`,
-      {num:r.num_trx},
-      {num:mxn(r.m_tdd+r.m_tdc+r.m_amex+r.m_int)},
-      {num:mxn(r.comp_total)},
-      {num:mxn(r.banca+r.iva_banca)},
-      {num:mxn(r.disp_total)},
-      Math.abs(r.diferencia)<=0.01?'<span class="flagok">0.00</span>':`<span class="flagbad">${num(r.diferencia)}</span>`,
-      cc.faltantes.length?`<span class="badge w">falta ${cc.faltantes.join(', ')}</span>`:'<span class="badge ok">ok</span>'
-    ];
-    tr._onclick=()=>detalleCalculo(c,cc);
-    return tr;
-  });
+  const pt=el('div',{class:'panel'});pt.append(el('h3',{},'Compensación y dispersión por grupo'));
+  const rows=cal.map(cc=>{const r=cc.calc;const tr=[`<div class="tt">${esc(cc.razon)}<small>Afil. ${esc(cc.afil)} · ${esc(cc.concepto||'sin grupo')}</small></div>`,{num:r.num_trx},{num:mxn(r.m_tdd+r.m_tdc+r.m_amex+r.m_int)},{num:mxn(r.comp_total)},{num:mxn(r.banca+r.iva_banca)},{num:mxn(r.disp_total)},Math.abs(r.diferencia)<=0.01?'<span class="flagok">0.00</span>':`<span class="flagbad">${num(r.diferencia)}</span>`,(cc.faltantes&&cc.faltantes.length)?`<span class="badge w">falta ${cc.faltantes.join(', ')}</span>`:'<span class="badge ok">ok</span>'];tr._onclick=()=>detalleCalculo(cc);return tr;});
   pt.append(tableWrap(['Grupo / Afiliación',{t:'Trx'},{t:'Monto'},{t:'A compensar'},{t:'Banca+IVA'},{t:'A dispersar'},'Dif.','Estado'],rows));
-  pt.append(el('div',{class:'muted',style:'margin-top:8px'},'Clic en un grupo para ver el desglose completo del cálculo.'));
+  pt.append(el('div',{class:'muted',style:'margin-top:8px'},'Clic en un grupo para ver el desglose completo.'));
   v.append(pt);
 }
-function badgeEstadoNode(e){ const s=el('span'); s.innerHTML=badgeEstado(e); return s.firstChild; }
-
-function detalleCalculo(corte,cc){ const r=cc.calc; const body=el('div',{});
-  const kv=(k,val,strong)=>el('div',{class:'testline'},el('span',{class:'st',style:'width:auto;color:var(--muted);font-weight:600'},''),el('span',{style:'flex:1'},k),el('span',{class:strong?'flagok':'',style:'font-variant-numeric:tabular-nums'},val));
+function detalleCalculo(cc){const r=cc.calc;const body=el('div',{});
   body.append(el('div',{class:'banner',html:`<b>${esc(cc.razon)}</b> · Afiliación ${esc(cc.afil)} · ${esc(cc.concepto||'—')} · ${r.num_trx} trx`}));
-  const g=el('div',{class:'form-grid'});
+  const kv=(k,val,strong)=>el('div',{class:'testline'},el('span',{style:'flex:1'},k),el('span',{class:strong?'flagok':'',style:'font-variant-numeric:tabular-nums'},val));
   const col=(title,lines)=>{const d=el('div',{class:'panel',style:'margin:0 0 14px'});d.append(el('h3',{style:'font-size:14px'},title));lines.forEach(l=>d.append(kv(l[0],l[1],l[2])));return d;};
-  g.append(col('Montos por producto',[['TDD (Débito)',mxn(r.m_tdd)],['TDC (Crédito)',mxn(r.m_tdc)],['AMEX',mxn(r.m_amex)],['INT (Internacional)',mxn(r.m_int)]]));
+  const g=el('div',{class:'form-grid'});
+  g.append(col('Montos por producto',[['TDD',mxn(r.m_tdd)],['TDC',mxn(r.m_tdc)],['AMEX',mxn(r.m_amex)],['INT',mxn(r.m_int)]]));
   g.append(col('Costos adquirente',[['Interc. TDD',mxn(r.int_tdd)],['Interc. TDC',mxn(r.int_tdc)],['Interc. AMEX',mxn(r.int_amex)],['Interc. INT',mxn(r.int_int)],['Fee Broxel',mxn(r.broxel)]]));
-  g.append(col('Comisiones (ingreso) + IVA',[['Com. TDD',mxn(r.com_tdd+r.iva_com_tdd)],['Com. TDC',mxn(r.com_tdc+r.iva_com_tdc)],['Com. AMEX',mxn(r.com_amex+r.iva_com_amex)],['Com. INT',mxn(r.com_int+r.iva_com_int)],['Com. x trx',mxn(r.com_trx+r.iva_com_trx)]]));
-  g.append(col('Importe a compensar',[['Comp. TDD',mxn(r.comp_tdd)],['Comp. TDC',mxn(r.comp_tdc)],['Comp. AMEX',mxn(r.comp_amex)],['Comp. INT',mxn(r.comp_int)],['Total a compensar',mxn(r.comp_total),true]]));
+  g.append(col('Comisiones (ingreso)+IVA',[['Com. TDD',mxn(r.com_tdd+r.iva_com_tdd)],['Com. TDC',mxn(r.com_tdc+r.iva_com_tdc)],['Com. AMEX',mxn(r.com_amex+r.iva_com_amex)],['Com. INT',mxn(r.com_int+r.iva_com_int)],['Com. x trx',mxn(r.com_trx+r.iva_com_trx)]]));
+  g.append(col('Importe a compensar',[['Comp. TDD',mxn(r.comp_tdd)],['Comp. TDC',mxn(r.comp_tdc)],['Comp. AMEX',mxn(r.comp_amex)],['Comp. INT',mxn(r.comp_int)],['Total',mxn(r.comp_total),true]]));
   g.append(col('Banca (Telematic)',[['% banca',pct(r.pct_banca)],['Banca',mxn(r.banca)],['IVA banca',mxn(r.iva_banca)]]));
-  g.append(col('Dispersión (RN-09)',[['Bloque dom.+INT',mxn(r.disp_dom)],['Bloque AMEX',mxn(r.disp_amex)],['Financiamientos',mxn(r.financiamientos)],['Contracargos dom.',mxn(r.contracargos_dom)],['Contracargos AMEX',mxn(r.contracargos_amex)],['Total a dispersar',mxn(r.disp_total),true]]));
+  g.append(col('Dispersión (RN-09)',[['Bloque dom.+INT',mxn(r.disp_dom)],['Bloque AMEX',mxn(r.disp_amex)],['Total a dispersar',mxn(r.disp_total),true]]));
   body.append(g);
-  body.append(el('div',{class:'banner '+(Math.abs(r.diferencia)<=0.01?'ok':'err'),html:`Comprobación (dom+AMEX): ${mxn(r.comprobacion)} · Diferencia: <b>${num(r.diferencia)}</b> · Utilidad: <b>${mxn(r.utilidad)}</b>`}));
-  // ajustes (financiamientos/contracargos) editables si borrador
-  const foot=el('div',{});
-  if(corte.estado==='Borrador' && can('corte')){
-    const editar=el('button',{class:'btn secondary',onclick:()=>ajustesModal(corte,cc)},'Editar financiamientos / contracargos');
-    foot.append(editar);
-  }
-  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'));
-  modal('Desglose del cálculo',body,foot,true);
-}
-function ajustesModal(corte,cc){ const a=cc.ajustes||{financiamientos:0,contracargos_dom:0,contracargos_amex:0};
-  const body=el('div',{});
-  body.append(el('div',{class:'banner',html:'Cada ajuste se aplica <b>una sola vez en su propio bloque</b> (RN-09 confirmada): financiamientos y contracargos domésticos → dispersión doméstica; contracargos AMEX → dispersión AMEX.'}));
-  const f=el('input',{type:'number',step:'0.01',value:a.financiamientos});
-  const cd=el('input',{type:'number',step:'0.01',value:a.contracargos_dom});
-  const ca=el('input',{type:'number',step:'0.01',value:a.contracargos_amex});
-  body.append(el('label',{class:'field'},'Financiamientos (bloque doméstico)',f),el('label',{class:'field'},'Contracargos domésticos (incluye INT)',cd),el('label',{class:'field'},'Contracargos AMEX',ca));
-  const foot=el('div',{});
-  foot.append(el('button',{class:'btn ghost',onclick:()=>detalleCalculo(corte,cc)},'Cancelar'),el('button',{class:'btn',onclick:()=>{
-    cc.ajustes={financiamientos:+f.value||0,contracargos_dom:+cd.value||0,contracargos_amex:+ca.value||0};
-    // recomputar esta fila
-    const arr=DB.transacciones.filter(t=>t.fecha_liq===corte.fecha_liq_iso && t.estatus==='APROBADO' && String(t.cliente)===cc.cliente && String(t.numero_afiliacion)===String(cc.afil));
-    const g=grupoById(cc.id_grupo); const tasas=cc.id_grupo?tasasDe(cc.id_grupo,cc.afil):null; const costos=costosDe(cc.afil);
-    const cat={tasas:tasas?{pac_tdd:+tasas.tasa_pac_tdd||0,pac_tdc:+tasas.tasa_pac_tdc||0,pac_amex:+tasas.tasa_pac_amex||0,pac_int:+tasas.tasa_pac_int||0,costo_x_trx:+tasas.costo_x_trx||0,pct_banca:+tasas.pct_banca||0}:{},
-      costos:costos?{int_tdd:+costos.int_tdd||0,int_tdc:+costos.int_tdc||0,int_amex:costos.int_amex!==''&&costos.int_amex!=null?+costos.int_amex:null,int_int:costos.int_int!==''&&costos.int_int!=null?+costos.int_int:null,fee_broxel:costos.fee_broxel!==''&&costos.fee_broxel!=null?+costos.fee_broxel:null}:{}};
-    cc.calc=calcularCompensacion(arr,cat,DB.params,cc.ajustes);
-    corte.total_comp=round2(corte.calculos.reduce((s,x)=>s+x.calc.comp_total,0));
-    corte.total_disp=round2(corte.calculos.reduce((s,x)=>s+x.calc.disp_total,0));
-    recalcCuadre(corte); bit('ajuste',`corte #${corte.id_corte} ${cc.razon}: fin=${f.value} ccDom=${cd.value} ccAmex=${ca.value}`); save();
-    detalleCalculo(corte,cc);
-  }},'Guardar y recalcular'));
-  modal('Financiamientos / contracargos',body,foot);
+  body.append(el('div',{class:'banner '+(Math.abs(r.diferencia)<=0.01?'ok':'err'),html:`Comprobación: ${mxn(r.comprobacion)} · Diferencia: <b>${num(r.diferencia)}</b> · Utilidad: <b>${mxn(r.utilidad)}</b>`}));
+  modal('Desglose del cálculo',body,el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'),true);
 }
 
-/* ---------- LAYOUT SPEI ---------- */
-function genLayout(c){
-  const validas=c.calculos.filter(cc=>Math.abs(cc.calc.disp_total)>0.005); // RN: excluir importes en 0
-  const bloq=validas.filter(cc=>!cc.clabe||!cc.codigo_banco);
-  if(bloq.length){ toast(`⛔ ${bloq.length} orden(es) con importe sin CLABE/banco. No se exporta.`,'err');
-    modal('Layout bloqueado', el('div',{},el('div',{class:'banner err'},'No se puede generar el layout: hay órdenes con importe pero sin cuenta de liquidación:'),
-      tableWrap(['Grupo/Afiliación',{t:'Importe'},'Falta'],bloq.map(cc=>[`${esc(cc.razon)} · ${esc(cc.afil)}`,{num:mxn(cc.calc.disp_total)},!cc.clabe?'CLABE':'código banco']))),
-      el('button',{class:'btn ghost',onclick:closeModal},'Cerrar')); return; }
-  const head=['concepto','clabe','codigo_banco','beneficiario','importe'];
-  // CLABE como texto (string) preserva ceros; importe como número real para Excel
-  const rows=validas.map(cc=>[cc.concepto,String(cc.clabe),Number(cc.codigo_banco)||cc.codigo_banco,cc.beneficiario,round2(cc.calc.disp_total)]);
-  saveXLSX(`layout_spei_corte_${c.id_corte}_${c.fecha_liq_iso}.xlsx`,[{name:'Layout SPEI',aoa:[head,...rows],cols:[{wch:22},{wch:20},{wch:12},{wch:28},{wch:14}]}]);
-  bit('layout',`exportó layout corte #${c.id_corte} (${rows.length} órdenes)`);
-  toast(`Layout Excel generado: ${rows.length} órdenes (sin ceros)`,'ok');
-}
-function genReporteCliente(c){
-  const head=['grupo','afiliacion','concepto','monto','comp_tdd','comp_tdc','comp_amex','comp_int','a_compensar','banca_mas_iva','a_dispersar','diferencia','utilidad'];
-  const rows=c.calculos.map(cc=>{const r=cc.calc;return[cc.razon,String(cc.afil),cc.concepto,round2(r.m_tdd+r.m_tdc+r.m_amex+r.m_int),round2(r.comp_tdd),round2(r.comp_tdc),round2(r.comp_amex),round2(r.comp_int),round2(r.comp_total),round2(r.banca+r.iva_banca),round2(r.disp_total),round2(r.diferencia),round2(r.utilidad)];});
-  rows.push(['TOTAL','','',round2(c.total_monto),'','','','',round2(c.total_comp),'',round2(c.total_disp),'','']);
-  saveXLSX(`reporte_cliente_corte_${c.id_corte}_${c.fecha_liq_iso}.xlsx`,[{name:'Reporte por cliente',aoa:[head,...rows],cols:[{wch:16},{wch:12},{wch:22}].concat(Array(10).fill({wch:13}))}]);
-  bit('reporte',`exportó reporte por cliente corte #${c.id_corte}`);
-  toast('Reporte Excel por cliente exportado','ok');
-}
-
-/* ---------- GRUPOS Y AFILIACIONES ---------- */
-function vGrupos(v){
-  if(can('catalogos')) $('#pageAction').append(el('button',{class:'btn secondary sm',onclick:tplGrupos},'⬇ Plantilla Excel'),el('span',{},' '),el('button',{class:'btn secondary sm',onclick:openImportGrupos},'Importar Excel'),el('span',{},' '),el('button',{class:'btn',onclick:()=>editGrupo()},'+ Alta guiada'));
-  const p=el('div',{class:'panel'}); p.append(el('h3',{},'Grupos, afiliaciones y condiciones pactadas'));
-  const rows=[];
-  DB.afilGrupo.forEach(ag=>{ const g=grupoById(ag.id_grupo); const af=DB.afiliaciones.find(a=>String(a.numero_afiliacion)===String(ag.numero_afiliacion)); const co=costosDe(ag.numero_afiliacion);
-    const r=[`<div class="tt">${esc(g?g.nombre_cliente:('grupo '+ag.id_grupo))}<small>id ${esc(ag.id_grupo)}</small></div>`,
-      `<div class="tt">${esc(ag.numero_afiliacion)}<small>${esc(af?af.razon_social:'')}</small></div>`,
-      {num:pct(+ag.tasa_pac_tdd)},{num:pct(+ag.tasa_pac_tdc)},{num:pct(+ag.tasa_pac_amex)},{num:pct(+ag.tasa_pac_int)},
-      {num:pct(+ag.pct_banca||0)}, co?'<span class="badge ok">sí</span>':'<span class="badge w">no</span>'];
-    if(can('catalogos'))r._onclick=()=>editGrupo(ag);
-    rows.push(r);
-  });
-  p.append(tableWrap(['Grupo',{t:'Afiliación'},{t:'Pac. TDD'},{t:'Pac. TDC'},{t:'Pac. AMEX'},{t:'Pac. INT'},{t:'% Banca'},'Costos'],rows,{empty:'Sin grupos. Usa “+ Alta guiada” o importa un CSV.'}));
+/* ---------- GRUPOS ---------- */
+async function vGrupos(v){
+  if(can('catalogos'))$('#pageAction').append(el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/plantilla/grupos.xlsx','plantilla_grupos.xlsx')},'⬇ Plantilla Excel'),el('span',{},' '),el('button',{class:'btn secondary sm',onclick:()=>openImport('grupos','Importar grupos')},'Importar Excel'),el('span',{},' '),el('button',{class:'btn',onclick:()=>editGrupo()},'+ Alta guiada'));
+  const d=await api('GET','/api/catalogo/grupos-full');v.innerHTML='';
+  const p=el('div',{class:'panel'});p.append(el('h3',{},'Grupos, afiliaciones y condiciones pactadas'));
+  const rows=d.afilGrupo.map(ag=>{const g=d.grupos.find(x=>String(x.id_grupo)===String(ag.id_grupo));const af=d.afiliaciones.find(a=>String(a.numero_afiliacion)===String(ag.numero_afiliacion));const co=d.costos.find(c=>String(c.numero_afiliacion)===String(ag.numero_afiliacion));
+    const r=[`<div class="tt">${esc(g?g.nombre_cliente:('grupo '+ag.id_grupo))}<small>id ${esc(ag.id_grupo)}</small></div>`,`<div class="tt">${esc(ag.numero_afiliacion)}<small>${esc(af?af.razon_social:'')}</small></div>`,{num:pct(+ag.tasa_pac_tdd)},{num:pct(+ag.tasa_pac_tdc)},{num:pct(+ag.tasa_pac_amex)},{num:pct(+ag.tasa_pac_int)},{num:pct(+ag.pct_banca||0)},co?'<span class="badge ok">sí</span>':'<span class="badge w">no</span>'];
+    if(can('catalogos'))r._onclick=()=>editGrupo(ag,af,co);return r;});
+  p.append(tableWrap(['Grupo',{t:'Afiliación'},{t:'Pac.TDD'},{t:'Pac.TDC'},{t:'Pac.AMEX'},{t:'Pac.INT'},{t:'%Banca'},'Costos'],rows,{empty:'Sin grupos. Usa “Alta guiada” o importa un CSV/Excel.'}));
   v.append(p);
 }
-function tplGrupos(){ saveXLSX('plantilla_grupos.xlsx',[{name:'Grupos',aoa:[
-  ['id_grupo','nombre_cliente','numero_afiliacion','razon_social','tasa_pac_tdd','tasa_pac_tdc','tasa_pac_amex','tasa_pac_int','costo_x_trx','pct_banca','int_tdd','int_tdc','int_amex','int_int','fee_broxel'],
-  [3,'DEAL','7194416','Deal Comercializadora SA',0.025,0.029,0.035,0.038,0,0.005,0.011,0.015,0.0247,0.0302,0.0028]]}]); toast('Plantilla Excel descargada'); }
-function importarGrupos(objs){ let n=0;
-  objs.forEach(o=>{ if(!o.id_grupo||!o.numero_afiliacion)return; const idg=+o.id_grupo, afil=String(o.numero_afiliacion).replace(/\D/g,'');
-    if(!grupoById(idg))DB.grupos.push({id_grupo:idg,nombre_cliente:String(o.nombre_cliente||('Grupo '+idg)),activo:true});
-    if(!DB.afiliaciones.find(a=>String(a.numero_afiliacion)===afil))DB.afiliaciones.push({numero_afiliacion:afil,razon_social:String(o.razon_social||''),ult3:ult3(afil),id_afiliacion:ult3(afil)+'CPPX00'});
-    const ex=DB.afilGrupo.find(a=>String(a.id_grupo)===String(idg)&&String(a.numero_afiliacion)===afil);
-    const ag={id_grupo:idg,numero_afiliacion:afil,tasa_pac_tdd:+o.tasa_pac_tdd||0,tasa_pac_tdc:+o.tasa_pac_tdc||0,tasa_pac_amex:+o.tasa_pac_amex||0,tasa_pac_int:+o.tasa_pac_int||0,costo_x_trx:+o.costo_x_trx||0,pct_banca:+o.pct_banca||0};
-    if(ex)Object.assign(ex,ag);else DB.afilGrupo.push(ag);
-    const co={numero_afiliacion:afil,int_tdd:+o.int_tdd||0,int_tdc:+o.int_tdc||0,int_amex:o.int_amex!==''&&o.int_amex!=null?+o.int_amex:'',int_int:o.int_int!==''&&o.int_int!=null?+o.int_int:'',fee_broxel:o.fee_broxel!==''&&o.fee_broxel!=null?+o.fee_broxel:''};
-    const cex=costosDe(afil); if(cex)Object.assign(cex,co);else DB.costos.push(co);
-    n++;
-  });
-  bit('catalogo',`importó ${n} afiliaciones`); save(); return n;
-}
-function openImportGrupos(){ importModal('Importar grupos (Excel)','Importa grupos+afiliaciones+tasas+costos (una fila por afiliación). Usa la plantilla Excel como referencia.','id_grupo,nombre_cliente,numero_afiliacion,...',importarGrupos,'afiliaciones'); }
-function editGrupo(ag){ const isNew=!ag; ag=ag||{}; const g=ag.id_grupo?grupoById(ag.id_grupo):null; const af=ag.numero_afiliacion?DB.afiliaciones.find(a=>String(a.numero_afiliacion)===String(ag.numero_afiliacion)):null; const co=ag.numero_afiliacion?costosDe(ag.numero_afiliacion):null;
-  const body=el('div',{});
-  const I=(v='')=>el('input',{value:v}); const N=(v='',step='0.0001')=>el('input',{type:'number',step});
-  const idg=I(ag.id_grupo||''); idg.type='number'; const nom=I(g?g.nombre_cliente:''); const afil=I(ag.numero_afiliacion||''); const razon=I(af?af.razon_social:'');
-  const t_tdd=N(ag.tasa_pac_tdd||''),t_tdc=N(ag.tasa_pac_tdc||''),t_amex=N(ag.tasa_pac_amex||''),t_int=N(ag.tasa_pac_int||''),cxt=N(ag.costo_x_trx||'','0.01'),banca=N(ag.pct_banca||'');
-  const i_tdd=N(co?co.int_tdd:''),i_tdc=N(co?co.int_tdc:''),i_amex=N(co&&co.int_amex!==''?co.int_amex:DB.params.tasa_int_amex),i_int=N(co&&co.int_int!==''?co.int_int:DB.params.tasa_int_int),fee=N(co&&co.fee_broxel!==''?co.fee_broxel:DB.params.fee_broxel);
-  const sec=(t)=>el('h3',{class:'',style:'font-size:14px;margin:6px 0 10px;color:var(--accent)'},t);
-  body.append(sec('Grupo y afiliación'));
-  const g1=el('div',{class:'form-grid'}); g1.append(fld('Id de grupo',idg),fld('Nombre del cliente',nom),fld('Número de afiliación',afil),fld('Razón social',razon)); body.append(g1);
-  body.append(el('div',{class:'req-note'},'El concepto de dispersión se arma como DISPERSION &lt;últimos 3 díg.&gt;CPPX00&lt;id_grupo&gt;.'));
-  body.append(sec('Tasas pactadas (ingreso Polipay) — fracción, 0.025 = 2.5%'));
-  const g2=el('div',{class:'form-grid c3'}); g2.append(fld('Pactada TDD',t_tdd),fld('Pactada TDC',t_tdc),fld('Pactada AMEX',t_amex),fld('Pactada INT',t_int),fld('Costo x transacción (MXN)',cxt),fld('% Banca (Telematic)',banca)); body.append(g2);
-  body.append(sec('Estructura de costos del adquirente (fracción)'));
-  const g3=el('div',{class:'form-grid c3'}); g3.append(fld('Interc. TDD',i_tdd),fld('Interc. TDC',i_tdc),fld('Interc. AMEX',i_amex),fld('Interc. INT',i_int),fld('Fee Broxel',fee)); body.append(g3);
+function editGrupo(ag,af,co){const isNew=!ag;ag=ag||{};af=af||{};co=co||{};const body=el('div',{});
+  const I=(v='')=>el('input',{value:v});const NN=(v='',s='0.0001')=>el('input',{type:'number',step:s});
+  const idg=el('input',{type:'number',value:ag.id_grupo||''}),nom=I(ag._nombre||(af&&af._n)||'');
+  // nombre del grupo: lo tomamos de la fila; si no viene, vacío
+  const nomInput=I(ag.nombre_cliente||''); const afil=I(ag.numero_afiliacion||''),razon=I(af.razon_social||'');
+  const t_tdd=NN(ag.tasa_pac_tdd||''),t_tdc=NN(ag.tasa_pac_tdc||''),t_amex=NN(ag.tasa_pac_amex||''),t_int=NN(ag.tasa_pac_int||''),cxt=NN(ag.costo_x_trx||'','0.01'),banca=NN(ag.pct_banca||'');
+  const i_tdd=NN(co.int_tdd||''),i_tdc=NN(co.int_tdc||''),i_amex=NN(co.int_amex!=null&&co.int_amex!==''?co.int_amex:0.0247),i_int=NN(co.int_int!=null&&co.int_int!==''?co.int_int:0.0302),fee=NN(co.fee_broxel!=null&&co.fee_broxel!==''?co.fee_broxel:0.0028);
+  const sec=t=>el('h3',{style:'font-size:14px;margin:6px 0 10px;color:var(--accent)'},t);
+  body.append(sec('Grupo y afiliación'));const g1=el('div',{class:'form-grid'});g1.append(fld('Id de grupo',idg),fld('Nombre del cliente',nomInput),fld('Número de afiliación',afil),fld('Razón social',razon));body.append(g1);
+  body.append(sec('Tasas pactadas (fracción, 0.025 = 2.5%)'));const g2=el('div',{class:'form-grid c3'});g2.append(fld('Pactada TDD',t_tdd),fld('Pactada TDC',t_tdc),fld('Pactada AMEX',t_amex),fld('Pactada INT',t_int),fld('Costo x trx (MXN)',cxt),fld('% Banca',banca));body.append(g2);
+  body.append(sec('Estructura de costos del adquirente'));const g3=el('div',{class:'form-grid c3'});g3.append(fld('Interc. TDD',i_tdd),fld('Interc. TDC',i_tdc),fld('Interc. AMEX',i_amex),fld('Interc. INT',i_int),fld('Fee Broxel',fee));body.append(g3);
   const foot=el('div',{});
-  if(!isNew) foot.append(el('button',{class:'btn danger',onclick:()=>{ if(confirm('¿Eliminar esta afiliación del grupo?')){ DB.afilGrupo=DB.afilGrupo.filter(a=>!(String(a.id_grupo)===String(ag.id_grupo)&&String(a.numero_afiliacion)===String(ag.numero_afiliacion))); bit('catalogo',`eliminó afiliación ${ag.numero_afiliacion}`); save(); closeModal(); render(); } }},'Eliminar'),el('div',{class:'spacer',style:'flex:1'}));
-  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:()=>{
-    const idG=+idg.value, afN=String(afil.value).replace(/\D/g,'');
-    if(!idG||!afN||!nom.value.trim()){toast('Id grupo, nombre y afiliación son obligatorios','err');return;}
-    for(const[label,inp]of[['TDD',t_tdd],['TDC',t_tdc],['AMEX',t_amex],['INT',t_int],['banca',banca]]){ const val=+inp.value||0; if(val<0||val>=1){toast(`La tasa ${label} debe estar en [0,1)`,'err');return;} }
-    if(!grupoById(idG))DB.grupos.push({id_grupo:idG,nombre_cliente:nom.value.trim(),activo:true}); else grupoById(idG).nombre_cliente=nom.value.trim();
-    const exAf=DB.afiliaciones.find(a=>String(a.numero_afiliacion)===afN); const afObj={numero_afiliacion:afN,razon_social:razon.value.trim(),ult3:ult3(afN),id_afiliacion:ult3(afN)+'CPPX00'};
-    if(exAf)Object.assign(exAf,afObj);else DB.afiliaciones.push(afObj);
-    const exAg=DB.afilGrupo.find(a=>String(a.id_grupo)===String(idG)&&String(a.numero_afiliacion)===afN);
-    const agObj={id_grupo:idG,numero_afiliacion:afN,tasa_pac_tdd:+t_tdd.value||0,tasa_pac_tdc:+t_tdc.value||0,tasa_pac_amex:+t_amex.value||0,tasa_pac_int:+t_int.value||0,costo_x_trx:+cxt.value||0,pct_banca:+banca.value||0};
-    if(exAg)Object.assign(exAg,agObj);else DB.afilGrupo.push(agObj);
-    const exCo=costosDe(afN); const coObj={numero_afiliacion:afN,int_tdd:+i_tdd.value||0,int_tdc:+i_tdc.value||0,int_amex:+i_amex.value||0,int_int:+i_int.value||0,fee_broxel:+fee.value||0};
-    if(exCo)Object.assign(exCo,coObj);else DB.costos.push(coObj);
-    bit('catalogo',`${isNew?'alta':'edición'} grupo ${idG} / afiliación ${afN}`); save(); closeModal(); toast('Guardado','ok'); render();
+  if(!isNew)foot.append(el('button',{class:'btn danger',onclick:async()=>{if(confirm('¿Eliminar esta afiliación del grupo?')){await api('DELETE','/api/catalogo/afil-grupo/'+ag.id_grupo+'/'+ag.numero_afiliacion);closeModal();render();}}},'Eliminar'),el('div',{style:'flex:1'}));
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    try{await api('POST','/api/catalogo/grupo-afiliacion',{id_grupo:idg.value,nombre_cliente:nomInput.value,numero_afiliacion:afil.value,razon_social:razon.value,tasa_pac_tdd:t_tdd.value,tasa_pac_tdc:t_tdc.value,tasa_pac_amex:t_amex.value,tasa_pac_int:t_int.value,costo_x_trx:cxt.value,pct_banca:banca.value,int_tdd:i_tdd.value,int_tdc:i_tdc.value,int_amex:i_amex.value,int_int:i_int.value,fee_broxel:fee.value});
+      closeModal();toast('Guardado','ok');render();}catch(e){toast('Error: '+errMsg(e),'err');}
   }},'Guardar'));
   modal(isNew?'Alta guiada de grupo/afiliación':'Editar afiliación',body,foot,true);
 }
-function fld(label,input){ return el('label',{class:'field'},label,input); }
 
 /* ---------- CUENTAS ---------- */
-function vCuentas(v){
-  if(can('catalogos')) $('#pageAction').append(el('button',{class:'btn secondary sm',onclick:tplCuentas},'⬇ Plantilla Excel'),el('span',{},' '),el('button',{class:'btn secondary sm',onclick:openImportCuentas},'Importar Excel'),el('span',{},' '),el('button',{class:'btn',onclick:()=>editCuenta()},'+ Cuenta'));
-  const p=el('div',{class:'panel'}); p.append(el('h3',{},'Cuentas de liquidación'));
-  const rows=DB.cuentas.map(c=>{ const g=grupoById(c.id_grupo); const cod=c.codigo_banco||bancoCodigo(c.banco); const clabeOk=/^\d{18}$/.test(String(c.clabe));
-    const r=[`<div class="tt">${esc(g?g.nombre_cliente:('grupo '+c.id_grupo))}<small>${esc(c.nombre_comercial||'')}</small></div>`,
-      c.numero_afiliacion?`<span class="mono">${esc(c.numero_afiliacion)}</span>`:'<span class="pill">nivel grupo</span>',
-      esc(c.razon_social_beneficiario||''),esc(c.banco||''),`<span class="mono">${esc(c.clabe||'')}</span> ${clabeOk?'':'<span class="badge d">18?</span>'}`,cod||'<span class="badge w">?</span>'];
-    if(can('catalogos'))r._onclick=()=>editCuenta(c); return r; });
+async function vCuentas(v){
+  if(can('catalogos'))$('#pageAction').append(el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/plantilla/cuentas.xlsx','plantilla_cuentas.xlsx')},'⬇ Plantilla Excel'),el('span',{},' '),el('button',{class:'btn secondary sm',onclick:()=>openImport('cuentas','Importar cuentas')},'Importar Excel'),el('span',{},' '),el('button',{class:'btn',onclick:()=>editCuenta()},'+ Cuenta'));
+  const [cuentas,grupos,bancos]=await Promise.all([api('GET','/api/catalogo/cuentas'),api('GET','/api/catalogo/grupos'),api('GET','/api/catalogo/bancos')]);
+  const gf=await api('GET','/api/catalogo/grupos-full');
+  v.innerHTML='';const p=el('div',{class:'panel'});p.append(el('h3',{},'Cuentas de liquidación'));
+  const rows=cuentas.map(c=>{const g=grupos.find(x=>String(x.id_grupo)===String(c.id_grupo));const clabeOk=/^\d{18}$/.test(String(c.clabe||''));
+    const r=[`<div class="tt">${esc(g?g.nombre_cliente:('grupo '+c.id_grupo))}<small>${esc(c.nombre_comercial||'')}</small></div>`,c.numero_afiliacion?`<span class="mono">${esc(c.numero_afiliacion)}</span>`:'<span class="pill">nivel grupo</span>',esc(c.razon_social_beneficiario||''),esc(c.banco||''),`<span class="mono">${esc(c.clabe||'')}</span> ${clabeOk?'':'<span class="badge d">18?</span>'}`,c.codigo_banco||'<span class="badge w">?</span>'];
+    if(can('catalogos'))r._onclick=()=>editCuenta(c,grupos,bancos,gf);return r;});
   p.append(tableWrap(['Grupo','Afiliación','Beneficiario','Banco','CLABE','Cód. SPEI'],rows,{empty:'Sin cuentas. Cada afiliación con importe necesita su cuenta.'}));
   v.append(p);
 }
-function tplCuentas(){ saveXLSX('plantilla_cuentas.xlsx',[{name:'Cuentas',aoa:[['id_grupo','numero_afiliacion','nombre_comercial','razon_social_beneficiario','banco','clabe'],
-  [3,'7194416','DEAL','Deal Comercializadora SA','STP','646180123456789012']], cols:[{wch:8},{wch:16},{wch:16},{wch:26},{wch:14},{wch:20}]}]); toast('Plantilla Excel descargada'); }
-function importarCuentas(objs){ let n=0;
-  objs.forEach(o=>{ if(!o.id_grupo)return; const afil=String(o.numero_afiliacion||'').replace(/\D/g,'');
-    const c={id_grupo:+o.id_grupo,numero_afiliacion:afil,nombre_comercial:String(o.nombre_comercial||''),razon_social_beneficiario:String(o.razon_social_beneficiario||''),banco:String(o.banco||''),clabe:String(o.clabe||'').replace(/\D/g,''),codigo_banco:bancoCodigo(String(o.banco||''))};
-    // dedupe por grupo + afiliación (permite varias cuentas por grupo)
-    const ex=DB.cuentas.find(x=>String(x.id_grupo)===String(c.id_grupo)&&String(x.numero_afiliacion||'')===afil); if(ex)Object.assign(ex,c);else DB.cuentas.push(c); n++; });
-  bit('catalogo',`importó ${n} cuentas`); save(); return n;
-}
-function openImportCuentas(){ importModal('Importar cuentas (Excel)','La CLABE se guarda como texto (18 dígitos, conserva ceros a la izquierda). El código SPEI se resuelve del catálogo de bancos por el nombre.','id_grupo,nombre_comercial,razon_social_beneficiario,banco,clabe',importarCuentas,'cuentas'); }
-function editCuenta(c){ const isNew=!c; c=c||{}; const body=el('div',{});
-  const gsel=el('select'); DB.grupos.forEach(g=>gsel.append(el('option',{value:g.id_grupo},`${g.id_grupo} · ${g.nombre_cliente}`))); if(c.id_grupo)gsel.value=c.id_grupo;
+async function editCuenta(c,grupos,bancos,gf){const isNew=!c;c=c||{};
+  if(!grupos){[grupos,bancos]=await Promise.all([api('GET','/api/catalogo/grupos'),api('GET','/api/catalogo/bancos')]);gf=await api('GET','/api/catalogo/grupos-full');}
+  const body=el('div',{});
+  const gsel=el('select');grupos.forEach(g=>gsel.append(el('option',{value:g.id_grupo},`${g.id_grupo} · ${g.nombre_cliente}`)));if(c.id_grupo)gsel.value=c.id_grupo;
   const asel=el('select');
-  function fillAfil(){ asel.innerHTML=''; asel.append(el('option',{value:''},'(todas — nivel grupo)'));
-    DB.afilGrupo.filter(a=>String(a.id_grupo)===String(gsel.value)).forEach(a=>{ const af=DB.afiliaciones.find(x=>String(x.numero_afiliacion)===String(a.numero_afiliacion)); asel.append(el('option',{value:a.numero_afiliacion},`${a.numero_afiliacion}${af&&af.razon_social?' · '+af.razon_social:''}`)); });
-    if(c.numero_afiliacion)asel.value=c.numero_afiliacion; }
-  gsel.addEventListener('change',fillAfil); fillAfil();
-  const nc=el('input',{value:c.nombre_comercial||''}); const rz=el('input',{value:c.razon_social_beneficiario||''});
-  const bsel=el('select'); bsel.append(el('option',{value:''},'— banco —')); DB.bancos.forEach(b=>bsel.append(el('option',{value:b.nombre},`${b.nombre} (${b.codigo_spei})`))); if(c.banco)bsel.value=c.banco;
+  function fillAfil(){asel.innerHTML='';asel.append(el('option',{value:''},'(todas — nivel grupo)'));gf.afilGrupo.filter(a=>String(a.id_grupo)===String(gsel.value)).forEach(a=>{const af=gf.afiliaciones.find(x=>String(x.numero_afiliacion)===String(a.numero_afiliacion));asel.append(el('option',{value:a.numero_afiliacion},`${a.numero_afiliacion}${af&&af.razon_social?' · '+af.razon_social:''}`));});if(c.numero_afiliacion)asel.value=c.numero_afiliacion;}
+  gsel.addEventListener('change',fillAfil);fillAfil();
+  const nc=el('input',{value:c.nombre_comercial||''}),rz=el('input',{value:c.razon_social_beneficiario||''});
+  const bsel=el('select');bsel.append(el('option',{value:''},'— banco —'));bancos.forEach(b=>bsel.append(el('option',{value:b.nombre},`${b.nombre} (${b.codigo_spei})`)));if(c.banco)bsel.value=c.banco;
   const clabe=el('input',{value:c.clabe||'',maxlength:'18',placeholder:'18 dígitos'});
   body.append(fld('Grupo',gsel),fld('Afiliación',asel),fld('Nombre comercial',nc),fld('Razón social del beneficiario',rz),fld('Banco (dispersor)',bsel),fld('CLABE (18 dígitos)',clabe));
-  body.append(el('div',{class:'req-note'},'La cuenta se liga a la afiliación seleccionada. Deja “nivel grupo” solo si quieres una cuenta por defecto para todo el grupo.'));
-  if(!DB.afilGrupo.filter(a=>String(a.id_grupo)===String(gsel.value)).length)body.append(el('div',{class:'banner warn'},'Este grupo aún no tiene afiliaciones. Agrégalas en “Grupos y afiliaciones”.'));
-  if(!DB.bancos.length)body.append(el('div',{class:'banner warn'},'No hay bancos en el catálogo. Carga “Bancos SPEI” para resolver el código.'));
+  if(!bancos.length)body.append(el('div',{class:'banner warn'},'No hay bancos. Carga “Bancos SPEI” para resolver el código.'));
   const foot=el('div',{});
-  if(!isNew)foot.append(el('button',{class:'btn danger',onclick:()=>{if(confirm('¿Eliminar cuenta?')){DB.cuentas=DB.cuentas.filter(x=>x!==c);bit('catalogo',`eliminó cuenta grupo ${c.id_grupo} afil ${c.numero_afiliacion||'-'}`);save();closeModal();render();}}},'Eliminar'),el('div',{style:'flex:1'}));
-  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:()=>{
-    const cl=String(clabe.value).replace(/\D/g,''); if(cl&&!/^\d{18}$/.test(cl)){toast('La CLABE debe tener 18 dígitos','err');return;}
-    if(!gsel.value){toast('Selecciona un grupo','err');return;}
-    const afil=String(asel.value||'').replace(/\D/g,'');
-    const obj={id_grupo:+gsel.value,numero_afiliacion:afil,nombre_comercial:nc.value.trim(),razon_social_beneficiario:rz.value.trim(),banco:bsel.value,clabe:cl,codigo_banco:bancoCodigo(bsel.value)};
-    // evita duplicar cuenta para la misma afiliación del grupo
-    const dup=DB.cuentas.find(x=>x!==c&&String(x.id_grupo)===String(obj.id_grupo)&&String(x.numero_afiliacion||'')===afil);
-    if(isNew){ if(dup)Object.assign(dup,obj); else DB.cuentas.push(obj); } else Object.assign(c,obj);
-    bit('catalogo',`${isNew?'alta':'edición'} cuenta grupo ${obj.id_grupo} afil ${afil||'nivel-grupo'}`); save(); closeModal(); toast('Guardado','ok'); render();
+  if(!isNew)foot.append(el('button',{class:'btn danger',onclick:async()=>{if(confirm('¿Eliminar cuenta?')){await api('DELETE','/api/catalogo/cuenta/'+c.id);closeModal();render();}}},'Eliminar'),el('div',{style:'flex:1'}));
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    try{await api('POST','/api/catalogo/cuenta',{id:c.id,id_grupo:gsel.value,numero_afiliacion:asel.value,nombre_comercial:nc.value,razon_social_beneficiario:rz.value,banco:bsel.value,clabe:clabe.value});closeModal();toast('Guardado','ok');render();}
+    catch(e){toast(e.data&&e.data.error==='clabe_18'?'La CLABE debe tener 18 dígitos':errMsg(e),'err');}
   }},'Guardar'));
   modal(isNew?'Nueva cuenta de liquidación':'Editar cuenta',body,foot);
 }
 
 /* ---------- BANCOS ---------- */
-function vBancos(v){
-  if(can('catalogos')) $('#pageAction').append(el('button',{class:'btn secondary sm',onclick:seedBancos},'Cargar bancos comunes'),el('span',{},' '),el('button',{class:'btn',onclick:()=>editBanco()},'+ Banco'));
-  const p=el('div',{class:'panel'}); p.append(el('h3',{},'Catálogo de bancos SPEI'));
-  const rows=DB.bancos.map(b=>{const r=[esc(b.nombre),{num:esc(b.codigo_spei)}]; if(can('catalogos'))r._onclick=()=>editBanco(b); return r;});
-  p.append(tableWrap(['Banco',{t:'Código SPEI'}],rows,{empty:'Sin bancos. Usa “Cargar bancos comunes” o agrega manualmente.'}));
+async function vBancos(v){
+  if(can('catalogos'))$('#pageAction').append(el('button',{class:'btn secondary sm',onclick:async()=>{await api('POST','/api/catalogo/bancos-comunes');toast('Bancos comunes cargados','ok');render();}},'Cargar bancos comunes'),el('span',{},' '),el('button',{class:'btn',onclick:()=>editBanco()},'+ Banco'));
+  const bancos=await api('GET','/api/catalogo/bancos');v.innerHTML='';
+  const p=el('div',{class:'panel'});p.append(el('h3',{},'Catálogo de bancos SPEI'));
+  p.append(tableWrap(['Banco',{t:'Código SPEI'}],bancos.map(b=>{const r=[esc(b.nombre),{num:esc(b.codigo_spei)}];if(can('catalogos'))r._onclick=()=>editBanco(b);return r;}),{empty:'Sin bancos. Usa “Cargar bancos comunes”.'}));
   v.append(p);
 }
-function seedBancos(){ const comunes=[['STP',90646],['TRANSFER',90684],['KAPITAL',90670],['KUSPIT',90653],['ARCUS',90716],['ASP INTEGRA',90659],['BBVA MEXICO',40012],['SANTANDER',40014],['BANORTE',40072],['BANAMEX',40002],['HSBC',40021],['SCOTIABANK',40044]];
-  let n=0; comunes.forEach(([nm,cod])=>{ if(!DB.bancos.find(b=>b.nombre.toLowerCase()===nm.toLowerCase())){DB.bancos.push({nombre:nm,codigo_spei:cod});n++;} });
-  // re-resolver códigos en cuentas
-  DB.cuentas.forEach(c=>{if(!c.codigo_banco)c.codigo_banco=bancoCodigo(c.banco);});
-  bit('catalogo',`cargó ${n} bancos comunes`); save(); toast(`${n} bancos agregados`,'ok'); render();
-}
-function editBanco(b){ const isNew=!b; b=b||{}; const body=el('div',{}); const nm=el('input',{value:b.nombre||''}); const cod=el('input',{type:'number',value:b.codigo_spei||''});
+function editBanco(b){const isNew=!b;b=b||{};const body=el('div',{});const nm=el('input',{value:b.nombre||''}),cod=el('input',{type:'number',value:b.codigo_spei||''});
   body.append(fld('Nombre del banco',nm),fld('Código SPEI',cod));
-  const foot=el('div',{});
-  if(!isNew)foot.append(el('button',{class:'btn danger',onclick:()=>{if(confirm('¿Eliminar banco?')){DB.bancos=DB.bancos.filter(x=>x!==b);save();closeModal();render();}}},'Eliminar'),el('div',{style:'flex:1'}));
-  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:()=>{ if(!nm.value.trim()||!cod.value){toast('Nombre y código requeridos','err');return;}
-    const obj={nombre:nm.value.trim(),codigo_spei:+cod.value}; if(isNew)DB.bancos.push(obj);else Object.assign(b,obj);
-    DB.cuentas.forEach(c=>{if(c.banco&&c.banco.toLowerCase()===obj.nombre.toLowerCase())c.codigo_banco=obj.codigo_spei;});
-    bit('catalogo',`${isNew?'alta':'edición'} banco ${obj.nombre}`); save(); closeModal(); render();
+  const foot=el('div',{});foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    try{await api('POST','/api/catalogo/banco',{nombre:nm.value,codigo_spei:cod.value});closeModal();render();}catch(e){toast(errMsg(e),'err');}
   }},'Guardar'));
   modal(isNew?'Nuevo banco':'Editar banco',body,foot);
 }
 
 /* ---------- FERIADOS ---------- */
-function vFeriados(v){
-  if(can('catalogos')) $('#pageAction').append(el('button',{class:'btn secondary sm',onclick:seedFeriados},'Feriados MX 2026'),el('span',{},' '),el('button',{class:'btn',onclick:()=>{const f=prompt('Fecha feriada (dd/mm/yyyy):');if(f){const d=parseFecha(f);if(d){DB.feriados.push(isoFecha(d));DB.feriados=[...new Set(DB.feriados)].sort();save();recalcularFechasLiq();render();}}}},'+ Feriado'));
-  const p=el('div',{class:'panel'}); p.append(el('h3',{},'Días feriados (inhábiles bancarios)'));
-  const rows=DB.feriados.slice().sort().map(f=>{const d=parseFecha(f);const r=[fmtFecha(d),['dom','lun','mar','mié','jue','vie','sáb'][d.getDay()]]; if(can('catalogos'))r.push(`<button class="btn danger sm" onclick="event.stopPropagation();DB.feriados=DB.feriados.filter(x=>x!=='${f}');save();recalcularFechasLiq();render();">Quitar</button>`); return r;});
+async function vFeriados(v){
+  if(can('catalogos'))$('#pageAction').append(el('button',{class:'btn secondary sm',onclick:async()=>{await api('POST','/api/catalogo/feriados-mx');toast('Feriados MX 2026 cargados','ok');render();}},'Feriados MX 2026'),el('span',{},' '),el('button',{class:'btn',onclick:async()=>{const f=prompt('Fecha feriada (dd/mm/yyyy):');if(f){try{await api('POST','/api/catalogo/feriado',{fecha:f});render();}catch(e){toast(errMsg(e),'err');}}}},'+ Feriado'));
+  const feriados=await api('GET','/api/catalogo/feriados');v.innerHTML='';
+  const p=el('div',{class:'panel'});p.append(el('h3',{},'Días feriados (inhábiles bancarios)'));
+  const rows=feriados.map(f=>{const [y,mo,d]=f.split('-').map(Number);const dt=new Date(y,mo-1,d);const r=[fmtISO(f),['dom','lun','mar','mié','jue','vie','sáb'][dt.getDay()],can('catalogos')?'<span class="badge d">quitar</span>':''];
+    if(can('catalogos'))r._onclick=async()=>{if(confirm('¿Quitar feriado '+fmtISO(f)+'?')){await api('DELETE','/api/catalogo/feriado/'+f);render();}};return r;});
   p.append(tableWrap(can('catalogos')?['Fecha','Día','']:['Fecha','Día'],rows,{empty:'Sin feriados. Carga “Feriados MX 2026”.'}));
   v.append(p);
 }
-function seedFeriados(){ const f2026=['2026-01-01','2026-02-02','2026-03-16','2026-05-01','2026-09-16','2026-11-16','2026-12-25'];
-  let n=0; f2026.forEach(x=>{if(!DB.feriados.includes(x)){DB.feriados.push(x);n++;}}); DB.feriados.sort(); bit('catalogo',`cargó ${n} feriados`); save(); recalcularFechasLiq(); toast(`${n} feriados agregados`,'ok'); render(); }
 
 /* ---------- PARÁMETROS ---------- */
-function vParametros(v){
-  const P=DB.params; const ro=!can('params');
-  const p=el('div',{class:'panel'}); p.append(el('h3',{},'Parámetros del ciclo',ro?el('span',{class:'right'},el('span',{class:'pill'},'solo lectura')):''));
-  const iva=el('input',{type:'number',step:'0.01',value:P.IVA,disabled:ro?true:null});
-  const amex=el('input',{type:'number',step:'0.0001',value:P.tasa_int_amex,disabled:ro?true:null});
-  const int=el('input',{type:'number',step:'0.0001',value:P.tasa_int_int,disabled:ro?true:null});
-  const fee=el('input',{type:'number',step:'0.0001',value:P.fee_broxel,disabled:ro?true:null});
-  const g=el('div',{class:'form-grid c3'}); g.append(fld('IVA',iva),fld('Interc. AMEX (default)',amex),fld('Interc. INT (default)',int),fld('Fee Broxel (default)',fee)); p.append(g);
-  p.append(el('div',{class:'req-note'},'Los defaults de intercambio AMEX/INT y Fee Broxel se usan cuando la afiliación no define el suyo en la estructura de costos.'));
-  v.append(p);
-  const p2=el('div',{class:'panel'}); p2.append(el('h3',{},'Desfase y hora de corte por producto (RN-12)'));
-  const nN=el('input',{type:'number',value:P.prodParams.nacional.n,disabled:ro?true:null}); const cN=el('input',{value:P.prodParams.nacional.corte,disabled:ro?true:null});
-  const nA=el('input',{type:'number',value:P.prodParams.amex.n,disabled:ro?true:null}); const cA=el('input',{value:P.prodParams.amex.corte,disabled:ro?true:null});
-  const g2=el('div',{class:'form-grid'}); g2.append(fld('Nacional/INT · desfase (días hábiles)',nN),fld('Nacional/INT · hora de corte (HH:MM)',cN),fld('AMEX · desfase (días hábiles)',nA),fld('AMEX · hora de corte (HH:MM)',cA)); p2.append(g2);
-  if(!ro)p2.append(el('button',{class:'btn',onclick:async()=>{ P.IVA=+iva.value||0.16; P.tasa_int_amex=+amex.value||0; P.tasa_int_int=+int.value||0; P.fee_broxel=+fee.value||0;
-    P.prodParams.nacional={n:+nN.value||1,corte:cN.value||'23:00'}; P.prodParams.amex={n:+nA.value||3,corte:cA.value||'23:00'};
-    bit('params','actualizó parámetros del ciclo'); save();
-    const n=await withBusy('Recalculando fechas de liquidación…',async()=>recalcularFechasLiq());
-    toast(`Parámetros guardados · ${n} fecha(s) de liquidación recalculada(s)`,'ok');
+async function vParametros(v){
+  const P=await api('GET','/api/catalogo/params');const ro=!can('params');v.innerHTML='';
+  const p=el('div',{class:'panel'});p.append(el('h3',{},'Parámetros del ciclo',ro?el('span',{class:'right'},el('span',{class:'pill'},'solo lectura')):''));
+  const iva=el('input',{type:'number',step:'0.01',value:P.IVA,disabled:ro?true:null}),amex=el('input',{type:'number',step:'0.0001',value:P.tasa_int_amex,disabled:ro?true:null}),int=el('input',{type:'number',step:'0.0001',value:P.tasa_int_int,disabled:ro?true:null}),fee=el('input',{type:'number',step:'0.0001',value:P.fee_broxel,disabled:ro?true:null});
+  const g=el('div',{class:'form-grid c3'});g.append(fld('IVA',iva),fld('Interc. AMEX (default)',amex),fld('Interc. INT (default)',int),fld('Fee Broxel (default)',fee));p.append(g);v.append(p);
+  const p2=el('div',{class:'panel'});p2.append(el('h3',{},'Desfase y hora de corte por producto (RN-12)'));
+  const nN=el('input',{type:'number',value:P.prodParams.nacional.n,disabled:ro?true:null}),cN=el('input',{value:P.prodParams.nacional.corte,disabled:ro?true:null}),nA=el('input',{type:'number',value:P.prodParams.amex.n,disabled:ro?true:null}),cA=el('input',{value:P.prodParams.amex.corte,disabled:ro?true:null});
+  const g2=el('div',{class:'form-grid'});g2.append(fld('Nacional/INT · desfase (días hábiles)',nN),fld('Nacional/INT · hora de corte (HH:MM)',cN),fld('AMEX · desfase (días hábiles)',nA),fld('AMEX · hora de corte (HH:MM)',cA));p2.append(g2);
+  p2.append(el('div',{class:'req-note'},'Al guardar, el servidor recalcula la fecha de liquidación de las transacciones cargadas.'));
+  if(!ro)p2.append(el('button',{class:'btn',onclick:async()=>{
+    try{const r=await withBusy('Guardando y recalculando…',()=>api('PUT','/api/catalogo/params',{IVA:+iva.value||0.16,tasa_int_amex:+amex.value||0,tasa_int_int:+int.value||0,fee_broxel:+fee.value||0,prodParams:{nacional:{n:+nN.value||1,corte:cN.value||'23:00'},amex:{n:+nA.value||3,corte:cA.value||'23:00'}}}));
+      toast(`Parámetros guardados · ${r.recalculadas} fecha(s) recalculada(s)`,'ok');}catch(e){toast(errMsg(e),'err');}
   }},'Guardar parámetros'));
   v.append(p2);
 }
 
 /* ---------- BITÁCORA ---------- */
-function vBitacora(v){ const p=el('div',{class:'panel'}); p.append(el('h3',{},'Bitácora de acciones'));
-  const rows=DB.bitacora.slice(0,300).map(b=>[new Date(b.ts).toLocaleString('es-MX'),esc(b.usuario),`<span class="pill">${esc(ROLES[b.rol]||b.rol)}</span>`,`<span class="badge b">${esc(b.accion)}</span>`,esc(b.detalle)]);
-  p.append(tableWrap(['Fecha/hora','Usuario','Rol','Acción','Detalle'],rows,{empty:'Sin registros'}));
+async function vBitacora(v){
+  const b=await api('GET','/api/bitacora');v.innerHTML='';
+  const p=el('div',{class:'panel'});p.append(el('h3',{},'Bitácora de acciones'));
+  p.append(tableWrap(['Fecha/hora','Usuario','Rol','Acción','Detalle'],b.map(x=>[new Date(x.ts).toLocaleString('es-MX'),esc(x.usuario),`<span class="pill">${esc(ROLES[x.rol]||x.rol)}</span>`,`<span class="badge b">${esc(x.accion)}</span>`,esc(x.detalle)]),{empty:'Sin registros'}));
   v.append(p);
 }
 
-/* ============================================================================
-   AUTO-PRUEBAS DEL MOTOR
-   ========================================================================= */
-function pruebas(){
-  const P=PARAMS_DEF(); const fer=['2026-05-01']; const out=[];
-  const casoFecha=(desc,fecha,hora,prod,esperado,feriados)=>{ const r=fechaLiquidacion(fecha,hora,prod,P,feriados||[]); const got=fmtFecha(r); out.push({desc,got,esperado,pass:got===esperado}); };
-  // RF-02 — nota: 2026: 07/08 vie, 10/08 lun; 03/08 lun, 05/08 mié
-  casoFecha('Nacional viernes 22:00 → lunes','07/08/2026','22:00','Débito','10/08/2026');
-  casoFecha('Nacional viernes 23:30 (post-corte) → lunes','07/08/2026','23:30','Débito','10/08/2026');
-  casoFecha('Nacional lunes 23:30 (post-corte) → miércoles','03/08/2026','23:30','Débito','05/08/2026');
-  casoFecha('Internacional viernes 22:00 → lunes (=Nacional)','07/08/2026','22:00','Internacional','10/08/2026');
-  casoFecha('AMEX lunes 19:00 → jueves (T+3)','03/08/2026','19:00','American Express','06/08/2026');
-  casoFecha('AMEX lunes 23:30 (post-corte 23:00) → viernes','03/08/2026','23:30','American Express','07/08/2026');
-  casoFecha('AMEX 28/04 con feriado 01/05 → 04/05','28/04/2026','10:00','American Express','04/05/2026',fer);
-  // Anexo 13.3 — control DEAL/afiliación 7194416 solo TDD
-  const tasas={pac_tdd:0.025,pac_tdc:0,pac_amex:0,pac_int:0,costo_x_trx:0,pct_banca:0};
-  const costos={int_tdd:0.011,int_tdc:0,int_amex:0.0247,int_int:0.0302,fee_broxel:0.0028};
-  const txs=[{producto:'Débito',monto:1000},{producto:'Débito',monto:500}];
-  const r=calcularCompensacion(txs,{tasas,costos},P,{});
-  const chk=(desc,val,esp)=>out.push({desc,got:num(val),esperado:num(esp),pass:Math.abs(val-esp)<=0.01});
-  const m=1500, com=m*0.025, ivacom=com*0.16, comp=m-(com+ivacom);
-  chk('13.3 comp_tdd = comp_total',r.comp_tdd,r.comp_total);
-  chk('13.3 comp_total = disp_total',r.comp_total,r.disp_total);
-  chk('13.3 diferencia = 0',r.diferencia,0);
-  chk('13.3 comp_tdd = m − (com+IVA)',r.comp_tdd,comp);
-  chk('13.3 utilidad = com − int − broxel',r.utilidad, com-(m*0.011)-(m*0.0028));
-  // RN-09 con financiamientos y contracargos (cuadre debe seguir en 0)
-  const tasas2={pac_tdd:0.02,pac_tdc:0.02,pac_amex:0.03,pac_int:0.03,costo_x_trx:1,pct_banca:0.005};
-  const costos2={int_tdd:0.01,int_tdc:0.012,int_amex:0.0247,int_int:0.0302,fee_broxel:0.0028};
-  const txs2=[{producto:'Débito',monto:2000},{producto:'Crédito',monto:1500},{producto:'Internacional',monto:800},{producto:'American Express',monto:1200}];
-  const r2=calcularCompensacion(txs2,{tasas:tasas2,costos:costos2},P,{financiamientos:50,contracargos_dom:30,contracargos_amex:20});
-  out.push({desc:'RN-09 diferencia=0 con fin/CC>0',got:num(r2.diferencia),esperado:'0.00',pass:Math.abs(r2.diferencia)<=0.01});
-  out.push({desc:'RN-09 disp_dom+disp_amex=disp_total',got:num(r2.disp_dom+r2.disp_amex),esperado:num(r2.disp_total),pass:Math.abs((r2.disp_dom+r2.disp_amex)-r2.disp_total)<=0.01});
-  return out;
-}
-function vPruebas(v){
-  const res=pruebas(); const pass=res.filter(r=>r.pass).length;
-  v.append(el('div',{class:'banner '+(pass===res.length?'ok':'err'),html:`Resultado: <b>${pass}/${res.length}</b> pruebas correctas. Validan RF-02 (fecha de liquidación T+n) y el anexo 13.3 / RN-09 del BRD.`}));
-  const p=el('div',{class:'panel'}); p.append(el('h3',{},'Casos verificados'));
-  res.forEach(r=>{ p.append(el('div',{class:'testline '+(r.pass?'pass':'fail')},el('span',{class:'st'},r.pass?'PASS':'FAIL'),el('span',{style:'flex:1'},r.desc),el('span',{class:'muted'},`obtenido: ${r.got}${r.pass?'':` · esperado: ${r.esperado}`}`))); });
-  v.append(p);
-  window.__PRUEBAS__=res; // para verificación externa
+/* ---------- import genérico (Excel/CSV) ---------- */
+function openImport(tipo,title){
+  const body=el('div',{});body.append(el('div',{class:'banner'},'Sube el Excel (.xlsx) o pega CSV. El servidor lo parsea. Usa la plantilla como referencia.'));
+  const file=el('input',{type:'file',accept:'.xlsx,.xls,.csv,.tsv,.txt'});const ta=el('textarea',{style:'min-height:140px',placeholder:'pega CSV aquí'});
+  body.append(el('label',{class:'field'},'Archivo Excel (.xlsx) o CSV',file),el('label',{class:'field'},'…o pega CSV',ta));
+  const foot=el('div',{});foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    const fd=new FormData();if(file.files[0])fd.append('archivo',file.files[0]);else if(ta.value.trim())fd.append('csv',ta.value.trim());else{toast('Sube un archivo o pega CSV','err');return;}
+    try{const r=await withBusy('Importando en el servidor…',()=>api('POST','/api/catalogo/'+tipo+'/import',fd));closeModal();toast(`${r.importadas} importadas`,'ok');render();}catch(e){toast('Error: '+errMsg(e),'err');}
+  }},'Importar'));
+  modal(title,body,foot,true);
 }
 
 /* ============================================================================
    ARRANQUE
    ========================================================================= */
-function mountApp(){ $('#loginScreen').style.display='none'; $('#app').style.display='flex';
-  $('#whoAv').textContent=(SES.nombre[0]||'?').toUpperCase(); $('#whoName').textContent=SES.nombre; $('#whoRole').textContent=ROLES[SES.rol];
-  VIEW='dashboard'; render();
-}
-function boot(){ load();
-  try{const s=JSON.parse(sessionStorage.getItem('cl_ses'));if(s&&s.nombre){SES=s;mountApp();return;}}catch(e){}
+function mountApp(){$('#loginScreen').style.display='none';$('#app').style.display='flex';
+  $('#whoAv').textContent=(SES.nombre[0]||'?').toUpperCase();$('#whoName').textContent=SES.nombre;$('#whoRole').textContent=ROLES[SES.rol]||SES.rol;
+  VIEW='dashboard';render();}
+async function boot(){
+  try{const est=await fetch('/api/estado').then(r=>r.json());if(!est.db){document.body.innerHTML='<div style="padding:40px;font-family:Montserrat,sans-serif;color:#8a1f1f">La base de datos no está disponible. Revisa DATABASE_URL en el servidor.</div>';return;}}catch(_){}
+  const tok=TOKEN();
+  if(tok){try{const u=await api('GET','/api/yo');SES=u;mountApp();return;}catch(_){logout();}}
   $('#loginScreen').style.display='grid';
 }
 boot();
