@@ -1,0 +1,14 @@
+{
+  "name": "polipay-conciliacion-liquidacion",
+  "version": "0.4.0",
+  "description": "Sistema de Conciliación y Liquidación T+1 (Agregador/POS) — BRD-OP-AGR-001",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
