@@ -10,7 +10,9 @@ const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 
-const DATABASE_URL = process.env.DATABASE_URL || '';
+// Schema dedicado: TODAS las tablas viven aquí (nunca en public), para poder compartir
+// el mismo proyecto Supabase con gestion-operaciones sin colisiones.
+const SCHEMA = (process.env.DB_SCHEMA || 'conciliacion').replace(/[^a-zA-Z0-9_]/g, '') || 'conciliacion';
 let backend = null;   // { query, exec, kind }
 let ready = false;
 
@@ -25,27 +27,30 @@ function limpiarConn(url) {
 }
 
 async function initDB() {
+  const DATABASE_URL = process.env.DATABASE_URL || '';
   if (DATABASE_URL) {
     const { Pool } = require('pg');
     const pool = new Pool({
       connectionString: limpiarConn(DATABASE_URL),
       ssl: { require: true, rejectUnauthorized: false },
       max: 5,
+      // Fija el search_path al arrancar cada conexión: TODO va a `SCHEMA`, jamás a public.
+      options: '-c search_path=' + SCHEMA,
     });
     pool.on('error', e => console.error('PG pool error', e.message));
     await pool.query('select 1');
     setInterval(() => pool.query('select 1').catch(() => {}), 6 * 3600 * 1000); // keep-alive
     backend = {
-      kind: 'postgres (supabase)',
+      kind: `postgres (supabase) · schema "${SCHEMA}"`,
       query: (t, p) => pool.query(t, p || []),
       exec: (sql) => pool.query(sql),
     };
   } else {
     const { PGlite } = await import('@electric-sql/pglite');
     const db = new PGlite(path.join(__dirname, '..', '.pgdata'));
-    await db.query('select 1');
+    await db.exec(`create schema if not exists ${SCHEMA}; set search_path to ${SCHEMA};`);
     backend = {
-      kind: 'pglite (local ./.pgdata)',
+      kind: `pglite (local ./.pgdata) · schema "${SCHEMA}"`,
       query: (t, p) => db.query(t, p || []),
       exec: (sql) => db.exec(sql),
     };
@@ -56,6 +61,8 @@ async function initDB() {
 }
 
 async function migrate() {
+  // Crea el schema dedicado (no toca public) y luego las tablas dentro de él.
+  await backend.query(`create schema if not exists ${SCHEMA}`);
   const sql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
   await backend.exec(sql);
   await seedUsuarios();
