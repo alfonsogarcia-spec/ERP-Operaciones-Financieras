@@ -433,10 +433,18 @@ app.get('/api/cortes/:id/layout.xlsx', auth, async (req, res) => {
   const c = (await db.query('select *, fecha_liq_iso::text as fli from cortes where id_corte=$1', [parseInt(req.params.id, 10)])).rows[0];
   if (!c) return res.status(404).json({ error: 'no_existe' });
   const cal = (await db.query('select * from calculos where corte_id=$1', [c.id_corte])).rows
-    .map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc }))
-    .filter(x => Math.abs(x.calc.disp_total) > 0.005);
-  const bloq = cal.filter(x => !x.clabe || !x.codigo_banco);
-  if (bloq.length) return res.status(409).json({ error: 'bloqueado', detalle: bloq.map(x => ({ razon: x.razon, afil: x.afil, importe: E.round2(x.calc.disp_total), falta: !x.clabe ? 'CLABE' : 'codigo_banco' })) });
+    .map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc }));
+  // Órdenes de dispersión SEPARADAS: primero doméstico (nacional/INT), luego AMEX (aparte).
+  // AMEX usa concepto DISPERSION <ult3>CPPXAMEX00<id_grupo>.
+  const dom = [], amex = [];
+  for (const x of cal) {
+    const r = x.calc;
+    if (Math.abs(r.disp_dom) > 0.005) dom.push({ concepto: x.concepto, clabe: x.clabe, cod: x.codigo_banco, benef: x.beneficiario, cant: E.round2(r.disp_dom), razon: x.razon, afil: x.afil });
+    if (Math.abs(r.disp_amex) > 0.005) amex.push({ concepto: `DISPERSION ${E.ult3(x.afil)}CPPXAMEX00${x.id_grupo}`, clabe: x.clabe, cod: x.codigo_banco, benef: x.beneficiario, cant: E.round2(r.disp_amex), razon: x.razon, afil: x.afil });
+  }
+  const orders = [...dom, ...amex];
+  const bloq = orders.filter(o => !o.clabe || !o.cod);
+  if (bloq.length) return res.status(409).json({ error: 'bloqueado', detalle: bloq.map(o => ({ razon: o.razon, afil: o.afil, importe: o.cant, falta: !o.clabe ? 'CLABE' : 'codigo_banco' })) });
   // Plantilla LAYOUT (dispersor): 8 columnas. Se llenan solo las que tenemos; el resto en blanco.
   const head = [
     'Concepto',
@@ -448,17 +456,8 @@ app.get('/api/cortes/:id/layout.xlsx', auth, async (req, res) => {
     'Referencia numérica',
     'Fecha de pago (Opcional, solo para transacciones futuras) Formato YYYY-mm-dd HH:mm',
   ];
-  const rows = cal.map(x => [
-    x.concepto,                              // Concepto
-    String(x.clabe),                         // Cuenta clabe del beneficiario (texto, conserva ceros)
-    Number(x.codigo_banco) || x.codigo_banco,// Código del banco del beneficiario
-    x.beneficiario,                          // Nombre del beneficiario
-    '',                                      // RFC o CURP del beneficiario  (en blanco: no disponible)
-    E.round2(x.calc.disp_total),             // Cantidad
-    '',                                      // Referencia numérica          (en blanco)
-    '',                                      // Fecha de pago                (en blanco)
-  ]);
-  await bit(req, 'layout', `exportó layout corte #${c.id_corte} (${rows.length} órdenes)`);
+  const rows = orders.map(o => [o.concepto, String(o.clabe), Number(o.cod) || o.cod, o.benef, '', o.cant, '', '']);
+  await bit(req, 'layout', `exportó layout corte #${c.id_corte} (${orders.length} órdenes: ${dom.length} dom + ${amex.length} AMEX)`);
   enviarXLSX(res, `layout_spei_corte_${c.id_corte}_${c.fli}.xlsx`, X.buildXLSX([{ name: 'LAYOUT', aoa: [head, ...rows], cols: [{ wch: 22 }, { wch: 22 }, { wch: 16 }, { wch: 28 }, { wch: 20 }, { wch: 14 }, { wch: 18 }, { wch: 40 }] }]));
 });
 app.get('/api/cortes/:id/reporte.xlsx', auth, async (req, res) => {
