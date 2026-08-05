@@ -6,7 +6,7 @@ services:
   - type: web
     name: polipay-conciliacion-liquidacion
     runtime: node
-    plan: free            # cámbialo a "starter" si no quieres que el servicio "duerma" por inactividad
+    plan: starter         # servicio siempre activo (no duerme por inactividad)
     region: oregon        # cercano a Supabase us-west-2 (menor latencia)
     buildCommand: npm install
     startCommand: node server.js
