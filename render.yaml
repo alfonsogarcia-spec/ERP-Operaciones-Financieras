@@ -1,4 +1,4 @@
-# Blueprint de Render — Sistema de Conciliación y Liquidación T+1
+# Blueprint de Render — Polipay POS Settlement
 # Servicio independiente. La BD es el MISMO Supabase que gestion-operaciones,
 # pero aislado en el schema `conciliacion` (DB_SCHEMA). Los secretos (DATABASE_URL,
 # JWT_SECRET) se capturan en el dashboard de Render, NO en el repo.

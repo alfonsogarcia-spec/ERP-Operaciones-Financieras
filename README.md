@@ -1,4 +1,4 @@
-# Polipay · Sistema de Conciliación y Liquidación T+1
+# Polipay POS Settlement (Conciliación y Liquidación T+1)
 
 Automatiza el ciclo de **conciliación y liquidación T+1** del Agregador/POS (MCEB · Broxel BIN
 Sponsor). Implementa el **BRD-OP-AGR-001**. Desde v0.5.0 es **backend-driven**: toda la lógica y los

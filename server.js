@@ -1,5 +1,5 @@
 /* ============================================================================
-   server.js — Conciliación y Liquidación T+1 (BRD-OP-AGR-001)
+   server.js — Polipay POS Settlement (BRD-OP-AGR-001)
    Backend: TODA la lógica y el estado viven aquí. El front es solo espejo.
    - Motor: engine.js (única fuente de verdad).
    - Datos: Postgres (Supabase en prod · pglite en dev).
@@ -811,7 +811,7 @@ async function armarInformeHTML(idCorte, opts) {
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
           <td><img src="${logoSrc}" alt="Polipay" height="34" style="display:block;height:34px;width:auto;border:0;outline:none;text-decoration:none"/></td>
           <td align="right" style="line-height:1.35">
-            <div style="font:700 12px/1.2 Montserrat,Arial,sans-serif;color:${accent};letter-spacing:.09em;text-transform:uppercase">Conciliación y Liquidación T+1</div>
+            <div style="font:700 12px/1.2 Montserrat,Arial,sans-serif;color:${accent};letter-spacing:.09em;text-transform:uppercase">Polipay POS Settlement</div>
             <div style="font:400 11px/1.2 Montserrat,Arial,sans-serif;color:${muted};letter-spacing:.02em;text-transform:uppercase;margin-top:3px">Aviso automático de corte</div>
           </td>
         </tr></table>
@@ -895,7 +895,7 @@ async function armarInformeHTML(idCorte, opts) {
     <tr>
       <td style="background:${brand};padding:14px 32px">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
-          <td style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">Polipay · Conciliación y Liquidación</td>
+          <td style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">Polipay POS Settlement</td>
           <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">contacto@polipay.io</td>
         </tr></table>
       </td>
@@ -954,7 +954,7 @@ function sesEnabled() {
   return !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && process.env.AWS_REGION);
 }
 const SES_FROM = process.env.SES_FROM || 'ops.agregador@polipay.io';
-const SES_FROM_NAME = process.env.SES_FROM_NAME || 'Polipay · Operaciones';
+const SES_FROM_NAME = process.env.SES_FROM_NAME || 'Polipay · Operaciones · MCEB';
 
 function buildMime({ from, fromName, to, cc, bcc, subject, html, attachments, inlineImages }) {
   // Estructura MIME:
@@ -982,7 +982,7 @@ function buildMime({ from, fromName, to, cc, bcc, subject, html, attachments, in
   L.push(`--${bRelated}`);
   L.push(`Content-Type: multipart/alternative; boundary="${bAlt}"`);
   L.push('');
-  const textFallback = 'Aviso automático de corte de Polipay Conciliación y Liquidación T+1. Consulta el detalle en el correo HTML o los archivos adjuntos.';
+  const textFallback = 'Aviso automático de corte de Polipay POS Settlement. Consulta el detalle en el correo HTML o los archivos adjuntos.';
   L.push(`--${bAlt}`);
   L.push('Content-Type: text/plain; charset=UTF-8');
   L.push('Content-Transfer-Encoding: base64');
@@ -1122,5 +1122,5 @@ app.get('*', (req, res) => {
 (async () => {
   try { const kind = await db.initDB(); console.log('Base de datos:', kind); }
   catch (e) { console.error('No se pudo inicializar la BD:', e.message); }
-  app.listen(PORT, () => console.log(`Conciliación y Liquidación T+1 en http://localhost:${PORT}`));
+  app.listen(PORT, () => console.log(`Polipay POS Settlement en http://localhost:${PORT}`));
 })();

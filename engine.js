@@ -1,5 +1,5 @@
 /* ============================================================================
-   engine.js — Motor de Conciliación y Liquidación T+1 (BRD-OP-AGR-001)
+   engine.js — Motor de Polipay POS Settlement (BRD-OP-AGR-001)
    Funciones PURAS: única fuente de verdad del cálculo. Movidas verbatim del
    front. Las consume server.js y test/engine.test.js.
    Sección 6 / RN-01..RN-16. IVA = fracción, tasas = fracción (0.025 = 2.5%).

@@ -1,4 +1,4 @@
--- Esquema normalizado — Conciliación y Liquidación T+1 (BRD-OP-AGR-001)
+-- Esquema normalizado — Polipay POS Settlement (BRD-OP-AGR-001)
 -- Idempotente (create ... if not exists). Corre en Supabase Postgres y en pglite.
 
 create table if not exists usuarios (

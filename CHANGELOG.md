@@ -1,4 +1,4 @@
-# Changelog — Sistema de Conciliación y Liquidación T+1 (BRD-OP-AGR-001)
+# Changelog — Polipay POS Settlement (BRD-OP-AGR-001)
 
 ## v0.5.0 — 2026-08-04 · Migración a backend real
 
