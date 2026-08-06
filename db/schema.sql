@@ -193,10 +193,12 @@ create table if not exists destinatarios (
   id          serial primary key,
   email       text not null unique,
   nombre      text,
+  tipo        text not null default 'to',      -- 'to' | 'cc' | 'bcc'
   activo      boolean not null default true,
   creado_at   timestamptz default now(),
   creado_por  text
 );
+alter table destinatarios add column if not exists tipo text not null default 'to';
 
 create table if not exists bitacora (
   id       serial primary key,

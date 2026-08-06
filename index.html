@@ -559,6 +559,7 @@ async function abrirCorte(id){
       const d=e.data||{};
       if(d.error==='ses_no_configurado') toast('SES no configurado en el servidor (falta AWS_* en el entorno).','err');
       else if(d.error==='sin_destinatarios') toast('No hay destinatarios activos. Ve a Sistema → Destinatarios.','err');
+      else if(d.error==='sin_to') toast('Necesitas al menos un destinatario en "Para" (To). Los CC/CCO solos no bastan.','err');
       else toast('Error: '+(d.mensaje||errMsg(e)),'err');
     }
   }},'📧 Notificar'));
@@ -744,15 +745,16 @@ async function vDestinatarios(v){
   const p=el('div',{class:'panel'});
   p.append(el('h3',{},'Correos que reciben el aviso automático de corte',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},dest.filter(d=>d.activo).length+' activo(s) de '+dest.length))));
   p.append(el('div',{class:'banner',html:'Remitente: <b>ops.agregador@polipay.io</b>. Al presionar <b>Notificar</b> en un corte, el sistema envía el informe (con adjuntos) a todos los destinatarios activos.'}));
+  const tipoBadge = t => t==='cc' ? '<span class="badge b">CC</span>' : t==='bcc' ? '<span class="badge v">CCO</span>' : '<span class="badge ok">Para</span>';
   const rows=dest.map(d=>{
     const st = d.activo ? '<span class="badge ok">Activo</span>' : '<span class="badge g">Inactivo</span>';
-    const r=[esc(d.email),esc(d.nombre||''),st];
+    const r=[esc(d.email),esc(d.nombre||''),tipoBadge(d.tipo||'to'),st];
     if(can('params')){
       r.push(el('button',{class:'btn ghost sm',onclick:(e)=>{e.stopPropagation();editDestinatario(d);}},'Editar'));
     }
     return r;
   });
-  const head=['Correo','Nombre','Estado']; if(can('params'))head.push('');
+  const head=['Correo','Nombre','Tipo','Estado']; if(can('params'))head.push('');
   p.append(tableWrap(head,rows,{empty:'Sin destinatarios. Agrega uno con "+ Destinatario".'}));
   v.append(p);
 }
@@ -761,13 +763,19 @@ function editDestinatario(d){
   const body=el('div',{});
   const email=el('input',{type:'email',value:d.email||'',placeholder:'nombre@polipay.io'});
   const nombre=el('input',{value:d.nombre||'',placeholder:'Nombre para el saludo (opcional)'});
+  const tipo=el('select');
+  tipo.append(el('option',{value:'to'},'Para (To) — destinatario principal'));
+  tipo.append(el('option',{value:'cc'},'Copia (CC) — visible para todos'));
+  tipo.append(el('option',{value:'bcc'},'Copia oculta (CCO / BCC) — no visible'));
+  tipo.value = d.tipo || 'to';
   const activo=el('input',{type:'checkbox'}); activo.checked = d.activo !== false;
-  body.append(fld('Correo',email),fld('Nombre',nombre),el('label',{class:'field',style:'flex-direction:row;align-items:center;gap:8px'},activo,el('span',{},'Activo (recibe correos)')));
+  body.append(fld('Correo',email),fld('Nombre',nombre),fld('Tipo',tipo),el('label',{class:'field',style:'flex-direction:row;align-items:center;gap:8px'},activo,el('span',{},'Activo (recibe correos)')));
+  body.append(el('div',{class:'req-note'},'Al menos un destinatario debe estar como “Para”. Los CC son visibles para todos los que reciban el correo; los CCO permanecen ocultos.'));
   const foot=el('div',{});
   if(!isNew) foot.append(el('button',{class:'btn danger',onclick:async()=>{if(confirm('¿Eliminar '+d.email+'?')){await api('DELETE','/api/destinatarios/'+d.id);closeModal();render();}}},'Eliminar'),el('div',{style:'flex:1'}));
   foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
     try{
-      await api('POST','/api/destinatarios',{id:d.id,email:email.value,nombre:nombre.value,activo:activo.checked});
+      await api('POST','/api/destinatarios',{id:d.id,email:email.value,nombre:nombre.value,tipo:tipo.value,activo:activo.checked});
       closeModal(); toast('Guardado','ok'); render();
     }catch(e){toast(e.data&&e.data.error==='email_invalido'?'Correo inválido':errMsg(e),'err');}
   }},'Guardar'));

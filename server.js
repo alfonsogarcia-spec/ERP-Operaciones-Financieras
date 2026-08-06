@@ -760,7 +760,8 @@ function fmtMXN(n){ return new Intl.NumberFormat('es-MX',{style:'currency',curre
 function fmtInt(n){ return new Intl.NumberFormat('es-MX').format(Number(n)||0); }
 function fmtDT(iso){ try{ return new Date(iso).toLocaleString('es-MX'); }catch(_){ return iso||''; } }
 
-async function armarInformeHTML(idCorte) {
+async function armarInformeHTML(idCorte, opts) {
+  const logoSrc = (opts && opts.logoSrc) || '/public/logo.png';
   const c = (await db.query('select *, fecha_liq_iso::text as fli from cortes where id_corte=$1', [idCorte])).rows[0];
   if (!c) throw new Error('corte_no_existe');
   const cal = (await db.query('select * from calculos where corte_id=$1 order by id', [c.id_corte])).rows
@@ -808,7 +809,7 @@ async function armarInformeHTML(idCorte) {
     <tr>
       <td style="padding:22px 32px 14px;border-bottom:3px solid ${brand}">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
-          <td style="font:800 30px/1 Montserrat,Arial,sans-serif;color:${brand}"><span style="color:${accent}">p</span>olipay</td>
+          <td><img src="${logoSrc}" alt="Polipay" height="34" style="display:block;height:34px;width:auto;border:0;outline:none;text-decoration:none"/></td>
           <td align="right" style="line-height:1.35">
             <div style="font:700 12px/1.2 Montserrat,Arial,sans-serif;color:${accent};letter-spacing:.09em;text-transform:uppercase">Conciliación y Liquidación T+1</div>
             <div style="font:400 11px/1.2 Montserrat,Arial,sans-serif;color:${muted};letter-spacing:.02em;text-transform:uppercase;margin-top:3px">Aviso automático de corte</div>
@@ -927,13 +928,14 @@ app.post('/api/destinatarios', auth, requiereRol('admin'), async (req, res) => {
   const b = req.body || {};
   const email = String(b.email || '').trim().toLowerCase();
   if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'email_invalido' });
+  const tipo = ['to', 'cc', 'bcc'].includes(String(b.tipo || '').toLowerCase()) ? String(b.tipo).toLowerCase() : 'to';
   if (b.id) {
-    await db.query('update destinatarios set email=$1,nombre=$2,activo=$3 where id=$4', [email, String(b.nombre || '').trim(), !!b.activo, b.id]);
+    await db.query('update destinatarios set email=$1,nombre=$2,tipo=$3,activo=$4 where id=$5', [email, String(b.nombre || '').trim(), tipo, !!b.activo, b.id]);
   } else {
-    await db.query('insert into destinatarios(email,nombre,activo,creado_por) values($1,$2,$3,$4) on conflict(email) do update set nombre=excluded.nombre, activo=excluded.activo',
-      [email, String(b.nombre || '').trim(), b.activo !== false, req.user.nombre]);
+    await db.query('insert into destinatarios(email,nombre,tipo,activo,creado_por) values($1,$2,$3,$4,$5) on conflict(email) do update set nombre=excluded.nombre, tipo=excluded.tipo, activo=excluded.activo',
+      [email, String(b.nombre || '').trim(), tipo, b.activo !== false, req.user.nombre]);
   }
-  await bit(req, 'destinatarios', `alta/edición ${email}`);
+  await bit(req, 'destinatarios', `alta/edición ${email} (${tipo})`);
   res.json({ ok: true });
 });
 app.delete('/api/destinatarios/:id', auth, requiereRol('admin'), async (req, res) => {
@@ -954,54 +956,81 @@ function sesEnabled() {
 const SES_FROM = process.env.SES_FROM || 'ops.agregador@polipay.io';
 const SES_FROM_NAME = process.env.SES_FROM_NAME || 'Polipay · Operaciones';
 
-function buildMime({ from, fromName, to, subject, html, attachments }) {
-  const boundary = 'polipay_' + Math.random().toString(36).slice(2);
-  const boundaryAlt = 'polipay_alt_' + Math.random().toString(36).slice(2);
+function buildMime({ from, fromName, to, cc, bcc, subject, html, attachments, inlineImages }) {
+  // Estructura MIME:
+  // multipart/mixed (adjuntos)
+  //   └─ multipart/related (imágenes inline via cid:)
+  //         └─ multipart/alternative (text + html)
+  //         └─ imágenes inline
+  //   └─ adjuntos (xlsx, etc.)
+  const rand = () => 'polipay_' + Math.random().toString(36).slice(2);
+  const bMixed = rand(), bRelated = rand(), bAlt = rand();
   const enc = s => `=?UTF-8?B?${Buffer.from(String(s), 'utf8').toString('base64')}?=`;
-  const lines = [];
-  lines.push(`From: ${fromName ? `${enc(fromName)} <${from}>` : from}`);
-  lines.push(`To: ${to.join(', ')}`);
-  lines.push(`Subject: ${enc(subject)}`);
-  lines.push('MIME-Version: 1.0');
-  lines.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
-  lines.push('');
-  lines.push(`--${boundary}`);
-  // parte alternativa: text/plain + text/html (SES/Gmail amigable)
-  lines.push(`Content-Type: multipart/alternative; boundary="${boundaryAlt}"`);
-  lines.push('');
+  const b64 = buf => buf.toString('base64').replace(/(.{76})/g, '$1\r\n');
+  const L = [];
+  L.push(`From: ${fromName ? `${enc(fromName)} <${from}>` : from}`);
+  if (to && to.length) L.push(`To: ${to.join(', ')}`);
+  if (cc && cc.length) L.push(`Cc: ${cc.join(', ')}`);
+  // BCC deliberadamente NO en headers (queda oculto). SES lo entrega via Destinations.
+  L.push(`Subject: ${enc(subject)}`);
+  L.push('MIME-Version: 1.0');
+  L.push(`Content-Type: multipart/mixed; boundary="${bMixed}"`);
+  L.push('');
+  L.push(`--${bMixed}`);
+  L.push(`Content-Type: multipart/related; boundary="${bRelated}"`);
+  L.push('');
+  L.push(`--${bRelated}`);
+  L.push(`Content-Type: multipart/alternative; boundary="${bAlt}"`);
+  L.push('');
   const textFallback = 'Aviso automático de corte de Polipay Conciliación y Liquidación T+1. Consulta el detalle en el correo HTML o los archivos adjuntos.';
-  lines.push(`--${boundaryAlt}`);
-  lines.push('Content-Type: text/plain; charset=UTF-8');
-  lines.push('Content-Transfer-Encoding: base64');
-  lines.push('');
-  lines.push(Buffer.from(textFallback, 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n'));
-  lines.push(`--${boundaryAlt}`);
-  lines.push('Content-Type: text/html; charset=UTF-8');
-  lines.push('Content-Transfer-Encoding: base64');
-  lines.push('');
-  lines.push(Buffer.from(html, 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n'));
-  lines.push(`--${boundaryAlt}--`);
-  // adjuntos
-  for (const a of (attachments || [])) {
-    lines.push(`--${boundary}`);
-    lines.push(`Content-Type: ${a.contentType || 'application/octet-stream'}; name="${a.filename}"`);
-    lines.push('Content-Transfer-Encoding: base64');
-    lines.push(`Content-Disposition: attachment; filename="${a.filename}"`);
-    lines.push('');
-    lines.push(a.content.toString('base64').replace(/(.{76})/g, '$1\r\n'));
+  L.push(`--${bAlt}`);
+  L.push('Content-Type: text/plain; charset=UTF-8');
+  L.push('Content-Transfer-Encoding: base64');
+  L.push('');
+  L.push(b64(Buffer.from(textFallback, 'utf8')));
+  L.push(`--${bAlt}`);
+  L.push('Content-Type: text/html; charset=UTF-8');
+  L.push('Content-Transfer-Encoding: base64');
+  L.push('');
+  L.push(b64(Buffer.from(html, 'utf8')));
+  L.push(`--${bAlt}--`);
+  // imágenes inline (referenciadas en el HTML como cid:<cid>)
+  for (const img of (inlineImages || [])) {
+    L.push(`--${bRelated}`);
+    L.push(`Content-Type: ${img.contentType || 'image/png'}`);
+    L.push('Content-Transfer-Encoding: base64');
+    L.push(`Content-ID: <${img.cid}>`);
+    L.push(`Content-Disposition: inline; filename="${img.filename || (img.cid + '.png')}"`);
+    L.push('');
+    L.push(b64(img.content));
   }
-  lines.push(`--${boundary}--`);
-  return lines.join('\r\n');
+  L.push(`--${bRelated}--`);
+  // adjuntos regulares (xlsx)
+  for (const a of (attachments || [])) {
+    L.push(`--${bMixed}`);
+    L.push(`Content-Type: ${a.contentType || 'application/octet-stream'}; name="${a.filename}"`);
+    L.push('Content-Transfer-Encoding: base64');
+    L.push(`Content-Disposition: attachment; filename="${a.filename}"`);
+    L.push('');
+    L.push(b64(a.content));
+  }
+  L.push(`--${bMixed}--`);
+  return L.join('\r\n');
 }
 
-async function sendSES({ to, subject, html, attachments }) {
+async function sendSES({ to, cc, bcc, subject, html, attachments, inlineImages }) {
   const { SESClient, SendRawEmailCommand } = require('@aws-sdk/client-ses');
   const client = new SESClient({
     region: process.env.AWS_REGION,
     credentials: { accessKeyId: process.env.AWS_ACCESS_KEY_ID, secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY },
   });
-  const raw = buildMime({ from: SES_FROM, fromName: SES_FROM_NAME, to, subject, html, attachments });
-  const cmd = new SendRawEmailCommand({ RawMessage: { Data: Buffer.from(raw, 'utf8') } });
+  const raw = buildMime({ from: SES_FROM, fromName: SES_FROM_NAME, to, cc, bcc, subject, html, attachments, inlineImages });
+  // Destinations debe incluir TODOS (To+Cc+Bcc). El BCC no aparece en headers, así queda oculto.
+  const Destinations = [...(to || []), ...(cc || []), ...(bcc || [])];
+  const cmd = new SendRawEmailCommand({
+    RawMessage: { Data: Buffer.from(raw, 'utf8') },
+    Destinations,
+  });
   const out = await client.send(cmd);
   return out.MessageId;
 }
@@ -1044,15 +1073,23 @@ app.post('/api/cortes/:id/notificar', auth, requiereRol('admin', 'tesoreria'), a
   if (!dbReady(res)) return;
   if (!sesEnabled()) return res.status(503).json({ error: 'ses_no_configurado', mensaje: 'Configura AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY y AWS_REGION en el entorno del servidor.' });
   const idCorte = parseInt(req.params.id, 10);
-  const dest = (await db.query("select email,nombre from destinatarios where activo=true order by email")).rows;
+  const dest = (await db.query("select email,nombre,tipo from destinatarios where activo=true order by email")).rows;
   if (!dest.length) return res.status(400).json({ error: 'sin_destinatarios', mensaje: 'Agrega al menos un destinatario activo en Sistema → Destinatarios.' });
+  const fmtAddr = d => d.nombre ? `"${d.nombre}" <${d.email}>` : d.email;
+  const to  = dest.filter(d => (d.tipo || 'to') === 'to' ).map(fmtAddr);
+  const cc  = dest.filter(d => (d.tipo || 'to') === 'cc' ).map(fmtAddr);
+  const bcc = dest.filter(d => (d.tipo || 'to') === 'bcc').map(fmtAddr);
+  if (!to.length) return res.status(400).json({ error: 'sin_to', mensaje: 'Debes tener al menos un destinatario en TO (Para). Los CC/CCO solos no bastan.' });
   try {
-    const { subject, html } = await armarInformeHTML(idCorte);
+    // Logo inline (cid) para que se muestre en Gmail/Outlook sin bloqueos externos.
+    const logoPath = path.join(__dirname, 'public', 'logo.png');
+    const logoBuf = require('fs').readFileSync(logoPath);
+    const inlineImages = [{ cid: 'polipay-logo', filename: 'polipay-logo.png', contentType: 'image/png', content: logoBuf }];
+    const { subject, html } = await armarInformeHTML(idCorte, { logoSrc: 'cid:polipay-logo' });
     const attachments = await armarAdjuntosCorte(idCorte);
-    const to = dest.map(d => d.nombre ? `"${d.nombre}" <${d.email}>` : d.email);
-    const messageId = await sendSES({ to, subject, html, attachments });
-    await bit(req, 'notificar', `corte #${idCorte} enviado a ${dest.length} destinatarios (msg ${messageId})`);
-    res.json({ ok: true, enviados: dest.length, messageId });
+    const messageId = await sendSES({ to, cc, bcc, subject, html, attachments, inlineImages });
+    await bit(req, 'notificar', `corte #${idCorte} enviado (to:${to.length}, cc:${cc.length}, bcc:${bcc.length}, msg ${messageId})`);
+    res.json({ ok: true, enviados: dest.length, to: to.length, cc: cc.length, bcc: bcc.length, messageId });
   } catch (e) {
     await bit(req, 'notificar', `error corte #${idCorte}: ${e.message}`);
     res.status(500).json({ error: 'ses_error', mensaje: e.message });
