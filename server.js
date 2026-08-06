@@ -558,14 +558,13 @@ app.get('/api/cortes/:id/reporte.xlsx', auth, async (req, res) => {
   if (!c) return res.status(404).json({ error: 'no_existe' });
   const cal = (await db.query('select * from calculos where corte_id=$1', [c.id_corte])).rows.map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc }));
   await bit(req, 'reporte', `exportó reporte corte #${c.id_corte}`);
-  enviarXLSX(res, `reporte_cliente_corte_${c.id_corte}_${c.fli}.xlsx`, buildReporteXLSX(c, cal));
+  const buf = await buildReporteXLSX(c, cal);
+  enviarXLSX(res, `reporte_cliente_corte_${c.id_corte}_${c.fli}.xlsx`, buf);
 });
 
-// Reporte por cliente con el formato de PLANTILLA REPORTE.xlsx: encabezado
-// POLIPAY / subtítulo / corte+fecha, encabezados en fila 5, datos desde fila 6,
-// 12 columnas: Grupo, Afiliación, Concepto, Monto, Débito, Crédito, AMEX, INT,
-// A Compensar, Banca+IVA, A Dispersar, Diferencia.
-function buildReporteXLSX(c, cal) {
+// Reporte por cliente con el formato+estilo de PLANTILLA REPORTE.xlsx.
+// Se usa exceljs (soporta estilos: fill/font/align/border/numFmt/freeze).
+async function buildReporteXLSX(c, cal) {
   // Fecha larga en español: "06 de agosto de 2026"
   const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
   const iso = c.fli || (c.fecha_liq_iso && String(c.fecha_liq_iso).slice(0,10));
@@ -603,31 +602,98 @@ function buildReporteXLSX(c, cal) {
     '',
   ];
 
-  const aoa = [
-    ['POLIPAY'],
-    ['Reporte por Cliente  ·  Agregado por grupo y afiliación'],
-    [`Corte ${c.id_corte}   |   ${fechaLarga}`],
-    [''], // separador
-    head,
-    ...dataRows,
-    totalRow,
-    [''],
-    [`Polipay POS Settlement · Generado ${hoyStr} por ${c.creado_por || '—'}`],
+  // Colores/estilos de la plantilla original
+  const AZUL_MARINO = 'FF051B3B';  // fila POLIPAY
+  const AZUL_HEADER = 'FF3083F4';  // banda header + subtítulo
+  const GRIS_META   = 'FF667085';  // corte + fecha, pie
+  const NEGRO_TXT   = 'FF1A1A1A';  // texto datos
+  const BLANCO      = 'FFFFFFFF';
+  const FONT_NAME   = 'Montserrat';
+  const NUMFMT      = '"$"#,##0.00;[Red]("$"#,##0.00);-';
+
+  const ExcelJS = require('exceljs');
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Polipay POS Settlement';
+  const ws = wb.addWorksheet('Reporte por cliente', { views: [{ state: 'frozen', ySplit: 5 }] });
+
+  // Anchos de columna (los de la plantilla)
+  ws.columns = [
+    { width: 24 }, { width: 13 }, { width: 24 }, { width: 15 },
+    { width: 14 }, { width: 13 }, { width: 13 }, { width: 13 },
+    { width: 15 }, { width: 14 }, { width: 15 }, { width: 13 },
   ];
-  // Merges: encabezado (A1:L1, A2:L2, A3:L3, A4:L4) + pie (última fila A:L)
-  const lastRowIdx = aoa.length - 1;                  // 0-index de la última fila (pie)
-  const merges = [
-    { s:{r:0,c:0}, e:{r:0,c:11} },   // A1:L1  POLIPAY
-    { s:{r:1,c:0}, e:{r:1,c:11} },   // A2:L2  subtítulo
-    { s:{r:2,c:0}, e:{r:2,c:11} },   // A3:L3  corte + fecha
-    { s:{r:3,c:0}, e:{r:3,c:11} },   // A4:L4  separador
-    { s:{r:lastRowIdx,c:0}, e:{r:lastRowIdx,c:11} },  // pie
-  ];
-  // Anchos de columna
-  const cols = [{wch:18},{wch:14},{wch:22},{wch:14},{wch:13},{wch:13},{wch:16},{wch:14},{wch:14},{wch:14},{wch:14},{wch:12}];
-  // Formato de contabilidad (signo de pesos) para columnas de importes (D..L, índices 3..11) desde fila de datos (índice 5)
-  const fmt = { z: '"$"#,##0.00', cols: [3,4,5,6,7,8,9,10], rowFrom: 5 };
-  return X.buildXLSX([{ name: 'Reporte por cliente', aoa, merges, cols, fmt }]);
+
+  const fill = c => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } });
+  const setStyle = (row, opts) => {
+    if (opts.height) row.height = opts.height;
+    for (let col = 1; col <= 12; col++) {
+      const cell = row.getCell(col);
+      if (opts.fill) cell.fill = fill(opts.fill);
+      if (opts.font) cell.font = Object.assign({ name: FONT_NAME }, opts.font);
+      if (opts.align) cell.alignment = opts.align;
+      if (opts.numFmt) cell.numFmt = opts.numFmt;
+    }
+  };
+
+  // Fila 1: POLIPAY
+  const r1 = ws.addRow(['POLIPAY']); ws.mergeCells('A1:L1');
+  setStyle(r1, { height: 33.75, fill: AZUL_MARINO, font: { color: { argb: BLANCO }, bold: true, size: 20, name: FONT_NAME }, align: { horizontal: 'left', vertical: 'middle', indent: 1 } });
+
+  // Fila 2: subtítulo
+  const r2 = ws.addRow(['Reporte por Cliente  ·  Agregado por grupo y afiliación']); ws.mergeCells('A2:L2');
+  setStyle(r2, { height: 21.75, fill: BLANCO, font: { color: { argb: AZUL_HEADER }, bold: true, size: 12, name: FONT_NAME }, align: { horizontal: 'left', vertical: 'middle', indent: 1 } });
+
+  // Fila 3: corte + fecha
+  const r3 = ws.addRow([`Corte ${c.id_corte}   |   ${fechaLarga}   |   Generado ${hoyStr}`]); ws.mergeCells('A3:L3');
+  setStyle(r3, { height: 15.75, fill: BLANCO, font: { color: { argb: GRIS_META }, size: 9, name: FONT_NAME }, align: { horizontal: 'left', vertical: 'middle', indent: 1 } });
+
+  // Fila 4: separador
+  const r4 = ws.addRow(['']); ws.mergeCells('A4:L4');
+  setStyle(r4, { height: 3.75, fill: BLANCO });
+
+  // Fila 5: encabezados
+  const r5 = ws.addRow(head);
+  r5.height = 30;
+  for (let col = 1; col <= 12; col++) {
+    const cell = r5.getCell(col);
+    cell.fill = fill(AZUL_HEADER);
+    cell.font = { name: FONT_NAME, color: { argb: BLANCO }, bold: true, size: 10 };
+    cell.alignment = { horizontal: col <= 3 ? 'left' : 'center', vertical: 'middle', indent: col <= 3 ? 1 : 0 };
+  }
+
+  // Filas de datos
+  for (const dr of dataRows) {
+    const rr = ws.addRow(dr); rr.height = 18;
+    for (let col = 1; col <= 12; col++) {
+      const cell = rr.getCell(col);
+      cell.fill = fill(BLANCO);
+      cell.font = { name: FONT_NAME, color: { argb: NEGRO_TXT }, size: 10 };
+      if (col <= 3) cell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+      else { cell.alignment = { horizontal: 'right', vertical: 'middle' }; cell.numFmt = NUMFMT; }
+    }
+  }
+
+  // Fila TOTAL
+  const rt = ws.addRow(totalRow); rt.height = 22;
+  for (let col = 1; col <= 12; col++) {
+    const cell = rt.getCell(col);
+    cell.fill = fill(BLANCO);
+    cell.font = { name: FONT_NAME, color: { argb: NEGRO_TXT }, bold: true, size: 10 };
+    if (col <= 3) cell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+    else { cell.alignment = { horizontal: 'right', vertical: 'middle' }; cell.numFmt = NUMFMT; }
+    cell.border = { top: { style: 'thin', color: { argb: 'FFE4E6E7' } } };
+  }
+
+  // Separador antes del pie
+  ws.addRow(['']).height = 8;
+
+  // Pie
+  const rp = ws.addRow([`Polipay POS Settlement · Generado ${hoyStr} por ${c.creado_por || '—'}   ·   Todas las cifras en MXN`]);
+  const pieRow = rp.number; ws.mergeCells(`A${pieRow}:L${pieRow}`);
+  setStyle(rp, { height: 25.5, font: { color: { argb: GRIS_META }, size: 8, name: FONT_NAME }, align: { horizontal: 'left', vertical: 'top', indent: 1 } });
+
+  const buf = await wb.xlsx.writeBuffer();
+  return Buffer.from(buf);
 }
 
 /* ============================================================================
@@ -1124,11 +1190,8 @@ async function armarAdjuntosCorte(idCorte) {
   const headL = ['Concepto', 'Cuenta clabe del beneficiario', 'Código del banco del beneficiario', 'Nombre del beneficiario', 'RFC o CURP del beneficiario', 'Cantidad', 'Referencia numérica', 'Fecha de pago (Opcional, solo para transacciones futuras) Formato YYYY-mm-dd HH:mm'];
   const rowsL = orders.map(o => [o.concepto, String(o.clabe || ''), Number(o.cod) || o.cod, o.razon, '', o.cant, referencia, '']);
   const layoutBuf = X.buildXLSX([{ name: 'LAYOUT', aoa: [headL, ...rowsL] }]);
-  // Reporte por cliente
-  const headR = ['grupo', 'afiliacion', 'concepto', 'monto', 'comp_tdd', 'comp_tdc', 'comp_amex', 'comp_int', 'a_compensar', 'banca_mas_iva', 'a_dispersar', 'diferencia', 'utilidad'];
-  const rowsR = cal.map(x => { const r = x.calc; return [x.razon, String(x.afil), x.concepto, E.round2(r.m_tdd + r.m_tdc + r.m_amex + r.m_int), E.round2(r.comp_tdd), E.round2(r.comp_tdc), E.round2(r.comp_amex), E.round2(r.comp_int), E.round2(r.comp_total), E.round2(r.banca + r.iva_banca), E.round2(r.disp_total), E.round2(r.diferencia), E.round2(r.utilidad)]; });
-  rowsR.push(['TOTAL', '', '', Number(c.total_monto), '', '', '', '', Number(c.total_comp), '', Number(c.total_disp), '', '']);
-  const reporteBuf = X.buildXLSX([{ name: 'Reporte por cliente', aoa: [headR, ...rowsR] }]);
+  // Reporte por cliente (con estilos de la plantilla)
+  const reporteBuf = await buildReporteXLSX(c, cal);
   return [
     { filename: `layout_spei_corte_${c.id_corte}_${c.fli}.xlsx`, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: layoutBuf },
     { filename: `reporte_cliente_corte_${c.id_corte}_${c.fli}.xlsx`, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: reporteBuf },
