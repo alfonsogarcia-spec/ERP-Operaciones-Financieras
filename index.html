@@ -282,7 +282,7 @@ function tableWrap(head,rows,opts){const w=el('div',{class:'tablewrap'});const t
   t.append(tb);w.append(t);return w;}
 const badgeEstado=e=>{const m={'Borrador':'g','Validado':'b','Dispersado':'v','Cerrado':'ok'};return `<span class="badge ${m[e]||'g'}">${esc(e)}</span>`;};
 const badgeProd=p=>{const m={'Débito':'b','Crédito':'v','American Express':'g','Internacional':'w'};return `<span class="badge ${m[p]||'d'}">${esc(p||'—')}</span>`;};
-function errMsg(e){const d=e&&e.data||{};if(e.status===403)return'No tienes permiso para esta acción ('+SES.rol+')';if(d.error==='no_cuadra_o_bloqueado')return'El corte no cuadra o tiene órdenes sin CLABE';if(d.error==='corte_inmutable')return'El corte ya está '+d.estado+' (inmutable)';if(d.error==='transicion_invalida')return'Transición no válida (estado '+d.estado+')';return d.error||e.message||'Error';}
+function errMsg(e){const d=e&&e.data||{};if(e.status===403)return'No tienes permiso para esta acción ('+SES.rol+')';if(d.error==='no_cuadra_o_bloqueado')return'El corte no cuadra o tiene órdenes sin CLABE';if(d.error==='corte_inmutable')return'El corte ya está '+d.estado+' (inmutable)';if(d.error==='transicion_invalida')return'Transición no válida (estado '+d.estado+')';if(d.error==='reporte_contracargos_faltante')return'Debes cargar primero el reporte de contracargos del '+d.fecha+' (ve a Operación → Contracargos).';if(d.error==='ya_aplicado')return'Este contracargo ya fue aplicado a un corte. Elimina el corte para poder borrarlo.';return d.error||e.message||'Error';}
 
 /* ============================================================================
    NAV / ROUTER
@@ -292,6 +292,7 @@ const NAV=[
   {sec:'Operación'},
   {id:'dashboard',t:'Panel',ic:'ic_01'},
   {id:'ingesta',t:'Ingesta de transacciones',ic:'ic_04'},
+  {id:'contracargos',t:'Contracargos',ic:'ic_05'},
   {id:'cortes',t:'Cortes y liquidación',ic:'ic_06'},
   {sec:'Contable'},
   {id:'contable',t:'Registro contable',ic:'ic_15'},
@@ -307,11 +308,11 @@ const NAV=[
 function renderNav(){const nav=$('#nav');nav.innerHTML='';NAV.forEach(item=>{
   if(item.sec){nav.append(el('div',{class:'navlbl'},item.sec));return;}
   nav.append(el('a',{class:VIEW===item.id?'active':'',onclick:()=>go(item.id)},el('img',{src:`/public/brand-icons/${item.ic}.png`,alt:''}),el('span',{},item.t)));});}
-const TITLES={dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],bitacora:['Bitácora','Trazabilidad de acciones']};
+const TITLES={dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],bitacora:['Bitácora','Trazabilidad de acciones']};
 function go(v){VIEW=v;render();}
 async function render(){renderNav();const[t,s]=TITLES[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
   const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
-  try{await ({dashboard:vDashboard,ingesta:vIngesta,cortes:vCortes,contable:vContable,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,bitacora:vBitacora}[VIEW]||vDashboard)(v);}
+  try{await ({dashboard:vDashboard,ingesta:vIngesta,contracargos:vContracargos,cortes:vCortes,contable:vContable,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,bitacora:vBitacora}[VIEW]||vDashboard)(v);}
   catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
 }
 function setView(v,node){v.innerHTML='';v.append(node);}
@@ -394,6 +395,80 @@ function openIngesta(){
 }
 
 /* ---------- CORTES ---------- */
+/* ---------- CONTRACARGOS ---------- */
+function hoyMx(){ const p=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Mexico_City',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()); const g=t=>(p.find(x=>x.type===t)||{}).value||''; return `${g('year')}-${g('month')}-${g('day')}`; }
+let _ccFecha=null;
+async function vContracargos(v){
+  const fecha = _ccFecha || hoyMx();
+  if(can('ingesta'))$('#pageAction').append(el('button',{class:'btn',onclick:()=>openCargarContracargos(fecha)},'Cargar reporte del día'));
+  const d = await api('GET','/api/contracargos?fecha='+fecha);
+  const huerfanos = await api('GET','/api/contracargos/huerfanos?antes_de='+fecha);
+  v.innerHTML='';
+  // filtro por fecha
+  const filtro=el('div',{class:'filters'});
+  const inp=el('input',{type:'date',value:fecha,onchange:e=>{_ccFecha=e.target.value; render();}});
+  filtro.append(el('label',{class:'field',style:'margin:0'},'Fecha del reporte',inp));
+  filtro.append(el('button',{class:'btn ghost sm',onclick:()=>{_ccFecha=hoyMx(); render();}},'Hoy'));
+  v.append(filtro);
+  // semáforo del día
+  const p=el('div',{class:'panel'});
+  const rep=d.reporte;
+  if(!rep){
+    p.append(el('h3',{},'Reporte de contracargos del '+fecha,el('span',{class:'right'},el('span',{class:'badge d'},'FALTANTE'))));
+    p.append(el('div',{class:'banner err',html:`⛔ <b>No se ha cargado el reporte de este día.</b> El corte del ${fecha} está bloqueado hasta que subas el reporte (aunque venga sin registros).`}));
+  } else {
+    p.append(el('h3',{},'Reporte de contracargos del '+fecha,el('span',{class:'right'},el('span',{class:'badge ok'},'CARGADO'))));
+    p.append(el('div',{class:'banner ok',html:`✓ <b>${rep.n_contracargos}</b> contracargos cargados · monto ${mxn(Number(rep.monto_total))} · por ${esc(rep.cargado_por)} (${new Date(rep.cargado_at).toLocaleString('es-MX')})`}));
+  }
+  v.append(p);
+  // huérfanos
+  if(huerfanos.length){
+    const hp=el('div',{class:'panel'}); hp.append(el('h3',{},'⚠ Contracargos huérfanos de fechas anteriores'));
+    hp.append(el('div',{class:'banner warn',html:'Los siguientes días tienen contracargos <b>Pendientes</b> que no se aplicaron a su corte. No se aplicarán automáticamente al corte del '+fecha+'. Ábrelos por su fecha para revisar.'}));
+    hp.append(tableWrap(['Fecha del reporte',{t:'#'},{t:'Monto pendiente'},''],huerfanos.map(h=>{const r=[fmtISO(h.fecha),{num:h.n},{num:mxn(h.monto)},el('button',{class:'btn ghost sm',onclick:()=>{_ccFecha=h.fecha; render();}},'Abrir')];return r;})));
+    v.append(hp);
+  }
+  // tabla del día
+  const pt=el('div',{class:'panel'}); pt.append(el('h3',{},'Contracargos del día ('+d.items.length+')'));
+  const rows=d.items.map(it=>{
+    const bl = it.bloque==='AMEX' ? '<span class="badge g">AMEX</span>' : '<span class="badge b">DOM</span>';
+    const st = it.estatus==='Aplicado' ? `<span class="badge ok">Aplicado</span> <small class="muted">corte #${it.aplicado_en_corte_id}</small>` : it.estatus==='Cancelado' ? '<span class="badge d">Cancelado</span>' : '<span class="badge w">Pendiente</span>';
+    const r=[esc(it.origen_folio),esc(it.fecha_registro),esc(it.grupo_cliente),`<span class="mono">${esc(it.numero_afiliacion)}</span>`,esc(it.marca),bl,{num:mxn(it.monto)},st];
+    if(can('ingesta') && it.estatus==='Pendiente') r.push(el('button',{class:'btn danger sm',onclick:async(e)=>{e.stopPropagation();if(confirm('¿Eliminar contracargo '+it.origen_folio+'?')){try{await api('DELETE','/api/contracargos/'+it.id);toast('Eliminado','ok');render();}catch(err){toast(errMsg(err),'err');}}}},'Eliminar'));
+    else if(can('ingesta')) r.push(el('span',{class:'muted',style:'font-size:11px'},'—'));
+    return r;
+  });
+  const head=['Folio','Fecha registro','Grupo','Afiliación','Marca','Bloque',{t:'Monto'},'Estatus'];
+  if(can('ingesta'))head.push('');
+  pt.append(tableWrap(head,rows,{empty:'No hay contracargos cargados para este día. Sube el reporte con el botón de arriba.'}));
+  v.append(pt);
+}
+function openCargarContracargos(fechaDefault){
+  const body=el('div',{});
+  body.append(el('div',{class:'banner',html:'Sube el reporte del sistema de contracargos. <b>Aunque venga sin registros</b>, hay que subirlo — el corte del día no se puede generar si no. El sistema extrae automáticamente la fecha del reporte del nombre del archivo si sigue el formato <code>contracargos_a_retener_YYYY-MM-DD.xlsx</code>.'}));
+  const fecha=el('input',{type:'date',value:fechaDefault||hoyMx()});
+  const file=el('input',{type:'file',accept:'.xlsx,.xls'});
+  const info=el('div',{class:'req-note'});
+  file.addEventListener('change',()=>{ if(!file.files[0]){info.textContent='';return;}
+    const m=String(file.files[0].name).match(/(\d{4}-\d{2}-\d{2})/);
+    if(m){ fecha.value=m[1]; info.innerHTML='Fecha detectada del nombre del archivo: <b>'+m[1]+'</b> (editable arriba).'; }
+    else info.innerHTML='Archivo: '+esc(file.files[0].name)+' (usando fecha del selector).';
+  });
+  body.append(el('label',{class:'field'},'Fecha del reporte',fecha),el('label',{class:'field'},'Archivo Excel (.xlsx)',file),info);
+  const foot=el('div',{});
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    if(!file.files[0]){toast('Selecciona un archivo','err');return;}
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(fecha.value)){toast('Fecha inválida','err');return;}
+    const fd=new FormData(); fd.append('archivo',file.files[0]); fd.append('fecha',fecha.value);
+    try{
+      const res=await withBusy('Procesando reporte en el servidor…',()=>api('POST','/api/contracargos/ingesta',fd));
+      closeModal(); _ccFecha=res.fecha; render();
+      toast(`Reporte del ${res.fecha}: ${res.filas} filas · ${res.insertados} nuevos · ${res.actualizados} actualizados · ${mxn(res.monto_total)}`,'ok');
+    }catch(e){toast('Error: '+errMsg(e),'err');}
+  }},'Procesar'));
+  modal('Cargar reporte de contracargos',body,foot,true);
+}
+
 async function vCortes(v){
   if(can('corte'))$('#pageAction').append(el('button',{class:'btn',onclick:openNuevoCorte},'+ Nuevo corte'));
   const cortes=await api('GET','/api/cortes');

@@ -323,6 +323,14 @@ async function construirDiagnostico() {
    ========================================================================= */
 async function computeCorte(fechaLiqIso) {
   const txs = (await db.query("select cliente,numero_afiliacion,producto,monto from transacciones where fecha_liq=$1 and upper(estatus)='APROBADO'", [fechaLiqIso])).rows;
+  // Contracargos pendientes para esta fecha: se aplican al bloque correspondiente.
+  const ccRows = (await db.query("select * from contracargos where cargado_en_fecha=$1 and estatus='Pendiente'", [fechaLiqIso])).rows;
+  const ccMap = new Map();  // key = grupo||afil||bloque -> {monto, ids:[]}
+  for (const c of ccRows) {
+    const k = `${nrm(c.grupo_cliente)}||${String(c.numero_afiliacion)}||${c.bloque}`;
+    const cur = ccMap.get(k) || { monto: 0, ids: [] };
+    cur.monto += Number(c.monto) || 0; cur.ids.push(c.id); ccMap.set(k, cur);
+  }
   const [params, grupos, afilGrupo, costos, cuentas, bancos] = [await getParams(), await getGrupos(), await getAfilGrupo(), await getCostos(), await getCuentas(), await getBancos()];
   const grupoPorNombre = nombre => grupos.find(g => nrm(g.nombre_cliente) === nrm(nombre));
   const tasasDe = (idg, afil) => afilGrupo.find(a => String(a.id_grupo) === String(idg) && String(a.numero_afiliacion) === String(afil));
@@ -343,18 +351,28 @@ async function computeCorte(fechaLiqIso) {
       tasas: tasas ? { pac_tdd: Number(tasas.tasa_pac_tdd), pac_tdc: Number(tasas.tasa_pac_tdc), pac_amex: Number(tasas.tasa_pac_amex), pac_int: Number(tasas.tasa_pac_int), costo_x_trx: Number(tasas.costo_x_trx), pct_banca: Number(tasas.pct_banca) } : {},
       costos: co ? { int_tdd: Number(co.int_tdd), int_tdc: Number(co.int_tdc), int_amex: co.int_amex == null ? null : Number(co.int_amex), int_int: co.int_int == null ? null : Number(co.int_int), fee_broxel: co.fee_broxel == null ? null : Number(co.fee_broxel) } : {},
     };
-    const r = E.calcularCompensacion(arr, cat, params, {});
+    // Buscar contracargos pendientes para esta afiliación (usando el nombre del grupo del catálogo).
+    const nomGrupo = g ? g.nombre_cliente : cliente;
+    const cDom = ccMap.get(`${nrm(nomGrupo)}||${afil}||DOM`) || { monto: 0, ids: [] };
+    const cAmex = ccMap.get(`${nrm(nomGrupo)}||${afil}||AMEX`) || { monto: 0, ids: [] };
+    const ajustes = { financiamientos: 0, contracargos_dom: E.round2(cDom.monto), contracargos_amex: E.round2(cAmex.monto) };
+    const r = E.calcularCompensacion(arr, cat, params, ajustes);
     const faltantes = []; if (!g) faltantes.push('grupo'); if (!tasas) faltantes.push('tasas'); if (!co) faltantes.push('costos'); if (!cuenta && Math.abs(r.disp_total) > 0.005) faltantes.push('cuenta');
     calculos.push({
       cliente, afil, id_grupo: idGrupo, razon: g ? g.nombre_cliente : cliente, concepto: idGrupo ? E.concepto(afil, idGrupo) : '',
       clabe: cuenta ? cuenta.clabe : '', codigo_banco: cuenta ? (cuenta.codigo_banco || bancoCod(cuenta.banco)) : null, banco: cuenta ? cuenta.banco : '', beneficiario: cuenta ? (cuenta.razon_social_beneficiario || cuenta.nombre_comercial) : '',
-      calc: r, faltantes, ajustes: { financiamientos: 0, contracargos_dom: 0, contracargos_amex: 0 },
+      calc: r, faltantes, ajustes, contracargos_ids: [...cDom.ids, ...cAmex.ids],
     });
+    // Marcar ids "usados" para descontarlos de los huérfanos y del ccMap.
+    ccMap.delete(`${nrm(nomGrupo)}||${afil}||DOM`); ccMap.delete(`${nrm(nomGrupo)}||${afil}||AMEX`);
     total_comp += r.comp_total; total_disp += r.disp_total; total_monto += r.m_tdd + r.m_tdc + r.m_amex + r.m_int;
   }
   let cuadra = true; calculos.forEach(c => { if (Math.abs(c.calc.diferencia) > 0.01) cuadra = false; });
   const bloqueos = calculos.filter(c => Math.abs(c.calc.disp_total) > 0.005 && (!c.clabe || !c.codigo_banco)).length;
-  return { calculos, total_comp: E.round2(total_comp), total_disp: E.round2(total_disp), total_monto: E.round2(total_monto), n_trx: txs.length, cuadra, bloqueos };
+  // Contracargos cargados que no cruzaron con ninguna transacción del día → advertencia
+  const ccNoAplicados = [];
+  for (const [k, v] of ccMap.entries()) ccNoAplicados.push({ key: k, monto: v.monto, ids: v.ids });
+  return { calculos, total_comp: E.round2(total_comp), total_disp: E.round2(total_disp), total_monto: E.round2(total_monto), n_trx: txs.length, cuadra, bloqueos, cc_no_aplicados: ccNoAplicados };
 }
 
 app.get('/api/cortes/fechas', auth, async (req, res) => {
@@ -367,14 +385,17 @@ app.get('/api/cortes/fechas', auth, async (req, res) => {
 app.post('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res) => {
   if (!dbReady(res)) return;
   const iso = (req.body || {}).fecha_liq; if (!iso) return res.status(400).json({ error: 'fecha_liq' });
+  // BLINDAJE: el reporte de contracargos del día debe estar cargado (aunque venga vacío).
+  const rep = (await db.query('select fecha, n_contracargos, monto_total from contracargos_reporte_dia where fecha=$1', [iso])).rows[0];
+  if (!rep) return res.status(409).json({ error: 'reporte_contracargos_faltante', fecha: iso, mensaje: 'Debes cargar el reporte de contracargos de ' + iso + ' antes de generar el corte (aunque venga sin registros).' });
   const c = await computeCorte(iso);
   const ins = (await db.query('insert into cortes(fecha_liq,fecha_liq_iso,estado,creado_por,total_monto,total_comp,total_disp,n_trx,cuadra,bloqueos) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id_corte',
     [E.fmtFecha(E.parseFecha(iso)), iso, 'Borrador', req.user.nombre, c.total_monto, c.total_comp, c.total_disp, c.n_trx, c.cuadra, c.bloqueos])).rows[0];
   const idCorte = ins.id_corte;
-  await insertMany('calculos', ['corte_id', 'cliente', 'afil', 'id_grupo', 'razon', 'concepto', 'clabe', 'codigo_banco', 'banco', 'beneficiario', 'calc', 'faltantes', 'ajustes'],
-    c.calculos.map(cc => ({ corte_id: idCorte, cliente: cc.cliente, afil: cc.afil, id_grupo: cc.id_grupo, razon: cc.razon, concepto: cc.concepto, clabe: cc.clabe, codigo_banco: cc.codigo_banco, banco: cc.banco, beneficiario: cc.beneficiario, calc: JSON.stringify(cc.calc), faltantes: JSON.stringify(cc.faltantes), ajustes: JSON.stringify(cc.ajustes) })));
-  await bit(req, 'corte', `generó corte #${idCorte} (${E.fmtFecha(E.parseFecha(iso))}), ${c.calculos.length} grupos`);
-  res.json({ id_corte: idCorte });
+  await insertMany('calculos', ['corte_id', 'cliente', 'afil', 'id_grupo', 'razon', 'concepto', 'clabe', 'codigo_banco', 'banco', 'beneficiario', 'calc', 'faltantes', 'ajustes', 'contracargos_ids'],
+    c.calculos.map(cc => ({ corte_id: idCorte, cliente: cc.cliente, afil: cc.afil, id_grupo: cc.id_grupo, razon: cc.razon, concepto: cc.concepto, clabe: cc.clabe, codigo_banco: cc.codigo_banco, banco: cc.banco, beneficiario: cc.beneficiario, calc: JSON.stringify(cc.calc), faltantes: JSON.stringify(cc.faltantes), ajustes: JSON.stringify(cc.ajustes), contracargos_ids: JSON.stringify(cc.contracargos_ids || []) })));
+  await bit(req, 'corte', `generó corte #${idCorte} (${E.fmtFecha(E.parseFecha(iso))}), ${c.calculos.length} grupos, contracargos cargados=${rep.n_contracargos||0}`);
+  res.json({ id_corte: idCorte, contracargos_no_aplicados: c.cc_no_aplicados });
 });
 
 app.get('/api/cortes', auth, async (req, res) => {
@@ -402,14 +423,22 @@ app.post('/api/cortes/:id/:accion', auth, async (req, res) => {
   if (!c) return res.status(404).json({ error: 'no_existe' });
   if (['Dispersado', 'Cerrado'].includes(c.estado) && accion !== 'cerrar') return res.status(409).json({ error: 'corte_inmutable', estado: c.estado });
   if (!transicionValida(c.estado, accion)) return res.status(409).json({ error: 'transicion_invalida', estado: c.estado });
-  if (accion === 'validar') { if (!c.cuadra || c.bloqueos) return res.status(409).json({ error: 'no_cuadra_o_bloqueado' }); await db.query('update cortes set estado=$1,validado_por=$2 where id_corte=$3', ['Validado', req.user.nombre, c.id_corte]); }
+  if (accion === 'validar') {
+    if (!c.cuadra || c.bloqueos) return res.status(409).json({ error: 'no_cuadra_o_bloqueado' });
+    await db.query('update cortes set estado=$1,validado_por=$2 where id_corte=$3', ['Validado', req.user.nombre, c.id_corte]);
+    // Marcar contracargos como Aplicado a este corte
+    await db.query("update contracargos set estatus='Aplicado', aplicado_en_corte_id=$1 where id in (select cc::int from calculos, jsonb_array_elements_text(coalesce(contracargos_ids,'[]'::jsonb)) as cc where corte_id=$1)", [c.id_corte]);
+  }
   if (accion === 'dispersar') await db.query('update cortes set estado=$1,dispersado_por=$2 where id_corte=$3', ['Dispersado', req.user.nombre, c.id_corte]);
   if (accion === 'cerrar') await db.query('update cortes set estado=$1 where id_corte=$2', ['Cerrado', c.id_corte]);
   await bit(req, accion, `corte #${c.id_corte}`);
   res.json({ ok: true });
 });
 app.delete('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res) => {
-  if (!dbReady(res)) return; await db.query('delete from cortes'); await bit(req, 'corte', 'vació cortes'); res.json({ ok: true });
+  if (!dbReady(res)) return;
+  // Devolver contracargos Aplicados a Pendiente al vaciar cortes
+  await db.query("update contracargos set estatus='Pendiente', aplicado_en_corte_id=null where estatus='Aplicado'");
+  await db.query('delete from cortes'); await bit(req, 'corte', 'vació cortes'); res.json({ ok: true });
 });
 // Eliminar un corte individual (borra sus cálculos por FK cascade)
 app.delete('/api/cortes/:id', auth, requiereRol('admin', 'operador'), async (req, res) => {
@@ -417,6 +446,8 @@ app.delete('/api/cortes/:id', auth, requiereRol('admin', 'operador'), async (req
   const id = parseInt(req.params.id, 10);
   const c = (await db.query('select estado from cortes where id_corte=$1', [id])).rows[0];
   if (!c) return res.status(404).json({ error: 'no_existe' });
+  // Devolver a Pendiente los contracargos que este corte había marcado Aplicado
+  await db.query("update contracargos set estatus='Pendiente', aplicado_en_corte_id=null where aplicado_en_corte_id=$1", [id]);
   await db.query('delete from cortes where id_corte=$1', [id]);
   await bit(req, 'corte', `eliminó corte #${id} (estado ${c.estado})`);
   res.json({ ok: true });
@@ -541,6 +572,126 @@ app.get('/api/contable.xlsx', auth, async (req, res) => {
   // desde la fila de datos (índice 2). El valor guardado conserva su precisión completa.
   const fmt = { z: '"$"#,##0.00######', cols: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], rowFrom: 2 };
   enviarXLSX(res, `registro_contable_${desde}_a_${hasta}.xlsx`, X.buildXLSX([{ name: 'REGISTROS CONTABLES', aoa: [h1, h2, ...data], merges, cols, fmt }]));
+});
+
+/* ============================================================================
+   CONTRACARGOS — Sección Operación → Contracargos.
+   Se suben los reportes de "contracargos a retener" que ya genera el sistema
+   externo. Cada reporte se guarda con su cargado_en_fecha (default: hoy MX,
+   editable). El corte requiere que exista al menos una carga (aunque venga
+   con 0 renglones) para su fecha.
+   ========================================================================= */
+function bloqueFromMarca(m) {
+  const s = E.normStr(m || '');
+  return (s === 'amex' || s === 'american express' || s === 'americanexpress' || s === 'ax') ? 'AMEX' : 'DOM';
+}
+function limpiaGrupo(g) {
+  return String(g || '').replace(/^(grupo|group)\s+/i, '').trim();
+}
+async function getContracargoResumen(fecha) {
+  const rep = (await db.query('select * from contracargos_reporte_dia where fecha=$1', [fecha])).rows[0];
+  const items = (await db.query('select * from contracargos where cargado_en_fecha=$1 order by id', [fecha])).rows
+    .map(x => ({ ...x, monto: Number(x.monto) }));
+  return { fecha, reporte: rep || null, items };
+}
+app.get('/api/contracargos', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const fecha = req.query.fecha; if (!fecha) return res.status(400).json({ error: 'fecha' });
+  res.json(await getContracargoResumen(fecha));
+});
+app.get('/api/contracargos/dias', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const rows = (await db.query('select r.fecha::text as fecha, r.n_contracargos, r.monto_total, r.cargado_por, r.cargado_at, (select count(*)::int from contracargos c where c.cargado_en_fecha=r.fecha and c.estatus=\'Pendiente\') as pendientes, (select count(*)::int from contracargos c where c.cargado_en_fecha=r.fecha and c.estatus=\'Aplicado\') as aplicados from contracargos_reporte_dia r order by r.fecha desc')).rows;
+  res.json(rows);
+});
+// Huérfanos: pendientes con fecha < hoy (o < fecha específica)
+app.get('/api/contracargos/huerfanos', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const antesDe = req.query.antes_de || new Date().toISOString().slice(0, 10);
+  const rows = (await db.query("select cargado_en_fecha::text as fecha, count(*)::int as n, coalesce(sum(monto),0) as monto from contracargos where estatus='Pendiente' and cargado_en_fecha < $1 group by cargado_en_fecha order by cargado_en_fecha", [antesDe])).rows
+    .map(r => ({ ...r, monto: Number(r.monto) }));
+  res.json(rows);
+});
+// Ingesta del reporte (multipart: archivo + fecha)
+app.post('/api/contracargos/ingesta', auth, requiereRol('admin', 'operador'), upload.single('archivo'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const fecha = (req.body && req.body.fecha) || null;
+  if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return res.status(400).json({ error: 'fecha' });
+  if (!req.file) return res.status(400).json({ error: 'archivo' });
+  // Leer el buffer con SheetJS directamente (encabezados en fila 4, no aoaToObjects estándar)
+  const XLSXlib = require('xlsx');
+  const wb = XLSXlib.read(req.file.buffer, { type: 'buffer', cellDates: true });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const aoa = XLSXlib.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
+  // Buscar la fila del header (que contiene "Folio")
+  let hdrRow = -1;
+  for (let i = 0; i < Math.min(aoa.length, 10); i++) {
+    if (aoa[i] && aoa[i].some(v => String(v || '').trim().toLowerCase() === 'folio')) { hdrRow = i; break; }
+  }
+  if (hdrRow < 0) return res.status(400).json({ error: 'formato_reporte' });
+  const head = aoa[hdrRow].map(h => E.normStr(h).replace(/\s+/g, ' '));
+  const col = name => head.indexOf(E.normStr(name).replace(/\s+/g, ' '));
+  const iFolio = col('Folio'), iFecReg = col('Fecha registro'), iAfil = col('Afiliación'), iComercio = col('Comercio'),
+        iGrupo = col('Grupo de cliente'), iMarca = col('Marca'), iCanal = col('Canal'), iCodRazon = col('Código razón'),
+        iCat = col('Categoría'), iMonto = col('Monto a retener'), iMoneda = col('Moneda'), iTicket = col('Ticket'),
+        iAut = col('Autorización'), iU4 = col('Últimos 4'), iCaso = col('Caso / ARN'), iFecCbk = col('Fecha CBK'),
+        iLim = col('Límite representment'), iEstado = col('Estado');
+  const filas = [];
+  for (let i = hdrRow + 1; i < aoa.length; i++) {
+    const r = aoa[i]; if (!r) continue;
+    const folio = String(r[iFolio] || '').trim();
+    if (!folio || folio.toLowerCase() === 'total') continue;
+    if (!/^cb/i.test(folio)) continue;
+    const monto = E.parseMonto(iMonto >= 0 ? r[iMonto] : 0);
+    const marca = String(r[iMarca] || '').trim().toUpperCase();
+    filas.push({
+      folio, fecha_registro: String(r[iFecReg] || ''), afil: String(r[iAfil] || '').replace(/\D/g, ''),
+      comercio: String(r[iComercio] || ''), grupo: limpiaGrupo(r[iGrupo] || ''), marca,
+      bloque: bloqueFromMarca(marca), canal: String(r[iCanal] || ''), codigo_razon: String(r[iCodRazon] || ''),
+      categoria: String(r[iCat] || ''), monto, moneda: String(r[iMoneda] || ''),
+      ticket: String(r[iTicket] || ''), aut: String(r[iAut] || ''), u4: String(r[iU4] || ''),
+      caso: String(r[iCaso] || ''), fecha_cbk: String(r[iFecCbk] || ''), limite: String(r[iLim] || ''),
+      estado: String(r[iEstado] || ''),
+    });
+  }
+  // Upsert reporte-del-día (constancia)
+  const total = filas.reduce((s, f) => s + f.monto, 0);
+  await db.query(
+    `insert into contracargos_reporte_dia(fecha,n_contracargos,monto_total,archivo_origen,cargado_por,cargado_at)
+     values($1,$2,$3,$4,$5,now())
+     on conflict (fecha) do update set n_contracargos=excluded.n_contracargos, monto_total=excluded.monto_total, archivo_origen=excluded.archivo_origen, cargado_por=excluded.cargado_por, cargado_at=now()`,
+    [fecha, filas.length, E.round2(total), req.file.originalname || '', req.user.nombre]
+  );
+  // Upsert contracargos por origen_folio
+  let insertados = 0, actualizados = 0, ignorados = 0;
+  for (const f of filas) {
+    // Si ya está Aplicado, no toca (avisa)
+    const exist = (await db.query('select estatus from contracargos where origen_folio=$1', [f.folio])).rows[0];
+    if (exist && exist.estatus === 'Aplicado') { ignorados++; continue; }
+    const cols = ['origen_folio', 'cargado_en_fecha', 'fecha_registro', 'numero_afiliacion', 'comercio', 'grupo_cliente', 'marca', 'bloque', 'canal', 'codigo_razon', 'categoria', 'monto', 'moneda', 'ticket', 'autorizacion', 'ultimos_4', 'caso_arn', 'fecha_cbk', 'limite_representment', 'estado_origen', 'archivo_origen', 'creado_por'];
+    const vals = [f.folio, fecha, f.fecha_registro, f.afil, f.comercio, f.grupo, f.marca, f.bloque, f.canal, f.codigo_razon, f.categoria, f.monto, f.moneda, f.ticket, f.aut, f.u4, f.caso, f.fecha_cbk, f.limite, f.estado, req.file.originalname || '', req.user.nombre];
+    if (exist) {
+      const sets = cols.slice(1).map((c, i) => c + '=$' + (i + 2)).join(',');
+      await db.query('update contracargos set ' + sets + ' where origen_folio=$1', vals);
+      actualizados++;
+    } else {
+      const ph = cols.map((_, i) => '$' + (i + 1)).join(',');
+      await db.query('insert into contracargos(' + cols.join(',') + ') values(' + ph + ')', vals);
+      insertados++;
+    }
+  }
+  await bit(req, 'contracargos', `carga ${fecha}: ${insertados} nuevos, ${actualizados} actualizados, ${ignorados} ya aplicados (total ${filas.length}, monto ${E.round2(total)})`);
+  res.json({ fecha, filas: filas.length, insertados, actualizados, ignorados, monto_total: E.round2(total) });
+});
+app.delete('/api/contracargos/:id', auth, requiereRol('admin', 'operador'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const id = parseInt(req.params.id, 10);
+  const c = (await db.query('select estatus from contracargos where id=$1', [id])).rows[0];
+  if (!c) return res.status(404).json({ error: 'no_existe' });
+  if (c.estatus === 'Aplicado') return res.status(409).json({ error: 'ya_aplicado' });
+  await db.query('delete from contracargos where id=$1', [id]);
+  await bit(req, 'contracargos', `eliminó contracargo #${id}`);
+  res.json({ ok: true });
 });
 
 // Plantillas (cualquiera autenticado)
