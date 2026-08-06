@@ -356,11 +356,43 @@ async function vIngesta(v){
   ]));
   v.append(el('div',{class:'banner',html:`<b>Fecha de liquidación</b> (la calcula el servidor): Nacional/INT → T+${P.prodParams.nacional.n} corte ${P.prodParams.nacional.corte} · AMEX → T+${P.prodParams.amex.n} corte ${P.prodParams.amex.corte}. Cámbialo en Parámetros.`}));
   if(d.total)diagIngesta(v,dg);
+  // Cargas recientes (lotes)
+  await renderCargasRecientes(v);
   const p=el('div',{class:'panel'});
   p.append(el('h3',{},'Transacciones',el('span',{class:'right'},can('ingesta')&&d.total?el('button',{class:'btn ghost sm',onclick:async()=>{if(confirm('¿Vaciar todas las transacciones? (No borra cortes)')){await api('DELETE','/api/transacciones');render();}}},'Vaciar transacciones'):'')));
   const rows=d.items.map(t=>{const neg=t.monto<0;return[fmtISO(t.fecha)||esc(t.fecha),t.hora||'',esc(t.cliente),esc(t.numero_afiliacion),badgeProd(t.producto),String(t.estatus).toUpperCase()==='APROBADO'?'<span class="badge ok">APROBADO</span>'+(neg?' <span class="badge w">cancelación</span>':''):`<span class="pill">${esc(t.estatus)}</span>`,{num:(neg?'<span style="color:var(--danger)">':'')+mxn(t.monto)+(neg?'</span>':'')},t.fecha_liq?fmtISO(t.fecha_liq):(t.invalida?'<span class="flagbad">revisar</span>':'')];});
   p.append(tableWrap(['Fecha','Hora','Cliente','Afiliación','Producto','Estatus',{t:'Monto'},'Fecha liq.'],rows,{empty:'Aún no hay transacciones.'}));
   if(d.total>d.items.length)p.append(el('div',{class:'muted',style:'margin-top:8px'},`Mostrando ${d.items.length} de ${d.total}.`));
+  v.append(p);
+}
+async function renderCargasRecientes(v){
+  let ing;
+  try{ ing=await api('GET','/api/ingestas'); }catch(e){ return; }
+  if(!ing||!ing.length) return;
+  const p=el('div',{class:'panel'});
+  p.append(el('h3',{},'Cargas recientes',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},`${ing.length} lote(s)`))));
+  const rows=ing.map(l=>{
+    const cuando = l.id==='hist' ? '—' : new Date(l.fecha).toLocaleString('es-MX');
+    const archivo = l.id==='hist' ? '<i class="muted">Carga inicial (histórica)</i>' : esc(l.archivo||'');
+    const r=[cuando, archivo, esc(l.cargado_por||'—'), {num:l.n_trx}, {num:mxn(l.monto_aprobado)}];
+    if(can('ingesta')) r.push(el('button',{class:'btn danger sm',onclick:async(e)=>{
+      e.stopPropagation();
+      if(!confirm(`¿Borrar esta carga? (${l.n_trx.toLocaleString('es-MX')} trx, ${mxn(l.monto_aprobado)})\n\nSi hay cortes en Borrador afectados, quedarán marcados como obsoletos. Si hay cortes Validados/Dispersados/Cerrados afectados, la operación será bloqueada.`)) return;
+      try{
+        const res=await withBusy('Borrando lote…',()=>api('DELETE','/api/ingestas/'+encodeURIComponent(l.id)));
+        toast(`Lote borrado: ${res.borradas.toLocaleString('es-MX')} trx`+(res.cortes_marcados_obsoletos&&res.cortes_marcados_obsoletos.length?` · ${res.cortes_marcados_obsoletos.length} corte(s) borrador obsoletos`:''),'ok');
+        render();
+      }catch(err){
+        if(err.status===409 && err.data && err.data.error==='trx_en_corte_no_borrador'){
+          const det=(err.data.detalle||[]).map(c=>`#${c.id_corte} (${c.estado}, liq ${c.fecha_liq})`).join(', ');
+          toast('No se puede borrar: hay cortes '+det,'err');
+        } else toast(errMsg(err),'err');
+      }
+    }},'Borrar esta carga'));
+    return r;
+  });
+  const head=['Cuándo','Archivo','Usuario',{t:'Trx'},{t:'Monto aprobado'}]; if(can('ingesta'))head.push('');
+  p.append(tableWrap(head,rows,{empty:'Sin cargas registradas.'}));
   v.append(p);
 }
 function diagIngesta(v,dg){

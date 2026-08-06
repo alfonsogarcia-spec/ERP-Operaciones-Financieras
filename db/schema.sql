@@ -100,6 +100,13 @@ create table if not exists transacciones (
 );
 create index if not exists idx_tx_liq on transacciones(fecha_liq, estatus);
 
+-- Trazabilidad de la carga (lote) al que pertenece cada transacción.
+alter table transacciones add column if not exists ingesta_id text;
+alter table transacciones add column if not exists ingesta_fecha timestamptz;
+alter table transacciones add column if not exists archivo_origen text;
+alter table transacciones add column if not exists cargado_por text;
+create index if not exists idx_tx_ingesta on transacciones(ingesta_id);
+
 create table if not exists cortes (
   id_corte      serial primary key,
   fecha_liq     text,
@@ -114,8 +121,10 @@ create table if not exists cortes (
   total_disp    numeric,
   n_trx         integer,
   cuadra        boolean,
-  bloqueos      integer
+  bloqueos      integer,
+  obsoleto      boolean not null default false      -- se marca si se borra un lote de trx que lo alimentaba
 );
+alter table cortes add column if not exists obsoleto boolean not null default false;
 
 create table if not exists calculos (
   id          serial primary key,

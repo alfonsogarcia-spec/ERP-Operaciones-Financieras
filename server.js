@@ -287,9 +287,14 @@ app.post('/api/transacciones/ingesta', auth, requiereRol('admin', 'operador'), u
     filas.push({ fecha: t.fecha, hora: t.hora, cliente: t.cliente, comercio: t.comercio, numero_afiliacion: t.numero_afiliacion, estatus: t.estatus, metodo: t.metodo, producto: t.producto, monto: t.monto, folio: String(t.folio || ''), referencia: String(t.referencia || ''), autorizacion: String(t.autorizacion || ''), terminal: String(t.terminal || ''), fecha_liq, cancelacion: t.monto < 0, invalida: !ok });
   }
   if (modo === 'replace') await db.query('delete from transacciones');
-  await insertMany('transacciones', ['fecha', 'hora', 'cliente', 'comercio', 'numero_afiliacion', 'estatus', 'metodo', 'producto', 'monto', 'folio', 'referencia', 'autorizacion', 'terminal', 'fecha_liq', 'cancelacion', 'invalida'], filas);
-  await bit(req, 'ingesta', `${validas} válidas, ${invalidas} inválidas (${modo})`);
-  res.json({ validas, invalidas, monto: E.round2(monto) });
+  // Asignar identificador de lote a todas las filas
+  const ingestaId = 'ing_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+  const nombreArchivo = req.file ? (req.file.originalname || '') : (req.body && req.body.csv ? '(pegado)' : '');
+  const ingestaAt = new Date().toISOString();
+  filas.forEach(r => { r.ingesta_id = ingestaId; r.ingesta_fecha = ingestaAt; r.archivo_origen = nombreArchivo; r.cargado_por = req.user.nombre; });
+  await insertMany('transacciones', ['fecha', 'hora', 'cliente', 'comercio', 'numero_afiliacion', 'estatus', 'metodo', 'producto', 'monto', 'folio', 'referencia', 'autorizacion', 'terminal', 'fecha_liq', 'cancelacion', 'invalida', 'ingesta_id', 'ingesta_fecha', 'archivo_origen', 'cargado_por'], filas);
+  await bit(req, 'ingesta', `${validas} válidas, ${invalidas} inválidas (${modo}) · lote ${ingestaId} · archivo ${nombreArchivo}`);
+  res.json({ validas, invalidas, monto: E.round2(monto), ingesta_id: ingestaId });
 });
 
 app.get('/api/transacciones', auth, async (req, res) => {
@@ -302,6 +307,55 @@ app.get('/api/transacciones', auth, async (req, res) => {
 });
 app.delete('/api/transacciones', auth, requiereRol('admin', 'operador'), async (req, res) => {
   if (!dbReady(res)) return; await db.query('delete from transacciones'); await bit(req, 'ingesta', 'vació transacciones'); res.json({ ok: true });
+});
+
+// Lotes de ingesta ("Cargas recientes"): agrupa transacciones por ingesta_id.
+// Las transacciones sin ingesta_id (histórico previo) se agrupan como lote virtual "hist".
+app.get('/api/ingestas', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const rows = (await db.query(`
+    select coalesce(ingesta_id,'hist') as id,
+           max(coalesce(ingesta_fecha, now())) as fecha,
+           max(coalesce(archivo_origen,'(carga histórica)')) as archivo,
+           max(coalesce(cargado_por,'—')) as cargado_por,
+           count(*)::int as n_trx,
+           coalesce(sum(case when upper(estatus)='APROBADO' then monto else 0 end),0) as monto_aprobado
+    from transacciones
+    group by coalesce(ingesta_id,'hist')
+    order by fecha desc nulls last
+  `)).rows.map(r => ({ ...r, monto_aprobado: Number(r.monto_aprobado) }));
+  res.json(rows);
+});
+
+// Borrar un lote de ingesta.
+// - Bloquea si alguna trx del lote está usada por un corte Validado/Dispersado/Cerrado.
+// - Si hay cortes Borrador que dependen del lote, los marca "obsoleto".
+app.delete('/api/ingestas/:id', auth, requiereRol('admin', 'operador'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const raw = String(req.params.id);
+  const filtro = raw === 'hist' ? 'ingesta_id is null' : 'ingesta_id=$1';
+  const params = raw === 'hist' ? [] : [raw];
+  const total = (await db.query('select count(*)::int n from transacciones where ' + filtro, params)).rows[0].n;
+  if (!total) return res.status(404).json({ error: 'lote_vacio_o_inexistente' });
+  // Cortes que tocan fechas de liquidación cubiertas por este lote
+  const cortes = (await db.query(
+    `select distinct c.id_corte, c.estado, c.fecha_liq
+     from cortes c
+     where c.fecha_liq_iso in (
+       select distinct fecha_liq from transacciones where ${filtro} and fecha_liq is not null
+     )`,
+    params
+  )).rows;
+  const cortesBloq = cortes.filter(c => ['Validado', 'Dispersado', 'Cerrado'].includes(c.estado));
+  if (cortesBloq.length) {
+    return res.status(409).json({ error: 'trx_en_corte_no_borrador', detalle: cortesBloq.map(c => ({ id_corte: c.id_corte, estado: c.estado, fecha_liq: c.fecha_liq })) });
+  }
+  // Marcar como obsoletos los cortes en Borrador afectados
+  const cortesBorr = cortes.filter(c => c.estado === 'Borrador').map(c => c.id_corte);
+  if (cortesBorr.length) await db.query('update cortes set obsoleto=true where id_corte = any($1)', [cortesBorr]);
+  const del = await db.query('delete from transacciones where ' + filtro, params);
+  await bit(req, 'ingesta', `borró lote ${raw} (${total} trx); cortes borrador marcados obsoleto: ${cortesBorr.join(',') || 'ninguno'}`);
+  res.json({ ok: true, borradas: total, cortes_marcados_obsoletos: cortesBorr });
 });
 
 async function construirDiagnostico() {
