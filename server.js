@@ -557,12 +557,78 @@ app.get('/api/cortes/:id/reporte.xlsx', auth, async (req, res) => {
   const c = (await db.query('select *, fecha_liq_iso::text as fli from cortes where id_corte=$1', [parseInt(req.params.id, 10)])).rows[0];
   if (!c) return res.status(404).json({ error: 'no_existe' });
   const cal = (await db.query('select * from calculos where corte_id=$1', [c.id_corte])).rows.map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc }));
-  const head = ['grupo', 'afiliacion', 'concepto', 'monto', 'comp_tdd', 'comp_tdc', 'comp_amex', 'comp_int', 'a_compensar', 'banca_mas_iva', 'a_dispersar', 'diferencia', 'utilidad'];
-  const rows = cal.map(x => { const r = x.calc; return [x.razon, String(x.afil), x.concepto, E.round2(r.m_tdd + r.m_tdc + r.m_amex + r.m_int), E.round2(r.comp_tdd), E.round2(r.comp_tdc), E.round2(r.comp_amex), E.round2(r.comp_int), E.round2(r.comp_total), E.round2(r.banca + r.iva_banca), E.round2(r.disp_total), E.round2(r.diferencia), E.round2(r.utilidad)]; });
-  rows.push(['TOTAL', '', '', Number(c.total_monto), '', '', '', '', Number(c.total_comp), '', Number(c.total_disp), '', '']);
   await bit(req, 'reporte', `exportó reporte corte #${c.id_corte}`);
-  enviarXLSX(res, `reporte_cliente_corte_${c.id_corte}_${c.fli}.xlsx`, X.buildXLSX([{ name: 'Reporte por cliente', aoa: [head, ...rows] }]));
+  enviarXLSX(res, `reporte_cliente_corte_${c.id_corte}_${c.fli}.xlsx`, buildReporteXLSX(c, cal));
 });
+
+// Reporte por cliente con el formato de PLANTILLA REPORTE.xlsx: encabezado
+// POLIPAY / subtítulo / corte+fecha, encabezados en fila 5, datos desde fila 6,
+// 12 columnas: Grupo, Afiliación, Concepto, Monto, Débito, Crédito, AMEX, INT,
+// A Compensar, Banca+IVA, A Dispersar, Diferencia.
+function buildReporteXLSX(c, cal) {
+  // Fecha larga en español: "06 de agosto de 2026"
+  const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  const iso = c.fli || (c.fecha_liq_iso && String(c.fecha_liq_iso).slice(0,10));
+  const [ay, am, ad] = String(iso || '').split('-');
+  const fechaLarga = ay ? `${ad} de ${MESES[+am - 1]} de ${ay}` : (c.fecha_liq || '');
+  const N = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const hoyStr = (function(){ const p=N.formatToParts(new Date()); const g=t=>(p.find(x=>x.type===t)||{}).value; return `${g('day')}/${g('month')}/${g('year')}`; })();
+
+  const head = ['Grupo','Afiliación','Concepto','Monto','Débito','Crédito','American Express','Internacional','A Compensar','Banca + IVA','A Dispersar','Diferencia'];
+  const dataRows = cal.map(x => { const r = x.calc; return [
+    x.razon,
+    String(x.afil),
+    x.concepto,
+    E.round2(r.m_tdd + r.m_tdc + r.m_amex + r.m_int),
+    E.round2(r.m_tdd),
+    E.round2(r.m_tdc),
+    E.round2(r.m_amex),
+    E.round2(r.m_int),
+    E.round2(r.comp_total),
+    E.round2(r.banca + r.iva_banca),
+    E.round2(r.disp_total),
+    E.round2(r.diferencia),
+  ]; });
+  // Fila TOTAL
+  const sumaBanca = cal.reduce((s, x) => s + (Number(x.calc.banca||0) + Number(x.calc.iva_banca||0)), 0);
+  const totalRow = ['TOTAL','','',
+    Number(c.total_monto),
+    E.round2(cal.reduce((s,x)=>s+Number(x.calc.m_tdd||0),0)),
+    E.round2(cal.reduce((s,x)=>s+Number(x.calc.m_tdc||0),0)),
+    E.round2(cal.reduce((s,x)=>s+Number(x.calc.m_amex||0),0)),
+    E.round2(cal.reduce((s,x)=>s+Number(x.calc.m_int||0),0)),
+    Number(c.total_comp),
+    E.round2(sumaBanca),
+    Number(c.total_disp),
+    '',
+  ];
+
+  const aoa = [
+    ['POLIPAY'],
+    ['Reporte por Cliente  ·  Agregado por grupo y afiliación'],
+    [`Corte ${c.id_corte}   |   ${fechaLarga}`],
+    [''], // separador
+    head,
+    ...dataRows,
+    totalRow,
+    [''],
+    [`Polipay POS Settlement · Generado ${hoyStr} por ${c.creado_por || '—'}`],
+  ];
+  // Merges: encabezado (A1:L1, A2:L2, A3:L3, A4:L4) + pie (última fila A:L)
+  const lastRowIdx = aoa.length - 1;                  // 0-index de la última fila (pie)
+  const merges = [
+    { s:{r:0,c:0}, e:{r:0,c:11} },   // A1:L1  POLIPAY
+    { s:{r:1,c:0}, e:{r:1,c:11} },   // A2:L2  subtítulo
+    { s:{r:2,c:0}, e:{r:2,c:11} },   // A3:L3  corte + fecha
+    { s:{r:3,c:0}, e:{r:3,c:11} },   // A4:L4  separador
+    { s:{r:lastRowIdx,c:0}, e:{r:lastRowIdx,c:11} },  // pie
+  ];
+  // Anchos de columna
+  const cols = [{wch:18},{wch:14},{wch:22},{wch:14},{wch:13},{wch:13},{wch:16},{wch:14},{wch:14},{wch:14},{wch:14},{wch:12}];
+  // Formato de contabilidad (signo de pesos) para columnas de importes (D..L, índices 3..11) desde fila de datos (índice 5)
+  const fmt = { z: '"$"#,##0.00', cols: [3,4,5,6,7,8,9,10], rowFrom: 5 };
+  return X.buildXLSX([{ name: 'Reporte por cliente', aoa, merges, cols, fmt }]);
+}
 
 /* ============================================================================
    CONTABLE — Registro contable (pólizas) por rango de fecha de liquidación
