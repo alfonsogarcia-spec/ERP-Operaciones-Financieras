@@ -188,6 +188,16 @@ create table if not exists contracargos_reporte_dia (
   cargado_at         timestamptz default now()
 );
 
+-- Destinatarios del correo de notificación del corte (aviso automático).
+create table if not exists destinatarios (
+  id          serial primary key,
+  email       text not null unique,
+  nombre      text,
+  activo      boolean not null default true,
+  creado_at   timestamptz default now(),
+  creado_por  text
+);
+
 create table if not exists bitacora (
   id       serial primary key,
   ts       timestamptz default now(),

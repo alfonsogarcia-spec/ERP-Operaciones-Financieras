@@ -468,7 +468,9 @@ app.get('/api/cortes/:id', auth, async (req, res) => {
 function transicionValida(estado, accion) {
   return (accion === 'validar' && estado === 'Borrador') || (accion === 'dispersar' && estado === 'Validado') || (accion === 'cerrar' && estado === 'Dispersado');
 }
-app.post('/api/cortes/:id/:accion', auth, async (req, res) => {
+app.post('/api/cortes/:id/:accion', auth, async (req, res, next) => {
+  // La ruta específica /notificar se define más abajo — dejarla pasar.
+  if (req.params.accion === 'notificar') return next();
   if (!dbReady(res)) return;
   const accion = req.params.accion; if (!['validar', 'dispersar', 'cerrar'].includes(accion)) return res.status(404).json({ error: 'accion' });
   const rolOk = accion === 'validar' ? ['admin', 'tesoreria'] : accion === 'dispersar' ? ['admin', 'tesoreria'] : ['admin', 'tesoreria'];
@@ -746,6 +748,315 @@ app.delete('/api/contracargos/:id', auth, requiereRol('admin', 'operador'), asyn
   await db.query('delete from contracargos where id=$1', [id]);
   await bit(req, 'contracargos', `eliminó contracargo #${id}`);
   res.json({ ok: true });
+});
+
+/* ============================================================================
+   INFORME DEL CORTE POR CORREO (Amazon SES)
+   Genera el HTML del informe con marca Polipay. Endpoint preview HTML sin envío
+   real (para verificar visual). El envío por SES se activará cuando estén las
+   credenciales en el entorno (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION).
+   ========================================================================= */
+function fmtMXN(n){ return new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN'}).format(Number(n)||0); }
+function fmtInt(n){ return new Intl.NumberFormat('es-MX').format(Number(n)||0); }
+function fmtDT(iso){ try{ return new Date(iso).toLocaleString('es-MX'); }catch(_){ return iso||''; } }
+
+async function armarInformeHTML(idCorte) {
+  const c = (await db.query('select *, fecha_liq_iso::text as fli from cortes where id_corte=$1', [idCorte])).rows[0];
+  if (!c) throw new Error('corte_no_existe');
+  const cal = (await db.query('select * from calculos where corte_id=$1 order by id', [c.id_corte])).rows
+    .map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc, ajustes: typeof x.ajustes === 'string' ? JSON.parse(x.ajustes) : x.ajustes }));
+  // Top 5 por disp_total
+  const top = [...cal].sort((a, b) => Math.abs(b.calc.disp_total) - Math.abs(a.calc.disp_total)).slice(0, 5);
+  // Totales
+  const tCC = cal.reduce((s, x) => s + (Number(x.ajustes.contracargos_dom || 0) + Number(x.ajustes.contracargos_amex || 0)), 0);
+  const tUtil = cal.reduce((s, x) => s + Number(x.calc.utilidad || 0), 0);
+  const cuadra = c.cuadra;
+  const marca = cuadra ? '✓' : '✗';
+  const estadoBadge = { Borrador: '#707070', Validado: '#157BF6', Dispersado: '#7C5CE6', Cerrado: '#4BB543' }[c.estado] || '#707070';
+
+  const subject = `[Conciliación T+1] Corte #${c.id_corte} — liq ${c.fecha_liq} — A dispersar ${fmtMXN(c.total_disp)} ${marca}`;
+
+  // Colores marca Polipay
+  const brand = '#04003A', accent = '#157BF6', bandaAccent = '#157BF6', line = '#E4E6E7', ink = '#04003A', muted = '#707070', bg = '#F5F7FA', softBlue = '#EDF3FE';
+
+  // Banda de sección azul (título blanco sobre fondo azul)
+  const banda = titulo => `
+    <tr><td style="background:${bandaAccent};padding:10px 16px;font:700 12px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">${titulo}</td></tr>`;
+
+  // Celda KPI (usada dentro de una tabla de 4 columnas)
+  const kpi = (label, value) => `
+    <td style="padding:14px 16px;background:#fff;border-right:1px solid ${line};vertical-align:top;width:25%">
+      <div style="font:600 11px/1.2 Montserrat,Arial,sans-serif;color:${muted};letter-spacing:.06em;text-transform:uppercase">${label}</div>
+      <div style="font:700 20px/1.2 Montserrat,Arial,sans-serif;color:${ink};margin-top:6px;font-variant-numeric:tabular-nums">${value}</div>
+    </td>`;
+
+  // Fila del top 5 (fondo alternado como en el PDF)
+  const topRow = (t, i) => `
+    <tr>
+      <td style="padding:10px 16px;background:${i%2?'#F7FAFF':'#fff'};font:700 13px/1.4 Montserrat,Arial,sans-serif;color:${ink}">${escapeHtml(t.razon)}</td>
+      <td style="padding:10px 16px;background:${i%2?'#F7FAFF':'#fff'};font:400 13px/1.4 Montserrat,Arial,sans-serif;color:${ink};font-variant-numeric:tabular-nums">${escapeHtml(t.afil)}</td>
+      <td style="padding:10px 16px;background:${i%2?'#F7FAFF':'#fff'};font:400 13px/1.4 Montserrat,Arial,sans-serif;color:${ink}">${escapeHtml(t.concepto||'')}</td>
+      <td align="right" style="padding:10px 16px;background:${i%2?'#F7FAFF':'#fff'};font:700 13px/1.4 Montserrat,Arial,sans-serif;color:${ink};font-variant-numeric:tabular-nums">${fmtMXN(t.calc.disp_total)}</td>
+    </tr>`;
+
+  const html = `<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(subject)}</title></head>
+<body style="margin:0;padding:24px 12px;background:${bg};font-family:Montserrat,-apple-system,BlinkMacSystemFont,Arial,sans-serif;color:${ink}">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:720px;margin:0 auto;background:#fff">
+
+    <!-- Encabezado con logo y eyebrow -->
+    <tr>
+      <td style="padding:22px 32px 14px;border-bottom:3px solid ${brand}">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+          <td style="font:800 30px/1 Montserrat,Arial,sans-serif;color:${brand}"><span style="color:${accent}">p</span>olipay</td>
+          <td align="right" style="line-height:1.35">
+            <div style="font:700 12px/1.2 Montserrat,Arial,sans-serif;color:${accent};letter-spacing:.09em;text-transform:uppercase">Conciliación y Liquidación T+1</div>
+            <div style="font:400 11px/1.2 Montserrat,Arial,sans-serif;color:${muted};letter-spacing:.02em;text-transform:uppercase;margin-top:3px">Aviso automático de corte</div>
+          </td>
+        </tr></table>
+      </td>
+    </tr>
+
+    <!-- Título -->
+    <tr>
+      <td style="padding:28px 32px 4px;font:800 30px/1.15 Montserrat,Arial,sans-serif;color:${ink}">Corte #${c.id_corte} · Liquidación ${escapeHtml(c.fecha_liq)}</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 32px 22px;font:600 11px/1 Montserrat,Arial,sans-serif;color:${muted};letter-spacing:.06em;text-transform:uppercase">
+        Estado: <span style="display:inline-block;padding:6px 12px;border-radius:6px;background:${softBlue};color:${accent};font-weight:700;letter-spacing:.06em;margin:0 6px">${escapeHtml((c.estado||'').toUpperCase())}</span>
+        &nbsp;|&nbsp; Cuadre: <span style="color:${cuadra?accent:'#CC0000'};font-weight:700">${cuadra?'✓ diferencia 0.00':'✗ revisar'}</span>
+      </td>
+    </tr>
+
+    <!-- Información del corte -->
+    <tr><td style="padding:0 32px">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid ${line};border-collapse:collapse">
+        ${banda('Información del corte')}
+        <tr><td style="padding:0">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+            ${kpi('Transacciones', fmtInt(c.n_trx))}
+            ${kpi('Grupos', fmtInt(cal.length))}
+            ${kpi('A compensar', '$ ' + fmtMXN(c.total_comp).replace('$',''))}
+            ${kpi('A dispersar', '$ ' + fmtMXN(c.total_disp).replace('$',''))}
+          </tr></table>
+        </td></tr>
+      </table>
+    </td></tr>
+
+    <!-- Información financiera -->
+    <tr><td style="padding:22px 32px 0">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid ${line};border-collapse:collapse">
+        ${banda('Información financiera')}
+        <tr>
+          <td style="padding:14px 16px;background:#fff;font:400 14px/1.4 Montserrat,Arial,sans-serif;color:${ink}">Contracargos aplicados</td>
+          <td align="right" style="padding:14px 16px;background:#fff;font:700 14px/1.4 Montserrat,Arial,sans-serif;color:${ink};font-variant-numeric:tabular-nums">$ ${fmtMXN(tCC).replace('$','')}</td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;background:${softBlue};border-top:1px solid ${line};font:400 14px/1.4 Montserrat,Arial,sans-serif;color:${ink}">Utilidad</td>
+          <td align="right" style="padding:14px 16px;background:${softBlue};border-top:1px solid ${line};font:700 14px/1.4 Montserrat,Arial,sans-serif;color:${ink};font-variant-numeric:tabular-nums">$ ${fmtMXN(tUtil).replace('$','')}</td>
+        </tr>
+      </table>
+      <div style="margin-top:8px;font:400 11px/1.4 Montserrat,Arial,sans-serif;color:${muted}">Todas nuestras operaciones son en moneda nacional mexicana.</div>
+    </td></tr>
+
+    <!-- Top 5 dispersiones -->
+    <tr><td style="padding:22px 32px 0">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid ${line};border-collapse:collapse">
+        ${banda('Top 5 dispersiones')}
+        <tr style="background:${softBlue}">
+          <th align="left"  style="padding:10px 16px;font:700 11px/1 Montserrat,Arial,sans-serif;color:${ink};letter-spacing:.06em;text-transform:uppercase">Comercio</th>
+          <th align="left"  style="padding:10px 16px;font:700 11px/1 Montserrat,Arial,sans-serif;color:${ink};letter-spacing:.06em;text-transform:uppercase">Afiliación</th>
+          <th align="left"  style="padding:10px 16px;font:700 11px/1 Montserrat,Arial,sans-serif;color:${ink};letter-spacing:.06em;text-transform:uppercase">Descripción</th>
+          <th align="right" style="padding:10px 16px;font:700 11px/1 Montserrat,Arial,sans-serif;color:${ink};letter-spacing:.06em;text-transform:uppercase">Importe</th>
+        </tr>
+        ${top.map((t,i)=>topRow(t,i)).join('')}
+      </table>
+    </td></tr>
+
+    <!-- Adjuntos -->
+    <tr><td style="padding:26px 32px 6px">
+      <div style="font:700 12px/1 Montserrat,Arial,sans-serif;color:${accent};letter-spacing:.09em;text-transform:uppercase">Adjuntos</div>
+      <table role="presentation" cellspacing="0" cellpadding="0" style="margin-top:10px">
+        <tr><td style="padding:4px 8px 4px 0;vertical-align:middle"><span style="display:inline-block;width:8px;height:8px;background:${accent};border-radius:1px"></span></td><td style="font:400 13px/1.5 Montserrat,Arial,sans-serif;color:${ink}">layout_spei_corte_${c.id_corte}_${c.fli}.xlsx</td></tr>
+        <tr><td style="padding:4px 8px 4px 0;vertical-align:middle"><span style="display:inline-block;width:8px;height:8px;background:${accent};border-radius:1px"></span></td><td style="font:400 13px/1.5 Montserrat,Arial,sans-serif;color:${ink}">reporte_cliente_corte_${c.id_corte}_${c.fli}.xlsx</td></tr>
+      </table>
+    </td></tr>
+
+    <!-- Pie -->
+    <tr>
+      <td style="padding:22px 32px 26px;border-top:1px solid ${line};font:400 12px/1.6 Montserrat,Arial,sans-serif;color:${muted}">
+        Generado por ${escapeHtml(c.creado_por || '—')} · ${fmtDT(c.creado_at)}<br>
+        Este correo se envía automáticamente. Sistema: polipay-conciliacion-liquidacion.onrender.com
+      </td>
+    </tr>
+
+    <!-- Franja negra final -->
+    <tr>
+      <td style="background:${brand};padding:14px 32px">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+          <td style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">Polipay · Conciliación y Liquidación</td>
+          <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">contacto@polipay.io</td>
+        </tr></table>
+      </td>
+    </tr>
+  </table>
+</body></html>`;
+  return { subject, html, c, cal, tCC, tUtil };
+}
+function escapeHtml(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, ch => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[ch])); }
+
+// Preview HTML del informe (solo para ver en el navegador, sin enviar)
+app.get('/api/cortes/:id/informe-preview.html', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  try {
+    const { html } = await armarInformeHTML(parseInt(req.params.id, 10));
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (e) { res.status(404).json({ error: e.message }); }
+});
+
+/* ============================================================================
+   DESTINATARIOS del correo de notificación
+   ========================================================================= */
+app.get('/api/destinatarios', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  res.json((await db.query('select * from destinatarios order by activo desc, email')).rows);
+});
+app.post('/api/destinatarios', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const b = req.body || {};
+  const email = String(b.email || '').trim().toLowerCase();
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'email_invalido' });
+  if (b.id) {
+    await db.query('update destinatarios set email=$1,nombre=$2,activo=$3 where id=$4', [email, String(b.nombre || '').trim(), !!b.activo, b.id]);
+  } else {
+    await db.query('insert into destinatarios(email,nombre,activo,creado_por) values($1,$2,$3,$4) on conflict(email) do update set nombre=excluded.nombre, activo=excluded.activo',
+      [email, String(b.nombre || '').trim(), b.activo !== false, req.user.nombre]);
+  }
+  await bit(req, 'destinatarios', `alta/edición ${email}`);
+  res.json({ ok: true });
+});
+app.delete('/api/destinatarios/:id', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  await db.query('delete from destinatarios where id=$1', [parseInt(req.params.id, 10)]);
+  await bit(req, 'destinatarios', `eliminó destinatario #${req.params.id}`);
+  res.json({ ok: true });
+});
+
+/* ============================================================================
+   ENVÍO POR AMAZON SES (SendRawEmail con adjuntos)
+   Credenciales por env: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION.
+   Remitente verificado: SES_FROM (por defecto ops.agregador@polipay.io).
+   ========================================================================= */
+function sesEnabled() {
+  return !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && process.env.AWS_REGION);
+}
+const SES_FROM = process.env.SES_FROM || 'ops.agregador@polipay.io';
+const SES_FROM_NAME = process.env.SES_FROM_NAME || 'Polipay · Operaciones';
+
+function buildMime({ from, fromName, to, subject, html, attachments }) {
+  const boundary = 'polipay_' + Math.random().toString(36).slice(2);
+  const boundaryAlt = 'polipay_alt_' + Math.random().toString(36).slice(2);
+  const enc = s => `=?UTF-8?B?${Buffer.from(String(s), 'utf8').toString('base64')}?=`;
+  const lines = [];
+  lines.push(`From: ${fromName ? `${enc(fromName)} <${from}>` : from}`);
+  lines.push(`To: ${to.join(', ')}`);
+  lines.push(`Subject: ${enc(subject)}`);
+  lines.push('MIME-Version: 1.0');
+  lines.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
+  lines.push('');
+  lines.push(`--${boundary}`);
+  // parte alternativa: text/plain + text/html (SES/Gmail amigable)
+  lines.push(`Content-Type: multipart/alternative; boundary="${boundaryAlt}"`);
+  lines.push('');
+  const textFallback = 'Aviso automático de corte de Polipay Conciliación y Liquidación T+1. Consulta el detalle en el correo HTML o los archivos adjuntos.';
+  lines.push(`--${boundaryAlt}`);
+  lines.push('Content-Type: text/plain; charset=UTF-8');
+  lines.push('Content-Transfer-Encoding: base64');
+  lines.push('');
+  lines.push(Buffer.from(textFallback, 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n'));
+  lines.push(`--${boundaryAlt}`);
+  lines.push('Content-Type: text/html; charset=UTF-8');
+  lines.push('Content-Transfer-Encoding: base64');
+  lines.push('');
+  lines.push(Buffer.from(html, 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n'));
+  lines.push(`--${boundaryAlt}--`);
+  // adjuntos
+  for (const a of (attachments || [])) {
+    lines.push(`--${boundary}`);
+    lines.push(`Content-Type: ${a.contentType || 'application/octet-stream'}; name="${a.filename}"`);
+    lines.push('Content-Transfer-Encoding: base64');
+    lines.push(`Content-Disposition: attachment; filename="${a.filename}"`);
+    lines.push('');
+    lines.push(a.content.toString('base64').replace(/(.{76})/g, '$1\r\n'));
+  }
+  lines.push(`--${boundary}--`);
+  return lines.join('\r\n');
+}
+
+async function sendSES({ to, subject, html, attachments }) {
+  const { SESClient, SendRawEmailCommand } = require('@aws-sdk/client-ses');
+  const client = new SESClient({
+    region: process.env.AWS_REGION,
+    credentials: { accessKeyId: process.env.AWS_ACCESS_KEY_ID, secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY },
+  });
+  const raw = buildMime({ from: SES_FROM, fromName: SES_FROM_NAME, to, subject, html, attachments });
+  const cmd = new SendRawEmailCommand({ RawMessage: { Data: Buffer.from(raw, 'utf8') } });
+  const out = await client.send(cmd);
+  return out.MessageId;
+}
+
+/* ============================================================================
+   NOTIFICAR CORTE — envía el informe a los destinatarios activos, con
+   layout.xlsx + reporte.xlsx adjuntos generados en memoria.
+   ========================================================================= */
+async function armarAdjuntosCorte(idCorte) {
+  const c = (await db.query('select *, fecha_liq_iso::text as fli from cortes where id_corte=$1', [idCorte])).rows[0];
+  if (!c) throw new Error('corte_no_existe');
+  const cal = (await db.query('select * from calculos where corte_id=$1 order by id', [c.id_corte])).rows
+    .map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc }));
+  // Layout (mismo formato que /api/cortes/:id/layout.xlsx)
+  const dom = [], amex = [];
+  for (const x of cal) {
+    const r = x.calc;
+    if (Math.abs(r.disp_dom) > 0.005) dom.push({ concepto: x.concepto, clabe: x.clabe, cod: x.codigo_banco, benef: x.beneficiario, cant: E.round2(r.disp_dom), razon: x.razon });
+    if (Math.abs(r.disp_amex) > 0.005) amex.push({ concepto: `DISPERSION ${E.ult3(x.afil)}CPPXAMEX00${x.id_grupo}`, clabe: x.clabe, cod: x.codigo_banco, benef: x.beneficiario, cant: E.round2(r.disp_amex), razon: x.razon });
+  }
+  const orders = [...dom, ...amex];
+  const pz = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: '2-digit', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const gp = t => (pz.find(p => p.type === t) || {}).value || '';
+  const referencia = Number(`1${gp('day')}${gp('month')}${gp('year')}`);
+  const headL = ['Concepto', 'Cuenta clabe del beneficiario', 'Código del banco del beneficiario', 'Nombre del beneficiario', 'RFC o CURP del beneficiario', 'Cantidad', 'Referencia numérica', 'Fecha de pago (Opcional, solo para transacciones futuras) Formato YYYY-mm-dd HH:mm'];
+  const rowsL = orders.map(o => [o.concepto, String(o.clabe || ''), Number(o.cod) || o.cod, o.razon, '', o.cant, referencia, '']);
+  const layoutBuf = X.buildXLSX([{ name: 'LAYOUT', aoa: [headL, ...rowsL] }]);
+  // Reporte por cliente
+  const headR = ['grupo', 'afiliacion', 'concepto', 'monto', 'comp_tdd', 'comp_tdc', 'comp_amex', 'comp_int', 'a_compensar', 'banca_mas_iva', 'a_dispersar', 'diferencia', 'utilidad'];
+  const rowsR = cal.map(x => { const r = x.calc; return [x.razon, String(x.afil), x.concepto, E.round2(r.m_tdd + r.m_tdc + r.m_amex + r.m_int), E.round2(r.comp_tdd), E.round2(r.comp_tdc), E.round2(r.comp_amex), E.round2(r.comp_int), E.round2(r.comp_total), E.round2(r.banca + r.iva_banca), E.round2(r.disp_total), E.round2(r.diferencia), E.round2(r.utilidad)]; });
+  rowsR.push(['TOTAL', '', '', Number(c.total_monto), '', '', '', '', Number(c.total_comp), '', Number(c.total_disp), '', '']);
+  const reporteBuf = X.buildXLSX([{ name: 'Reporte por cliente', aoa: [headR, ...rowsR] }]);
+  return [
+    { filename: `layout_spei_corte_${c.id_corte}_${c.fli}.xlsx`, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: layoutBuf },
+    { filename: `reporte_cliente_corte_${c.id_corte}_${c.fli}.xlsx`, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: reporteBuf },
+  ];
+}
+
+app.post('/api/cortes/:id/notificar', auth, requiereRol('admin', 'tesoreria'), async (req, res) => {
+  if (!dbReady(res)) return;
+  if (!sesEnabled()) return res.status(503).json({ error: 'ses_no_configurado', mensaje: 'Configura AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY y AWS_REGION en el entorno del servidor.' });
+  const idCorte = parseInt(req.params.id, 10);
+  const dest = (await db.query("select email,nombre from destinatarios where activo=true order by email")).rows;
+  if (!dest.length) return res.status(400).json({ error: 'sin_destinatarios', mensaje: 'Agrega al menos un destinatario activo en Sistema → Destinatarios.' });
+  try {
+    const { subject, html } = await armarInformeHTML(idCorte);
+    const attachments = await armarAdjuntosCorte(idCorte);
+    const to = dest.map(d => d.nombre ? `"${d.nombre}" <${d.email}>` : d.email);
+    const messageId = await sendSES({ to, subject, html, attachments });
+    await bit(req, 'notificar', `corte #${idCorte} enviado a ${dest.length} destinatarios (msg ${messageId})`);
+    res.json({ ok: true, enviados: dest.length, messageId });
+  } catch (e) {
+    await bit(req, 'notificar', `error corte #${idCorte}: ${e.message}`);
+    res.status(500).json({ error: 'ses_error', mensaje: e.message });
+  }
 });
 
 // Plantillas (cualquiera autenticado)
