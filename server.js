@@ -25,6 +25,8 @@ const ALLOWED_HD = (process.env.ALLOWED_HD || '').trim().toLowerCase();
 const E = require('./engine.js');
 const db = require('./db/index.js');
 const X = require('./lib/excel.js');
+const C = require('./lib/crypto.js');
+if (!C.ready()) console.warn('⚠  Cifrado app-layer NO configurado (falta ENCRYPTION_KEY_V1 o HMAC_PEPPER). Dual-write escribirá "plain:" en las columnas cifradas.');
 
 const app = express();
 const PORT = process.env.PORT || 4174;
@@ -143,10 +145,28 @@ async function getParams() {
 }
 async function getFeriados() { return (await db.query('select fecha::text as fecha from feriados order by fecha')).rows.map(r => r.fecha); }
 async function getGrupos() { return (await db.query('select * from grupos')).rows; }
-async function getAfiliaciones() { return (await db.query('select * from afiliaciones')).rows; }
+async function getAfiliaciones() {
+  const rows = (await db.query('select * from afiliaciones')).rows;
+  return rows.map(a => ({ ...a, razon_social: descifraTexto(a.razon_social_cifrada, a.razon_social) }));
+}
 async function getAfilGrupo() { return (await db.query('select * from afil_grupo')).rows; }
 async function getCostos() { return (await db.query('select * from costos')).rows; }
-async function getCuentas() { return (await db.query('select * from cuentas')).rows; }
+async function getCuentas() {
+  const rows = (await db.query('select * from cuentas')).rows;
+  return rows.map(c => ({
+    ...c,
+    clabe: descifraTexto(c.clabe_cifrada, c.clabe),
+    banco: descifraTexto(c.banco_cifrado, c.banco),
+    razon_social_beneficiario: descifraTexto(c.razon_social_beneficiario_cifrada, c.razon_social_beneficiario),
+  }));
+}
+// Descifra si viene versionado (v1:...); si falla o es plaintext legacy, devuelve el fallback.
+function descifraTexto(cifrado, fallback) {
+  if (!cifrado) return fallback;
+  const s = String(cifrado);
+  if (!s.startsWith('v1:') && !s.startsWith('v2:') && !s.startsWith('plain:')) return fallback;
+  try { return C.decryptString(cifrado); } catch (_e) { return fallback; }
+}
 async function getBancos() { return (await db.query('select * from bancos order by nombre')).rows; }
 
 async function insertMany(table, cols, rows) {
@@ -201,13 +221,19 @@ app.post('/api/login/google', loginLimiter, async (req, res) => {
     return res.status(403).json({ error: 'dominio_no_permitido', mensaje: `Solo cuentas de ${ALLOWED_HD} pueden iniciar sesión.` });
   }
   const email = String(payload.email).toLowerCase();
-  const u = (await db.query('select * from usuarios where lower(email)=lower($1)', [email])).rows[0];
+  // Cutover: primero busca por email_hash (cifrado v0.7+); fallback a lower(email) para filas legacy.
+  const emailHash = C.hmacEmail(email);
+  let u = (await db.query('select * from usuarios where email_hash=$1', [emailHash])).rows[0];
+  if (!u) u = (await db.query('select * from usuarios where lower(email)=lower($1)', [email])).rows[0];
   if (!u) return res.status(403).json({ error: 'no_autorizado', mensaje: 'Este correo no tiene acceso. Pide a un administrador que te agregue en Sistema → Usuarios.' });
   if (!u.activo) return res.status(403).json({ error: 'inactivo', mensaje: 'Tu usuario está desactivado. Contacta a un administrador.' });
   // Actualiza nombre/foto/last-login (solo campos suaves; email y rol no se tocan).
   const nombre = u.nombre || payload.name || email;
   const fotoUrl = payload.picture || u.foto_url || null;
-  await db.query('update usuarios set nombre=$2, foto_url=$3, ultimo_login_at=now() where id=$1', [u.id, nombre, fotoUrl]);
+  await db.query(
+    'update usuarios set nombre=$2, foto_url=$3, ultimo_login_at=now(), nombre_cifrado=$4, email_hash=coalesce(email_hash,$5), email_cifrado=coalesce(email_cifrado,$6) where id=$1',
+    [u.id, nombre, fotoUrl, C.encrypt(nombre), C.hmacEmail(u.email), C.encrypt(u.email)]
+  );
   u.nombre = nombre; u.foto_url = fotoUrl;
   try { await db.query('insert into bitacora(usuario,rol,accion,detalle) values($1,$2,$3,$4)', [u.nombre, u.rol, 'login_google', email]); } catch (_e) {}
   res.json({ token: firmar(u), user: safeUser(u) });
@@ -222,8 +248,14 @@ app.post('/api/logout', auth, (req, res) => {
 /* ---------- gestión de usuarios (solo admin) ---------- */
 app.get('/api/usuarios', auth, requiereRol('admin'), async (_req, res) => {
   if (!dbReady(res)) return;
-  const rows = (await db.query('select id,email,nombre,rol,activo,ultimo_login_at,creado_at,creado_por,foto_url from usuarios order by activo desc, rol, email')).rows;
-  res.json(rows);
+  const rows = (await db.query('select id,email,email_cifrado,nombre,nombre_cifrado,rol,activo,ultimo_login_at,creado_at,creado_por,foto_url from usuarios order by activo desc, rol, email')).rows;
+  res.json(rows.map(u => ({
+    id: u.id,
+    email: descifraTexto(u.email_cifrado, u.email),
+    nombre: descifraTexto(u.nombre_cifrado, u.nombre),
+    rol: u.rol, activo: u.activo,
+    ultimo_login_at: u.ultimo_login_at, creado_at: u.creado_at, creado_por: u.creado_por, foto_url: u.foto_url,
+  })));
 });
 app.post('/api/usuarios', auth, requiereRol('admin'), async (req, res) => {
   if (!dbReady(res)) return;
@@ -245,14 +277,21 @@ app.post('/api/usuarios', auth, requiereRol('admin'), async (req, res) => {
       const admins = (await db.query("select count(*)::int as n from usuarios where rol='admin' and activo=true and id<>$1", [id])).rows[0].n;
       if (admins === 0) return res.status(409).json({ error: 'ultimo_admin', mensaje: 'No puedes dejar el sistema sin al menos un administrador activo.' });
     }
-    await db.query('update usuarios set email=$2, nombre=$3, rol=$4, activo=$5 where id=$1', [id, email, nombre, rol, activo]);
+    await db.query(
+      'update usuarios set email=$2, nombre=$3, rol=$4, activo=$5, email_hash=$6, email_cifrado=$7, nombre_cifrado=$8 where id=$1',
+      [id, email, nombre, rol, activo, C.hmacEmail(email), C.encrypt(email), C.encrypt(nombre)]
+    );
     await bit(req, 'usuario_editar', `id=${id} email=${email} rol=${rol} activo=${activo}`);
     return res.json({ ok: true, id });
   }
-  // Alta
-  const dup = (await db.query('select id from usuarios where lower(email)=lower($1)', [email])).rows[0];
+  // Alta (dedupe por hash + fallback a lower(email) para legacy)
+  const eHash = C.hmacEmail(email);
+  const dup = (await db.query('select id from usuarios where email_hash=$1 or lower(email)=lower($2)', [eHash, email])).rows[0];
   if (dup) return res.status(409).json({ error: 'email_duplicado' });
-  const r = await db.query('insert into usuarios(email,nombre,rol,activo,creado_por) values($1,$2,$3,$4,$5) returning id', [email, nombre, rol, activo, req.user.nombre || req.user.email]);
+  const r = await db.query(
+    'insert into usuarios(email,nombre,rol,activo,creado_por,email_hash,email_cifrado,nombre_cifrado) values($1,$2,$3,$4,$5,$6,$7,$8) returning id',
+    [email, nombre, rol, activo, req.user.nombre || req.user.email, C.hmacEmail(email), C.encrypt(email), C.encrypt(nombre)]
+  );
   await bit(req, 'usuario_alta', `id=${r.rows[0].id} email=${email} rol=${rol}`);
   // Correo de bienvenida (best-effort, no bloquea el alta).
   let mail = { ok: false, motivo: 'ses_no_configurado' };
@@ -363,15 +402,18 @@ app.post('/api/catalogo/cuenta', auth, requiereRol('admin'), async (req, res) =>
   const afil = String(b.numero_afiliacion || '').replace(/\D/g, '');
   const cod = b.banco ? (await db.query('select codigo_spei from bancos where lower(nombre)=lower($1)', [b.banco])).rows[0] : null;
   const codigo = cod ? cod.codigo_spei : null;
+  const rzn = b.razon_social_beneficiario || '', bnc = b.banco || '';
+  const clHash = cl ? C.hmac(cl) : null, clCif = cl ? C.encrypt(cl) : null;
+  const rznCif = C.encrypt(rzn), bncCif = C.encrypt(bnc);
   if (b.id) {
-    await db.query('update cuentas set id_grupo=$1,numero_afiliacion=$2,nombre_comercial=$3,razon_social_beneficiario=$4,banco=$5,clabe=$6,codigo_banco=$7 where id=$8',
-      [parseInt(b.id_grupo, 10), afil, b.nombre_comercial || '', b.razon_social_beneficiario || '', b.banco || '', cl, codigo, b.id]);
+    await db.query('update cuentas set id_grupo=$1,numero_afiliacion=$2,nombre_comercial=$3,razon_social_beneficiario=$4,banco=$5,clabe=$6,codigo_banco=$7,clabe_hash=$8,clabe_cifrada=$9,razon_social_beneficiario_cifrada=$10,banco_cifrado=$11 where id=$12',
+      [parseInt(b.id_grupo, 10), afil, b.nombre_comercial || '', rzn, bnc, cl, codigo, clHash, clCif, rznCif, bncCif, b.id]);
   } else {
     // dedupe por grupo+afiliación
     const dup = (await db.query('select id from cuentas where id_grupo=$1 and coalesce(numero_afiliacion,\'\')=$2', [parseInt(b.id_grupo, 10), afil])).rows[0];
-    if (dup) await db.query('update cuentas set nombre_comercial=$1,razon_social_beneficiario=$2,banco=$3,clabe=$4,codigo_banco=$5 where id=$6', [b.nombre_comercial || '', b.razon_social_beneficiario || '', b.banco || '', cl, codigo, dup.id]);
-    else await db.query('insert into cuentas(id_grupo,numero_afiliacion,nombre_comercial,razon_social_beneficiario,banco,clabe,codigo_banco) values($1,$2,$3,$4,$5,$6,$7)',
-      [parseInt(b.id_grupo, 10), afil, b.nombre_comercial || '', b.razon_social_beneficiario || '', b.banco || '', cl, codigo]);
+    if (dup) await db.query('update cuentas set nombre_comercial=$1,razon_social_beneficiario=$2,banco=$3,clabe=$4,codigo_banco=$5,clabe_hash=$6,clabe_cifrada=$7,razon_social_beneficiario_cifrada=$8,banco_cifrado=$9 where id=$10', [b.nombre_comercial || '', rzn, bnc, cl, codigo, clHash, clCif, rznCif, bncCif, dup.id]);
+    else await db.query('insert into cuentas(id_grupo,numero_afiliacion,nombre_comercial,razon_social_beneficiario,banco,clabe,codigo_banco,clabe_hash,clabe_cifrada,razon_social_beneficiario_cifrada,banco_cifrado) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+      [parseInt(b.id_grupo, 10), afil, b.nombre_comercial || '', rzn, bnc, cl, codigo, clHash, clCif, rznCif, bncCif]);
   }
   await bit(req, 'catalogo', `cuenta grupo ${b.id_grupo} afil ${afil || 'nivel-grupo'}`);
   res.json({ ok: true });
@@ -423,7 +465,10 @@ app.post('/api/catalogo/:tipo/import', auth, requiereRol('admin'), upload.single
       for (const o of objs) {
         if (!o.id_grupo || !o.numero_afiliacion) continue; const idg = parseInt(o.id_grupo, 10); const afil = String(o.numero_afiliacion).replace(/\D/g, '');
         await db.query('insert into grupos(id_grupo,nombre_cliente,activo) values($1,$2,true) on conflict(id_grupo) do update set nombre_cliente=excluded.nombre_cliente', [idg, String(o.nombre_cliente || ('Grupo ' + idg))]);
-        await db.query('insert into afiliaciones(numero_afiliacion,razon_social,ult3,id_afiliacion) values($1,$2,$3,$4) on conflict(numero_afiliacion) do update set razon_social=excluded.razon_social', [afil, String(o.razon_social || ''), E.ult3(afil), E.ult3(afil) + 'CPPX00']);
+        {
+          const rzn = String(o.razon_social || '');
+          await db.query('insert into afiliaciones(numero_afiliacion,razon_social,ult3,id_afiliacion,razon_social_cifrada) values($1,$2,$3,$4,$5) on conflict(numero_afiliacion) do update set razon_social=excluded.razon_social, razon_social_cifrada=excluded.razon_social_cifrada', [afil, rzn, E.ult3(afil), E.ult3(afil) + 'CPPX00', C.encrypt(rzn)]);
+        }
         await db.query(`insert into afil_grupo(id_grupo,numero_afiliacion,tasa_pac_tdd,tasa_pac_tdc,tasa_pac_amex,tasa_pac_int,costo_x_trx,pct_banca) values($1,$2,$3,$4,$5,$6,$7,$8)
             on conflict(id_grupo,numero_afiliacion) do update set tasa_pac_tdd=excluded.tasa_pac_tdd,tasa_pac_tdc=excluded.tasa_pac_tdc,tasa_pac_amex=excluded.tasa_pac_amex,tasa_pac_int=excluded.tasa_pac_int,costo_x_trx=excluded.costo_x_trx,pct_banca=excluded.pct_banca`,
           [idg, afil, Number(o.tasa_pac_tdd) || 0, Number(o.tasa_pac_tdc) || 0, Number(o.tasa_pac_amex) || 0, Number(o.tasa_pac_int) || 0, Number(o.costo_x_trx) || 0, Number(o.pct_banca) || 0]);
@@ -437,9 +482,11 @@ app.post('/api/catalogo/:tipo/import', auth, requiereRol('admin'), upload.single
         if (!o.id_grupo) continue; const idg = parseInt(o.id_grupo, 10); const afil = String(o.numero_afiliacion || '').replace(/\D/g, '');
         const cod = (await db.query('select codigo_spei from bancos where lower(nombre)=lower($1)', [o.banco || ''])).rows[0];
         const dup = (await db.query('select id from cuentas where id_grupo=$1 and coalesce(numero_afiliacion,\'\')=$2', [idg, afil])).rows[0];
-        const vals = [idg, afil, String(o.nombre_comercial || ''), String(o.razon_social_beneficiario || ''), String(o.banco || ''), String(o.clabe || '').replace(/\D/g, ''), cod ? cod.codigo_spei : null];
-        if (dup) await db.query('update cuentas set id_grupo=$1,numero_afiliacion=$2,nombre_comercial=$3,razon_social_beneficiario=$4,banco=$5,clabe=$6,codigo_banco=$7 where id=$8', [...vals, dup.id]);
-        else await db.query('insert into cuentas(id_grupo,numero_afiliacion,nombre_comercial,razon_social_beneficiario,banco,clabe,codigo_banco) values($1,$2,$3,$4,$5,$6,$7)', vals);
+        const rznV = String(o.razon_social_beneficiario || ''), bncV = String(o.banco || '');
+        const clV = String(o.clabe || '').replace(/\D/g, '');
+        const vals = [idg, afil, String(o.nombre_comercial || ''), rznV, bncV, clV, cod ? cod.codigo_spei : null, clV ? C.hmac(clV) : null, clV ? C.encrypt(clV) : null, C.encrypt(rznV), C.encrypt(bncV)];
+        if (dup) await db.query('update cuentas set id_grupo=$1,numero_afiliacion=$2,nombre_comercial=$3,razon_social_beneficiario=$4,banco=$5,clabe=$6,codigo_banco=$7,clabe_hash=$8,clabe_cifrada=$9,razon_social_beneficiario_cifrada=$10,banco_cifrado=$11 where id=$12', [...vals, dup.id]);
+        else await db.query('insert into cuentas(id_grupo,numero_afiliacion,nombre_comercial,razon_social_beneficiario,banco,clabe,codigo_banco,clabe_hash,clabe_cifrada,razon_social_beneficiario_cifrada,banco_cifrado) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', vals);
         n++;
       }
     } else return res.status(404).json({ error: 'tipo' });
@@ -1046,11 +1093,13 @@ app.post('/api/contracargos/ingesta', auth, requiereRol('admin', 'operador'), up
   }
   // Upsert reporte-del-día (constancia)
   const total = filas.reduce((s, f) => s + f.monto, 0);
+  // Dual-write: bytea claro + bytea cifrado (mismo Buffer, cifrado por lib/crypto).
+  const archivoCif = C.ready() ? Buffer.from(C.encrypt(req.file.buffer), 'utf8') : null;
   await db.query(
-    `insert into contracargos_reporte_dia(fecha,n_contracargos,monto_total,archivo_origen,archivo_bytes,archivo_mime,cargado_por,cargado_at)
-     values($1,$2,$3,$4,$5,$6,$7,now())
-     on conflict (fecha) do update set n_contracargos=excluded.n_contracargos, monto_total=excluded.monto_total, archivo_origen=excluded.archivo_origen, archivo_bytes=excluded.archivo_bytes, archivo_mime=excluded.archivo_mime, cargado_por=excluded.cargado_por, cargado_at=now()`,
-    [fecha, filas.length, E.round2(total), req.file.originalname || '', req.file.buffer, req.file.mimetype || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', req.user.nombre]
+    `insert into contracargos_reporte_dia(fecha,n_contracargos,monto_total,archivo_origen,archivo_bytes,archivo_bytes_cifrado,archivo_mime,cargado_por,cargado_at)
+     values($1,$2,$3,$4,$5,$6,$7,$8,now())
+     on conflict (fecha) do update set n_contracargos=excluded.n_contracargos, monto_total=excluded.monto_total, archivo_origen=excluded.archivo_origen, archivo_bytes=excluded.archivo_bytes, archivo_bytes_cifrado=excluded.archivo_bytes_cifrado, archivo_mime=excluded.archivo_mime, cargado_por=excluded.cargado_por, cargado_at=now()`,
+    [fecha, filas.length, E.round2(total), req.file.originalname || '', req.file.buffer, archivoCif, req.file.mimetype || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', req.user.nombre]
   );
   // Upsert contracargos por origen_folio
   let insertados = 0, actualizados = 0, ignorados = 0;
@@ -1058,8 +1107,8 @@ app.post('/api/contracargos/ingesta', auth, requiereRol('admin', 'operador'), up
     // Si ya está Aplicado, no toca (avisa)
     const exist = (await db.query('select estatus from contracargos where origen_folio=$1', [f.folio])).rows[0];
     if (exist && exist.estatus === 'Aplicado') { ignorados++; continue; }
-    const cols = ['origen_folio', 'cargado_en_fecha', 'fecha_registro', 'numero_afiliacion', 'comercio', 'grupo_cliente', 'marca', 'bloque', 'canal', 'codigo_razon', 'categoria', 'monto', 'moneda', 'ticket', 'autorizacion', 'ultimos_4', 'caso_arn', 'fecha_cbk', 'limite_representment', 'estado_origen', 'archivo_origen', 'creado_por'];
-    const vals = [f.folio, fecha, f.fecha_registro, f.afil, f.comercio, f.grupo, f.marca, f.bloque, f.canal, f.codigo_razon, f.categoria, f.monto, f.moneda, f.ticket, f.aut, f.u4, f.caso, f.fecha_cbk, f.limite, f.estado, req.file.originalname || '', req.user.nombre];
+    const cols = ['origen_folio', 'cargado_en_fecha', 'fecha_registro', 'numero_afiliacion', 'comercio', 'grupo_cliente', 'marca', 'bloque', 'canal', 'codigo_razon', 'categoria', 'monto', 'moneda', 'ticket', 'autorizacion', 'ultimos_4', 'ultimos_4_cifrada', 'caso_arn', 'fecha_cbk', 'limite_representment', 'estado_origen', 'archivo_origen', 'creado_por'];
+    const vals = [f.folio, fecha, f.fecha_registro, f.afil, f.comercio, f.grupo, f.marca, f.bloque, f.canal, f.codigo_razon, f.categoria, f.monto, f.moneda, f.ticket, f.aut, f.u4, C.encrypt(f.u4), f.caso, f.fecha_cbk, f.limite, f.estado, req.file.originalname || '', req.user.nombre];
     if (exist) {
       const sets = cols.slice(1).map((c, i) => c + '=$' + (i + 2)).join(',');
       await db.query('update contracargos set ' + sets + ' where origen_folio=$1', vals);
@@ -1386,7 +1435,12 @@ app.get('/api/usuarios/bienvenida-preview.html', auth, requiereRol('admin'), (re
    ========================================================================= */
 app.get('/api/destinatarios', auth, async (req, res) => {
   if (!dbReady(res)) return;
-  res.json((await db.query('select * from destinatarios order by activo desc, email')).rows);
+  const rows = (await db.query('select * from destinatarios order by activo desc, email')).rows;
+  res.json(rows.map(d => ({
+    ...d,
+    email: descifraTexto(d.email_cifrado, d.email),
+    nombre: descifraTexto(d.nombre_cifrado, d.nombre),
+  })));
 });
 app.post('/api/destinatarios', auth, requiereRol('admin'), async (req, res) => {
   if (!dbReady(res)) return;
@@ -1394,11 +1448,13 @@ app.post('/api/destinatarios', auth, requiereRol('admin'), async (req, res) => {
   const email = String(b.email || '').trim().toLowerCase();
   if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'email_invalido' });
   const tipo = ['to', 'cc', 'bcc'].includes(String(b.tipo || '').toLowerCase()) ? String(b.tipo).toLowerCase() : 'to';
+  const nombreD = String(b.nombre || '').trim();
+  const eHash = C.hmacEmail(email), eCif = C.encrypt(email), nCif = C.encrypt(nombreD);
   if (b.id) {
-    await db.query('update destinatarios set email=$1,nombre=$2,tipo=$3,activo=$4 where id=$5', [email, String(b.nombre || '').trim(), tipo, !!b.activo, b.id]);
+    await db.query('update destinatarios set email=$1,nombre=$2,tipo=$3,activo=$4,email_hash=$5,email_cifrado=$6,nombre_cifrado=$7 where id=$8', [email, nombreD, tipo, !!b.activo, eHash, eCif, nCif, b.id]);
   } else {
-    await db.query('insert into destinatarios(email,nombre,tipo,activo,creado_por) values($1,$2,$3,$4,$5) on conflict(email) do update set nombre=excluded.nombre, tipo=excluded.tipo, activo=excluded.activo',
-      [email, String(b.nombre || '').trim(), tipo, b.activo !== false, req.user.nombre]);
+    await db.query('insert into destinatarios(email,nombre,tipo,activo,creado_por,email_hash,email_cifrado,nombre_cifrado) values($1,$2,$3,$4,$5,$6,$7,$8) on conflict(email) do update set nombre=excluded.nombre, tipo=excluded.tipo, activo=excluded.activo, email_hash=excluded.email_hash, email_cifrado=excluded.email_cifrado, nombre_cifrado=excluded.nombre_cifrado',
+      [email, nombreD, tipo, b.activo !== false, req.user.nombre, eHash, eCif, nCif]);
   }
   await bit(req, 'destinatarios', `alta/edición ${email} (${tipo})`);
   res.json({ ok: true });
@@ -1530,11 +1586,19 @@ async function armarAdjuntosCorte(idCorte) {
     { filename: `reporte_cliente_corte_${c.id_corte}_${c.fli}.xlsx`, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: reporteBuf },
   ];
   // Reporte de contracargos del día — se adjunta TAL CUAL fue subido (sin modificar).
-  const rep = (await db.query('select archivo_origen, archivo_bytes, archivo_mime from contracargos_reporte_dia where fecha=$1', [c.fli])).rows[0];
-  if (rep && rep.archivo_bytes) {
-    const buf = Buffer.isBuffer(rep.archivo_bytes) ? rep.archivo_bytes : Buffer.from(rep.archivo_bytes);
-    const nombre = rep.archivo_origen && String(rep.archivo_origen).trim() ? rep.archivo_origen : `reporte_contracargos_${c.fli}.xlsx`;
-    adj.push({ filename: nombre, contentType: rep.archivo_mime || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: buf });
+  // Preferimos archivo_bytes_cifrado (v0.7+); fallback a archivo_bytes plaintext (legacy).
+  const rep = (await db.query('select archivo_origen, archivo_bytes, archivo_bytes_cifrado, archivo_mime from contracargos_reporte_dia where fecha=$1', [c.fli])).rows[0];
+  if (rep) {
+    let buf = null;
+    if (rep.archivo_bytes_cifrado) {
+      const cifBytes = Buffer.isBuffer(rep.archivo_bytes_cifrado) ? rep.archivo_bytes_cifrado : Buffer.from(rep.archivo_bytes_cifrado);
+      try { buf = C.decrypt(cifBytes.toString('utf8')); } catch (_e) { buf = null; }
+    }
+    if (!buf && rep.archivo_bytes) buf = Buffer.isBuffer(rep.archivo_bytes) ? rep.archivo_bytes : Buffer.from(rep.archivo_bytes);
+    if (buf) {
+      const nombre = rep.archivo_origen && String(rep.archivo_origen).trim() ? rep.archivo_origen : `reporte_contracargos_${c.fli}.xlsx`;
+      adj.push({ filename: nombre, contentType: rep.archivo_mime || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: buf });
+    }
   }
   return adj;
 }
@@ -1543,8 +1607,13 @@ app.post('/api/cortes/:id/notificar', auth, requiereRol('admin', 'tesoreria'), a
   if (!dbReady(res)) return;
   if (!sesEnabled()) return res.status(503).json({ error: 'ses_no_configurado', mensaje: 'Configura AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY y AWS_REGION en el entorno del servidor.' });
   const idCorte = parseInt(req.params.id, 10);
-  const dest = (await db.query("select email,nombre,tipo from destinatarios where activo=true order by email")).rows;
-  if (!dest.length) return res.status(400).json({ error: 'sin_destinatarios', mensaje: 'Agrega al menos un destinatario activo en Sistema → Destinatarios.' });
+  const destRaw = (await db.query("select email,email_cifrado,nombre,nombre_cifrado,tipo from destinatarios where activo=true order by email")).rows;
+  if (!destRaw.length) return res.status(400).json({ error: 'sin_destinatarios', mensaje: 'Agrega al menos un destinatario activo en Sistema → Destinatarios.' });
+  const dest = destRaw.map(d => ({
+    email: descifraTexto(d.email_cifrado, d.email),
+    nombre: descifraTexto(d.nombre_cifrado, d.nombre),
+    tipo: d.tipo,
+  }));
   const fmtAddr = d => d.nombre ? `"${d.nombre}" <${d.email}>` : d.email;
   const to  = dest.filter(d => (d.tipo || 'to') === 'to' ).map(fmtAddr);
   const cc  = dest.filter(d => (d.tipo || 'to') === 'cc' ).map(fmtAddr);

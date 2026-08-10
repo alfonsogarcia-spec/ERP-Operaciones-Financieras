@@ -76,10 +76,17 @@ async function migrate() {
 // Bootstrap: garantiza que alfonso.garcia@polipay.io exista como admin activo,
 // para que pueda iniciar sesión con Google y desde allí administrar el resto.
 // No se siembran passwords (login es solo por Google desde v0.6).
+// Dual-write: si crypto está listo, poblamos también email_hash/_cifrado/nombre_cifrado.
 async function seedUsuarios() {
+  const email = 'alfonso.garcia@polipay.io', nombre = 'Alfonso García';
+  let C = null;
+  try { C = require('../lib/crypto.js'); if (!C.ready()) C = null; } catch (_e) { C = null; }
+  const emailHash = C ? C.hmacEmail(email) : null;
+  const emailCif = C ? C.encrypt(email) : null;
+  const nombreCif = C ? C.encrypt(nombre) : null;
   await backend.query(
-    "insert into usuarios(email,nombre,rol,activo,creado_por) values($1,$2,$3,true,'bootstrap') on conflict(email) do update set rol='admin', activo=true",
-    ['alfonso.garcia@polipay.io', 'Alfonso García', 'admin']
+    "insert into usuarios(email,nombre,rol,activo,creado_por,email_hash,email_cifrado,nombre_cifrado) values($1,$2,'admin',true,'bootstrap',$3,$4,$5) on conflict(email) do update set rol='admin', activo=true, email_hash=coalesce(usuarios.email_hash,excluded.email_hash), email_cifrado=coalesce(usuarios.email_cifrado,excluded.email_cifrado), nombre_cifrado=coalesce(usuarios.nombre_cifrado,excluded.nombre_cifrado)",
+    [email, nombre, emailHash, emailCif, nombreCif]
   );
   console.log('Admin bootstrap OK: alfonso.garcia@polipay.io');
 }

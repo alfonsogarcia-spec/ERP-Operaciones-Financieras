@@ -25,3 +25,7 @@ services:
         sync: false        # OAuth Client ID de Google (Console → Credenciales)
       - key: ALLOWED_HD
         sync: false        # Dominio Workspace permitido (ej. polipay.io) - segundo blindaje sobre el whitelist
+      - key: ENCRYPTION_KEY_V1
+        sync: false        # 32 bytes hex - cifrado app-layer AES-256-GCM (Fase 2). Perderla = perder datos.
+      - key: HMAC_PEPPER
+        sync: false        # 32 bytes hex - pepper del HMAC para hashes determinísticos (email_hash, clabe_hash)

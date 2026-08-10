@@ -215,3 +215,32 @@ create table if not exists bitacora (
   accion   text,
   detalle  text
 );
+
+-- ============================================================================
+-- Fase 2 · Cifrado en reposo (columnas paralelas). Todas nullable durante la
+-- migración dual-write; el cutover posterior las hará source-of-truth y
+-- eliminará las columnas viejas en plaintext.
+-- Formatos: '_cifrada/_cifrado' = AES-256-GCM ("v1:iv:ct:tag").
+--           '_hash'              = HMAC-SHA256 con pepper ("hm1:hexdigest").
+-- ============================================================================
+alter table usuarios       add column if not exists email_cifrado  text;
+alter table usuarios       add column if not exists email_hash     text;
+alter table usuarios       add column if not exists nombre_cifrado text;
+create unique index if not exists ux_usuarios_email_hash on usuarios(email_hash);
+
+alter table destinatarios  add column if not exists email_cifrado  text;
+alter table destinatarios  add column if not exists email_hash     text;
+alter table destinatarios  add column if not exists nombre_cifrado text;
+create unique index if not exists ux_destinatarios_email_hash on destinatarios(email_hash);
+
+alter table cuentas        add column if not exists clabe_cifrada                     text;
+alter table cuentas        add column if not exists clabe_hash                        text;
+alter table cuentas        add column if not exists razon_social_beneficiario_cifrada text;
+alter table cuentas        add column if not exists banco_cifrado                     text;
+create index if not exists idx_cuentas_clabe_hash on cuentas(clabe_hash);
+
+alter table afiliaciones   add column if not exists razon_social_cifrada text;
+
+alter table contracargos   add column if not exists ultimos_4_cifrada text;
+
+alter table contracargos_reporte_dia add column if not exists archivo_bytes_cifrado bytea;
