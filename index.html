@@ -289,6 +289,8 @@ async function onGoogleCredential(response){
   }catch(e){errBox.textContent='No se pudo conectar con el servidor';errBox.className='login-err show';}
 }
 function logout(){
+  // Revoca la sesión en el server (best-effort, no bloquea el cierre en el cliente).
+  const tok=TOKEN(); if(tok){fetch('/api/logout',{method:'POST',headers:{authorization:'Bearer '+tok}}).catch(()=>{});}
   try{if(window.google&&google.accounts&&google.accounts.id)google.accounts.id.disableAutoSelect();}catch(_){}
   localStorage.removeItem('cl_token');localStorage.removeItem('cl_user');SES=null;
   $('#app').style.display='none';$('#loginScreen').style.display='grid';

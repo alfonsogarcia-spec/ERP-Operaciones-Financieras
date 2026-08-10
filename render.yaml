@@ -23,3 +23,5 @@ services:
         sync: false        # se pega en el dashboard de Render (cadena de Supabase)
       - key: GOOGLE_CLIENT_ID
         sync: false        # OAuth Client ID de Google (Console → Credenciales)
+      - key: ALLOWED_HD
+        sync: false        # Dominio Workspace permitido (ej. polipay.io) - segundo blindaje sobre el whitelist

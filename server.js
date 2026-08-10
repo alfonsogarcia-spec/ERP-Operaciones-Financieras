@@ -10,12 +10,18 @@
 require('dotenv').config({ path: require('path').join(__dirname, '.env'), quiet: true });   // .env por ruta absoluta (no depende del cwd)
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { OAuth2Client } = require('google-auth-library');
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 if (!GOOGLE_CLIENT_ID) console.warn('⚠  GOOGLE_CLIENT_ID no definido: el login por Google no funcionará hasta configurarlo.');
+// Restricción opcional al dominio Google Workspace (ej. ALLOWED_HD=polipay.io).
+// Si está vacía, cualquier cuenta Google puede intentar (whitelist en BD sigue mandando).
+const ALLOWED_HD = (process.env.ALLOWED_HD || '').trim().toLowerCase();
 const E = require('./engine.js');
 const db = require('./db/index.js');
 const X = require('./lib/excel.js');
@@ -24,9 +30,78 @@ const app = express();
 const PORT = process.env.PORT || 4174;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-cambia-en-produccion';
 if (!process.env.JWT_SECRET) console.warn('⚠  JWT_SECRET no definido: usando secreto de desarrollo.');
+// Detrás de un proxy (Render). Necesario para que req.ip / rate-limit lean X-Forwarded-For.
+app.set('trust proxy', 1);
+
+/* ---------- seguridad HTTP (Helmet + CSP) ---------- */
+app.use(helmet({
+  // CSP: solo cargas propias + Google Identity Services (script + iframe del popup).
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      // 'unsafe-inline' en scripts se justifica por el <script> inline del index.html; se puede endurecer más adelante con nonces.
+      scriptSrc: ["'self'", "'unsafe-inline'", 'https://accounts.google.com'],
+      scriptSrcAttr: ["'unsafe-inline'"],
+      frameSrc: ["'self'", 'https://accounts.google.com'],
+      connectSrc: ["'self'", 'https://accounts.google.com'],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://accounts.google.com'],
+      fontSrc: ["'self'", 'data:'],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+      frameAncestors: ["'none'"],   // clickjacking
+      upgradeInsecureRequests: [],
+    },
+  },
+  crossOriginEmbedderPolicy: false,   // GIS puede fallar con COEP
+  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },  // permite el popup de Google
+  strictTransportSecurity: { maxAge: 15552000, includeSubDomains: true, preload: false },   // 180 días HSTS
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+}));
+
+/* ---------- rate limits por IP ---------- */
+const rlOpts = (max, mensaje) => ({
+  windowMs: 60 * 1000,
+  max,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'rate_limit', mensaje },
+});
+// Login Google: agresivo (evita brute force / abuso del verificador Google).
+const loginLimiter = rateLimit(rlOpts(20, 'Demasiados intentos de inicio de sesión. Espera un minuto.'));
+// API general: 300/min por IP (suficiente para uso normal, tapa robots).
+const apiLimiter = rateLimit(rlOpts(300, 'Demasiadas solicitudes. Espera un minuto.'));
+app.use('/api/', apiLimiter);
 
 app.use(express.json({ limit: '10mb' }));
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
+
+/* ---------- validación estricta de uploads (MIME + magic bytes) ---------- */
+// Rechaza cualquier archivo que no sea xlsx/xls/csv, aunque el cliente mienta en el content-type.
+function validaArchivo(req, res, next) {
+  if (!req.file) return next();
+  const buf = req.file.buffer;
+  const nombre = String(req.file.originalname || '').toLowerCase();
+  const ext = nombre.slice(nombre.lastIndexOf('.'));
+  const mime = String(req.file.mimetype || '').toLowerCase();
+  const okExt = ['.xlsx', '.xls', '.csv'].includes(ext);
+  const okMime = [
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-excel',
+    'application/octet-stream',   // navegadores a veces mandan esto para xlsx
+    'text/csv',
+    'text/plain',
+    '',
+  ].includes(mime);
+  // Magic bytes: xlsx=ZIP (50 4B 03 04), xls=OLE2 (D0 CF 11 E0 A1 B1 1A E1), csv=texto.
+  const isZip = buf && buf.length >= 4 && buf[0] === 0x50 && buf[1] === 0x4B && buf[2] === 0x03 && buf[3] === 0x04;
+  const isOle2 = buf && buf.length >= 8 && buf[0] === 0xD0 && buf[1] === 0xCF && buf[2] === 0x11 && buf[3] === 0xE0;
+  const looksText = buf && buf.length > 0 && buf.slice(0, Math.min(buf.length, 4096)).every(b => b === 9 || b === 10 || b === 13 || (b >= 32 && b < 127) || b >= 128);
+  const okMagic = (ext === '.xlsx' && isZip) || (ext === '.xls' && (isOle2 || isZip)) || (ext === '.csv' && looksText);
+  if (!okExt || !okMime || !okMagic) return res.status(400).json({ error: 'archivo_invalido', mensaje: 'Sube un archivo .xlsx, .xls o .csv válido.' });
+  next();
+}
 
 /* ---------- helpers ---------- */
 const N = v => (v == null || v === '') ? null : Number(v);
@@ -35,12 +110,21 @@ const safeUser = u => ({ id: u.id, email: u.email, nombre: u.nombre, rol: u.rol,
 const ROLES = { admin: 'Administrador', operador: 'Operador (Operaciones)', tesoreria: 'Tesorería', consulta: 'Consulta (solo lectura)' };
 const ROLES_VALIDOS = Object.keys(ROLES);
 
-function firmar(u) { return jwt.sign({ sub: u.id, rol: u.rol, nombre: u.nombre, email: u.email }, JWT_SECRET, { expiresIn: '12h' }); }
+// jti único por sesión — permite revocarla al cerrar sesión (blacklist en memoria).
+const REVOKED_JTI = new Set();
+function firmar(u) {
+  const jti = crypto.randomBytes(12).toString('hex');
+  return jwt.sign({ sub: u.id, rol: u.rol, nombre: u.nombre, email: u.email, jti }, JWT_SECRET, { expiresIn: '8h' });
+}
 function auth(req, res, next) {
   const h = req.headers.authorization || '';
   const tok = h.startsWith('Bearer ') ? h.slice(7) : (req.query.token || null);
   if (!tok) return res.status(401).json({ error: 'sin_token' });
-  try { req.user = jwt.verify(tok, JWT_SECRET); next(); }
+  try {
+    const p = jwt.verify(tok, JWT_SECRET);
+    if (p.jti && REVOKED_JTI.has(p.jti)) return res.status(401).json({ error: 'sesion_revocada' });
+    req.user = p; next();
+  }
   catch { return res.status(401).json({ error: 'token_invalido' }); }
 }
 const requiereRol = (...roles) => (req, res, next) =>
@@ -99,7 +183,7 @@ app.get('/api/config-publica', (_req, res) => {
 // Recibe un ID token de Google (Google Identity Services devuelve `credential`).
 // Valida firma + audience contra nuestro Client ID. Solo pasa si el email
 // está registrado como usuario ACTIVO en la BD (whitelist explícito).
-app.post('/api/login/google', async (req, res) => {
+app.post('/api/login/google', loginLimiter, async (req, res) => {
   if (!dbReady(res)) return;
   if (!googleClient) return res.status(503).json({ error: 'google_no_configurado', mensaje: 'GOOGLE_CLIENT_ID no está definido en el servidor.' });
   const { credential } = req.body || {};
@@ -112,6 +196,10 @@ app.post('/api/login/google', async (req, res) => {
     return res.status(401).json({ error: 'google_invalido', mensaje: e.message });
   }
   if (!payload || !payload.email || !payload.email_verified) return res.status(401).json({ error: 'email_no_verificado' });
+  // Segundo blindaje opcional: exigir cuenta Google Workspace del dominio permitido (hd).
+  if (ALLOWED_HD && String(payload.hd || '').toLowerCase() !== ALLOWED_HD) {
+    return res.status(403).json({ error: 'dominio_no_permitido', mensaje: `Solo cuentas de ${ALLOWED_HD} pueden iniciar sesión.` });
+  }
   const email = String(payload.email).toLowerCase();
   const u = (await db.query('select * from usuarios where lower(email)=lower($1)', [email])).rows[0];
   if (!u) return res.status(403).json({ error: 'no_autorizado', mensaje: 'Este correo no tiene acceso. Pide a un administrador que te agregue en Sistema → Usuarios.' });
@@ -125,6 +213,11 @@ app.post('/api/login/google', async (req, res) => {
   res.json({ token: firmar(u), user: safeUser(u) });
 });
 app.get('/api/yo', auth, (req, res) => res.json({ id: req.user.sub, nombre: req.user.nombre, email: req.user.email, rol: req.user.rol }));
+// Cierra la sesión del server-side: agrega el jti a la blacklist para que el mismo token no vuelva a autenticar.
+app.post('/api/logout', auth, (req, res) => {
+  if (req.user.jti) REVOKED_JTI.add(req.user.jti);
+  res.json({ ok: true });
+});
 
 /* ---------- gestión de usuarios (solo admin) ---------- */
 app.get('/api/usuarios', auth, requiereRol('admin'), async (_req, res) => {
@@ -321,7 +414,7 @@ app.post('/api/catalogo/feriados-mx', auth, requiereRol('admin'), async (req, re
 });
 
 // Importar catálogo por Excel (admin): grupos | cuentas
-app.post('/api/catalogo/:tipo/import', auth, requiereRol('admin'), upload.single('archivo'), async (req, res) => {
+app.post('/api/catalogo/:tipo/import', auth, requiereRol('admin'), upload.single('archivo'), validaArchivo, async (req, res) => {
   if (!dbReady(res)) return;
   const parsed = req.file ? X.parseBuffer(req.file.buffer) : X.parseCSVText((req.body && req.body.csv) || '');
   const objs = parsed.objs; let n = 0;
@@ -371,7 +464,7 @@ async function recalcularFechasLiq() {
   return n;
 }
 
-app.post('/api/transacciones/ingesta', auth, requiereRol('admin', 'operador'), upload.single('archivo'), async (req, res) => {
+app.post('/api/transacciones/ingesta', auth, requiereRol('admin', 'operador'), upload.single('archivo'), validaArchivo, async (req, res) => {
   if (!dbReady(res)) return;
   const modo = (req.body && req.body.modo) || 'append';
   const parsed = req.file ? X.parseBuffer(req.file.buffer) : X.parseCSVText((req.body && req.body.csv) || '');
@@ -910,7 +1003,7 @@ app.get('/api/contracargos/huerfanos', auth, async (req, res) => {
   res.json(rows);
 });
 // Ingesta del reporte (multipart: archivo + fecha)
-app.post('/api/contracargos/ingesta', auth, requiereRol('admin', 'operador'), upload.single('archivo'), async (req, res) => {
+app.post('/api/contracargos/ingesta', auth, requiereRol('admin', 'operador'), upload.single('archivo'), validaArchivo, async (req, res) => {
   if (!dbReady(res)) return;
   const fecha = (req.body && req.body.fecha) || null;
   if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return res.status(400).json({ error: 'fecha' });
