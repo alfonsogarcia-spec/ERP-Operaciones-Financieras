@@ -77,7 +77,16 @@ async function insertMany(table, cols, rows) {
 }
 
 /* ---------- estado / health ---------- */
-function estadoServicio() { return { ok: true, service: 'conciliacion-liquidacion', db: db.isReady(), backend: db.kind(), ts: Date.now() }; }
+const PKG_VERSION = require('./package.json').version || '0.0.0';
+// Commit SHA: Render inyecta RENDER_GIT_COMMIT automáticamente en cada deploy;
+// en local se lee del repo con git; si nada aplica, queda 'dev'.
+const COMMIT_SHA = (() => {
+  const env = process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || '';
+  if (env) return env.slice(0, 7);
+  try { return require('child_process').execSync('git rev-parse --short HEAD', { cwd: __dirname, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); }
+  catch (_e) { return 'dev'; }
+})();
+function estadoServicio() { return { ok: true, service: 'conciliacion-liquidacion', db: db.isReady(), backend: db.kind(), version: PKG_VERSION, commit: COMMIT_SHA, ts: Date.now() }; }
 app.get('/healthz', (_req, res) => res.json(estadoServicio()));
 app.get('/api/estado', (_req, res) => res.json(estadoServicio()));
 
