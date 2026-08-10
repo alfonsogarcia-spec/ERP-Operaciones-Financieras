@@ -1213,7 +1213,7 @@ function armarBienvenidaHTML(user, invitadoPor, opts) {
         <tr><td style="padding:34px 40px 8px">
           <div style="font:700 22px/1.25 Montserrat,Arial,sans-serif;color:${brand};margin:0 0 8px">¡Bienvenido/a, ${escapeHtml(user.nombre)}!</div>
           <div style="font:400 14px/1.6 Montserrat,Arial,sans-serif;color:${muted};margin:0 0 22px">
-            Te dieron acceso al sistema de <b style="color:${ink}">conciliación y liquidación T+1</b> del Agregador/POS de Polipay.
+            Te dieron acceso al sistema de conciliación <b style="color:${ink}">POLIPAY POS SETTLEMENT</b> | MCEB S.A de C.V.
           </div>
 
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid ${line};border-radius:10px;overflow:hidden;margin:0 0 24px">
