@@ -1198,11 +1198,11 @@ function armarBienvenidaHTML(user, invitadoPor, opts) {
     <tr><td align="center">
       <table role="presentation" width="640" cellspacing="0" cellpadding="0" style="max-width:640px;background:#fff;border:1px solid ${line};border-radius:12px;overflow:hidden">
 
-        <!-- Header marca -->
-        <tr><td style="background:${brand};padding:22px 32px">
+        <!-- Header marca (blanco + separador gris) -->
+        <tr><td style="background:#ffffff;padding:26px 32px;border-bottom:1px solid ${line}">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
             <td><img src="${logo}" alt="Polipay" height="34" style="display:block;height:34px;border:0"></td>
-            <td align="right" style="font:700 12px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.12em;text-transform:uppercase">Polipay POS Settlement</td>
+            <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:${brand};letter-spacing:.12em;text-transform:uppercase">Polipay POS Settlement</td>
           </tr></table>
         </td></tr>
 
