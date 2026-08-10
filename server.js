@@ -152,7 +152,26 @@ app.post('/api/usuarios', auth, requiereRol('admin'), async (req, res) => {
   if (dup) return res.status(409).json({ error: 'email_duplicado' });
   const r = await db.query('insert into usuarios(email,nombre,rol,activo,creado_por) values($1,$2,$3,$4,$5) returning id', [email, nombre, rol, activo, req.user.nombre || req.user.email]);
   await bit(req, 'usuario_alta', `id=${r.rows[0].id} email=${email} rol=${rol}`);
-  res.json({ ok: true, id: r.rows[0].id });
+  // Correo de bienvenida (best-effort, no bloquea el alta).
+  let mail = { ok: false, motivo: 'ses_no_configurado' };
+  if (activo && sesEnabled()) {
+    try {
+      const invitadoPor = req.user.nombre || req.user.email || '';
+      const { subject, html, textFallback } = armarBienvenidaHTML({ email, nombre, rol }, invitadoPor, { logoSrc: 'cid:polipay-logo' });
+      const logoPath = path.join(__dirname, 'public', 'logo.png');
+      const logoBuf = require('fs').readFileSync(logoPath);
+      const inlineImages = [{ cid: 'polipay-logo', filename: 'polipay-logo.png', contentType: 'image/png', content: logoBuf }];
+      const messageId = await sendSES({ to: [`"${nombre}" <${email}>`], subject, html, textFallback, inlineImages });
+      mail = { ok: true, messageId };
+      await bit(req, 'usuario_bienvenida', `→ ${email} (${messageId})`);
+    } catch (e) {
+      mail = { ok: false, motivo: 'ses_error', error: e.message };
+      await bit(req, 'usuario_bienvenida_error', `→ ${email} · ${e.message}`);
+    }
+  } else if (!activo) {
+    mail = { ok: false, motivo: 'usuario_inactivo' };
+  }
+  res.json({ ok: true, id: r.rows[0].id, mail });
 });
 app.delete('/api/usuarios/:id', auth, requiereRol('admin'), async (req, res) => {
   if (!dbReady(res)) return;
@@ -1130,6 +1149,137 @@ app.get('/api/cortes/:id/informe-preview.html', auth, async (req, res) => {
 });
 
 /* ============================================================================
+   Correo de BIENVENIDA para un usuario recién dado de alta.
+   Mismo diseño y paleta que el informe de corte (marca Polipay, logo inline).
+   opts.logoSrc:  para preview (URL) o para envío ('cid:polipay-logo').
+   ========================================================================= */
+function permisosPorRol(rol) {
+  const M = {
+    admin: [
+      'Configuración total del sistema (catálogos, parámetros, destinatarios).',
+      'Gestión de usuarios: dar de alta, editar y desactivar accesos.',
+      'Ingesta de transacciones y contracargos; generar y borrar cortes.',
+      'Validar, dispersar, cerrar y notificar cortes por correo.',
+    ],
+    operador: [
+      'Ingesta diaria de transacciones y reporte de contracargos.',
+      'Generar cortes (compensación, dispersión y cuadre).',
+      'Ver todos los cortes, catálogos y bitácora.',
+      'No puede validar, dispersar ni editar catálogos.',
+    ],
+    tesoreria: [
+      'Validar, dispersar y cerrar los cortes que generó Operaciones.',
+      'Notificar el corte a los destinatarios por correo (📧).',
+      'Ver todos los cortes, catálogos y bitácora.',
+      'No puede generar cortes ni cargar transacciones.',
+    ],
+    consulta: [
+      'Solo lectura: puede ver toda la operación.',
+      'Descargar layouts SPEI, reportes por cliente y registro contable.',
+      'Ideal para auditoría, contabilidad externa o gerencia.',
+      'No puede modificar, cargar ni transicionar nada.',
+    ],
+  };
+  return M[rol] || [];
+}
+function armarBienvenidaHTML(user, invitadoPor, opts) {
+  opts = opts || {};
+  const brand = '#051B3B', accent = '#3083F4', muted = '#667085', line = '#e5e7eb', ink = '#1A1A1A';
+  const rolLabel = ROLES[user.rol] || user.rol;
+  const bullets = permisosPorRol(user.rol);
+  const appUrl = opts.appUrl || process.env.APP_URL || 'https://polipay-conciliacion-liquidacion.onrender.com';
+  const logo = opts.logoSrc || 'cid:polipay-logo';
+  const subject = `Bienvenido/a a Polipay POS Settlement — acceso ${rolLabel}`;
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(subject)}</title>
+</head><body style="margin:0;padding:0;background:#f4f6fb;font-family:Montserrat,Arial,sans-serif;color:${ink}">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f6fb;padding:24px 0">
+    <tr><td align="center">
+      <table role="presentation" width="640" cellspacing="0" cellpadding="0" style="max-width:640px;background:#fff;border:1px solid ${line};border-radius:12px;overflow:hidden">
+
+        <!-- Header marca -->
+        <tr><td style="background:${brand};padding:22px 32px">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+            <td><img src="${logo}" alt="Polipay" height="34" style="display:block;height:34px;border:0"></td>
+            <td align="right" style="font:700 12px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.12em;text-transform:uppercase">Polipay POS Settlement</td>
+          </tr></table>
+        </td></tr>
+
+        <!-- Franja acento -->
+        <tr><td style="height:6px;background:${accent}"></td></tr>
+
+        <!-- Cuerpo -->
+        <tr><td style="padding:34px 40px 8px">
+          <div style="font:700 22px/1.25 Montserrat,Arial,sans-serif;color:${brand};margin:0 0 8px">¡Bienvenido/a, ${escapeHtml(user.nombre)}!</div>
+          <div style="font:400 14px/1.6 Montserrat,Arial,sans-serif;color:${muted};margin:0 0 22px">
+            Te dieron acceso al sistema de <b style="color:${ink}">conciliación y liquidación T+1</b> del Agregador/POS de Polipay.
+          </div>
+
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid ${line};border-radius:10px;overflow:hidden;margin:0 0 24px">
+            <tr><td style="padding:14px 18px;background:#f9fafb;border-bottom:1px solid ${line};font:700 11px/1 Montserrat,Arial,sans-serif;color:${muted};letter-spacing:.12em;text-transform:uppercase">Tu acceso</td></tr>
+            <tr><td style="padding:16px 18px">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font:400 13px/1.7 Montserrat,Arial,sans-serif;color:${ink}">
+                <tr><td width="120" style="color:${muted}">Correo</td><td><b>${escapeHtml(user.email)}</b></td></tr>
+                <tr><td style="color:${muted}">Rol</td><td><span style="display:inline-block;background:${accent};color:#fff;font:700 11px/1 Montserrat,Arial,sans-serif;padding:5px 10px;border-radius:999px;letter-spacing:.06em;text-transform:uppercase">${escapeHtml(rolLabel)}</span></td></tr>
+                ${invitadoPor ? `<tr><td style="color:${muted}">Invitado por</td><td>${escapeHtml(invitadoPor)}</td></tr>` : ''}
+              </table>
+            </td></tr>
+          </table>
+
+          <div style="font:700 13px/1 Montserrat,Arial,sans-serif;color:${brand};margin:0 0 10px;letter-spacing:.05em;text-transform:uppercase">Qué puedes hacer</div>
+          <ul style="margin:0 0 24px;padding:0 0 0 18px;font:400 13px/1.7 Montserrat,Arial,sans-serif;color:${ink}">
+            ${bullets.map(b => `<li style="margin:2px 0">${escapeHtml(b)}</li>`).join('')}
+          </ul>
+
+          <div style="font:700 13px/1 Montserrat,Arial,sans-serif;color:${brand};margin:0 0 10px;letter-spacing:.05em;text-transform:uppercase">Cómo entrar</div>
+          <ol style="margin:0 0 22px;padding:0 0 0 18px;font:400 13px/1.7 Montserrat,Arial,sans-serif;color:${ink}">
+            <li>Abre el sistema en el enlace de abajo.</li>
+            <li>Haz clic en <b>Acceder con Google</b>.</li>
+            <li>Selecciona la cuenta <b>${escapeHtml(user.email)}</b> (debe ser una cuenta Google real con ese correo).</li>
+          </ol>
+
+          <div style="text-align:center;margin:8px 0 18px">
+            <a href="${escapeHtml(appUrl)}" style="display:inline-block;background:${accent};color:#fff;text-decoration:none;font:700 13px/1 Montserrat,Arial,sans-serif;padding:14px 26px;border-radius:8px;letter-spacing:.04em">Entrar a Polipay POS Settlement →</a>
+          </div>
+
+          <div style="font:400 12px/1.6 Montserrat,Arial,sans-serif;color:${muted};margin:20px 0 0;padding:14px 16px;background:#f9fafb;border:1px solid ${line};border-radius:8px">
+            <b style="color:${ink}">Solo cuentas autorizadas.</b> El sistema acepta login únicamente con Google usando este correo. Si no reconoces esta invitación, ignora este mensaje o escribe a <a href="mailto:ops.agregador@polipay.io" style="color:${accent}">ops.agregador@polipay.io</a>.
+          </div>
+        </td></tr>
+
+        <!-- Footer meta -->
+        <tr><td style="padding:22px 32px 26px;border-top:1px solid ${line};font:400 12px/1.6 Montserrat,Arial,sans-serif;color:${muted}">
+          Este correo se envía automáticamente al dar de alta un usuario. Sistema: polipay-conciliacion-liquidacion.onrender.com
+        </td></tr>
+
+        <!-- Franja negra final -->
+        <tr><td style="background:${brand};padding:14px 32px">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+            <td style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">Polipay POS Settlement</td>
+            <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">ops.agregador@polipay.io</td>
+          </tr></table>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+  const textFallback = `Bienvenido/a a Polipay POS Settlement.\nAcceso: ${user.email} (rol ${rolLabel}). Entra con Google en ${appUrl}.`;
+  return { subject, html, textFallback };
+}
+
+// Preview HTML del correo de bienvenida (solo admin; para diseñar sin enviar).
+app.get('/api/usuarios/bienvenida-preview.html', auth, requiereRol('admin'), (req, res) => {
+  const nombre = String(req.query.nombre || 'Nombre Apellido');
+  const email = String(req.query.email || 'nuevo.usuario@polipay.io');
+  const rol = ROLES_VALIDOS.includes(String(req.query.rol || '')) ? String(req.query.rol) : 'operador';
+  const invitadoPor = String(req.query.por || (req.user.nombre || req.user.email || ''));
+  const { html } = armarBienvenidaHTML({ nombre, email, rol }, invitadoPor, { logoSrc: '/public/logo.png' });
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
+
+/* ============================================================================
    DESTINATARIOS del correo de notificación
    ========================================================================= */
 app.get('/api/destinatarios', auth, async (req, res) => {
@@ -1169,7 +1319,7 @@ function sesEnabled() {
 const SES_FROM = process.env.SES_FROM || 'ops.agregador@polipay.io';
 const SES_FROM_NAME = process.env.SES_FROM_NAME || 'Polipay · Operaciones · MCEB';
 
-function buildMime({ from, fromName, to, cc, bcc, subject, html, attachments, inlineImages }) {
+function buildMime({ from, fromName, to, cc, bcc, subject, html, attachments, inlineImages, textFallback }) {
   // Estructura MIME:
   // multipart/mixed (adjuntos)
   //   └─ multipart/related (imágenes inline via cid:)
@@ -1195,12 +1345,12 @@ function buildMime({ from, fromName, to, cc, bcc, subject, html, attachments, in
   L.push(`--${bRelated}`);
   L.push(`Content-Type: multipart/alternative; boundary="${bAlt}"`);
   L.push('');
-  const textFallback = 'Aviso automático de corte de Polipay POS Settlement. Consulta el detalle en el correo HTML o los archivos adjuntos.';
+  const textFb = textFallback || 'Correo automático de Polipay POS Settlement. Consulta el detalle en la versión HTML de este mensaje.';
   L.push(`--${bAlt}`);
   L.push('Content-Type: text/plain; charset=UTF-8');
   L.push('Content-Transfer-Encoding: base64');
   L.push('');
-  L.push(b64(Buffer.from(textFallback, 'utf8')));
+  L.push(b64(Buffer.from(textFb, 'utf8')));
   L.push(`--${bAlt}`);
   L.push('Content-Type: text/html; charset=UTF-8');
   L.push('Content-Transfer-Encoding: base64');
@@ -1231,13 +1381,13 @@ function buildMime({ from, fromName, to, cc, bcc, subject, html, attachments, in
   return L.join('\r\n');
 }
 
-async function sendSES({ to, cc, bcc, subject, html, attachments, inlineImages }) {
+async function sendSES({ to, cc, bcc, subject, html, attachments, inlineImages, textFallback }) {
   const { SESClient, SendRawEmailCommand } = require('@aws-sdk/client-ses');
   const client = new SESClient({
     region: process.env.AWS_REGION,
     credentials: { accessKeyId: process.env.AWS_ACCESS_KEY_ID, secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY },
   });
-  const raw = buildMime({ from: SES_FROM, fromName: SES_FROM_NAME, to, cc, bcc, subject, html, attachments, inlineImages });
+  const raw = buildMime({ from: SES_FROM, fromName: SES_FROM_NAME, to, cc, bcc, subject, html, attachments, inlineImages, textFallback });
   // Destinations debe incluir TODOS (To+Cc+Bcc). El BCC no aparece en headers, así queda oculto.
   const Destinations = [...(to || []), ...(cc || []), ...(bcc || [])];
   const cmd = new SendRawEmailCommand({

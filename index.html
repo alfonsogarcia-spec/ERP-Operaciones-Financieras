@@ -849,10 +849,23 @@ function editUsuario(u){
     try{await api('DELETE','/api/usuarios/'+u.id);closeModal();toast('Usuario eliminado','ok');render();}
     catch(e){toast(e.data&&e.data.mensaje?e.data.mensaje:errMsg(e),'err');}
   }},'Eliminar'),el('div',{style:'flex:1'}));
+  if(isNew){
+    foot.append(el('button',{class:'btn ghost sm',onclick:()=>{
+      const params=new URLSearchParams({nombre:nombre.value||'Nombre Apellido',email:email.value||'nuevo@polipay.io',rol:rol.value}).toString();
+      window.open('/api/usuarios/bienvenida-preview.html?'+params+'&token='+encodeURIComponent(TOKEN()),'_blank');
+    }},'Previsualizar correo'));
+  }
   foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
     try{
-      await api('POST','/api/usuarios',{id:u.id,email:email.value,nombre:nombre.value,rol:rol.value,activo:activo.checked});
-      closeModal(); toast('Guardado','ok'); render();
+      const resp=await api('POST','/api/usuarios',{id:u.id,email:email.value,nombre:nombre.value,rol:rol.value,activo:activo.checked});
+      closeModal();
+      if(isNew){
+        if(resp.mail&&resp.mail.ok) toast('Usuario creado y correo de bienvenida enviado','ok');
+        else if(resp.mail&&resp.mail.motivo==='ses_no_configurado') toast('Usuario creado. SES no configurado: no se envió correo.','err');
+        else if(resp.mail&&resp.mail.motivo==='usuario_inactivo') toast('Usuario creado como inactivo (sin correo).','ok');
+        else toast('Usuario creado. No se pudo enviar correo: '+(resp.mail&&resp.mail.error?resp.mail.error:'error SES'),'err');
+      } else toast('Guardado','ok');
+      render();
     }catch(e){toast(e.data&&e.data.mensaje?e.data.mensaje:(e.data&&e.data.error==='email_duplicado'?'Ese correo ya está registrado':errMsg(e)),'err');}
   }},'Guardar'));
   modal(isNew?'Nuevo usuario':'Editar usuario',body,foot);
