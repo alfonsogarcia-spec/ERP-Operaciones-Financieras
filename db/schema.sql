@@ -187,6 +187,8 @@ create table if not exists contracargos_reporte_dia (
   cargado_por        text,
   cargado_at         timestamptz default now()
 );
+alter table contracargos_reporte_dia add column if not exists archivo_bytes       bytea;
+alter table contracargos_reporte_dia add column if not exists archivo_mime        text;
 
 -- Destinatarios del correo de notificación del corte (aviso automático).
 create table if not exists destinatarios (

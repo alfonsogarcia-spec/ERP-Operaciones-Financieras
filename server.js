@@ -845,10 +845,10 @@ app.post('/api/contracargos/ingesta', auth, requiereRol('admin', 'operador'), up
   // Upsert reporte-del-día (constancia)
   const total = filas.reduce((s, f) => s + f.monto, 0);
   await db.query(
-    `insert into contracargos_reporte_dia(fecha,n_contracargos,monto_total,archivo_origen,cargado_por,cargado_at)
-     values($1,$2,$3,$4,$5,now())
-     on conflict (fecha) do update set n_contracargos=excluded.n_contracargos, monto_total=excluded.monto_total, archivo_origen=excluded.archivo_origen, cargado_por=excluded.cargado_por, cargado_at=now()`,
-    [fecha, filas.length, E.round2(total), req.file.originalname || '', req.user.nombre]
+    `insert into contracargos_reporte_dia(fecha,n_contracargos,monto_total,archivo_origen,archivo_bytes,archivo_mime,cargado_por,cargado_at)
+     values($1,$2,$3,$4,$5,$6,$7,now())
+     on conflict (fecha) do update set n_contracargos=excluded.n_contracargos, monto_total=excluded.monto_total, archivo_origen=excluded.archivo_origen, archivo_bytes=excluded.archivo_bytes, archivo_mime=excluded.archivo_mime, cargado_por=excluded.cargado_por, cargado_at=now()`,
+    [fecha, filas.length, E.round2(total), req.file.originalname || '', req.file.buffer, req.file.mimetype || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', req.user.nombre]
   );
   // Upsert contracargos por origen_folio
   let insertados = 0, actualizados = 0, ignorados = 0;
@@ -1028,7 +1028,7 @@ async function armarInformeHTML(idCorte, opts) {
       <td style="background:${brand};padding:14px 32px">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
           <td style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">Polipay POS Settlement</td>
-          <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">contacto@polipay.io</td>
+          <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">ops.agregador@polipay.io</td>
         </tr></table>
       </td>
     </tr>
@@ -1192,10 +1192,18 @@ async function armarAdjuntosCorte(idCorte) {
   const layoutBuf = X.buildXLSX([{ name: 'LAYOUT', aoa: [headL, ...rowsL] }]);
   // Reporte por cliente (con estilos de la plantilla)
   const reporteBuf = await buildReporteXLSX(c, cal);
-  return [
+  const adj = [
     { filename: `layout_spei_corte_${c.id_corte}_${c.fli}.xlsx`, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: layoutBuf },
     { filename: `reporte_cliente_corte_${c.id_corte}_${c.fli}.xlsx`, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: reporteBuf },
   ];
+  // Reporte de contracargos del día — se adjunta TAL CUAL fue subido (sin modificar).
+  const rep = (await db.query('select archivo_origen, archivo_bytes, archivo_mime from contracargos_reporte_dia where fecha=$1', [c.fli])).rows[0];
+  if (rep && rep.archivo_bytes) {
+    const buf = Buffer.isBuffer(rep.archivo_bytes) ? rep.archivo_bytes : Buffer.from(rep.archivo_bytes);
+    const nombre = rep.archivo_origen && String(rep.archivo_origen).trim() ? rep.archivo_origen : `reporte_contracargos_${c.fli}.xlsx`;
+    adj.push({ filename: nombre, contentType: rep.archivo_mime || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: buf });
+  }
+  return adj;
 }
 
 app.post('/api/cortes/:id/notificar', auth, requiereRol('admin', 'tesoreria'), async (req, res) => {
