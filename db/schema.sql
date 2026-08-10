@@ -215,6 +215,21 @@ create table if not exists bitacora (
   accion   text,
   detalle  text
 );
+-- Fase 3 · Auditoría enriquecida + hash-chain (append-only con detección de tampering).
+-- Cada fila calcula hash = sha256(prev_hash || id || ts || usuario || rol || accion || detalle || ip || ...).
+-- Si alguien altera una fila ex post, la cadena se rompe y verificar-integridad lo detecta.
+alter table bitacora add column if not exists ip            text;
+alter table bitacora add column if not exists user_agent    text;
+alter table bitacora add column if not exists session_jti   text;
+alter table bitacora add column if not exists resource_type text;
+alter table bitacora add column if not exists resource_id   text;
+alter table bitacora add column if not exists success       boolean default true;
+alter table bitacora add column if not exists prev_hash     text;
+alter table bitacora add column if not exists row_hash      text;
+create index if not exists idx_bitacora_ts on bitacora(ts desc);
+create index if not exists idx_bitacora_usuario on bitacora(usuario, ts desc);
+create index if not exists idx_bitacora_accion on bitacora(accion, ts desc);
+create index if not exists idx_bitacora_recurso on bitacora(resource_type, resource_id, ts desc);
 
 -- ============================================================================
 -- Fase 2 · Cifrado en reposo (columnas paralelas). Todas nullable durante la

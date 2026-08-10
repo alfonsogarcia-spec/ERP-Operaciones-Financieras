@@ -878,11 +878,78 @@ function editUsuario(u){
   modal(isNew?'Nuevo usuario':'Editar usuario',body,foot);
 }
 
+const BIT={usuario:'',accion:'',resource_type:'',ip:'',success:'',desde:'',hasta:'',q:'',offset:0,limit:100};
 async function vBitacora(v){
-  const b=await api('GET','/api/bitacora');v.innerHTML='';
-  const p=el('div',{class:'panel'});p.append(el('h3',{},'Bitácora de acciones'));
-  p.append(tableWrap(['Fecha/hora','Usuario','Rol','Acción','Detalle'],b.map(x=>[new Date(x.ts).toLocaleString('es-MX'),esc(x.usuario),`<span class="pill">${esc(ROLES[x.rol]||x.rol)}</span>`,`<span class="badge b">${esc(x.accion)}</span>`,esc(x.detalle)]),{empty:'Sin registros'}));
+  v.innerHTML='';
+  // Toolbar de acciones a la derecha
+  $('#pageAction').innerHTML='';
+  $('#pageAction').append(
+    el('button',{class:'btn secondary sm',onclick:async()=>{
+      try{const r=await api('GET','/api/bitacora/verificar-integridad'); toast(r.integra?`✓ Cadena íntegra (${r.verificadas} verificadas, ${r.sin_hash_legacy} legacy)`:`✗ Fila ${r.primera_falla.id}: ${r.primera_falla.motivo}`,r.integra?'ok':'err');}
+      catch(e){toast('No autorizado o error: '+errMsg(e),'err');}
+    }},'Verificar integridad'),
+    el('span',{},' '),
+    el('button',{class:'btn sm',onclick:()=>{const q=bitQuery(); const url='/api/bitacora.csv'+(q?'?'+q:'')+(q?'&':'?')+'token='+encodeURIComponent(TOKEN()); window.open(url,'_blank');}},'⬇ Exportar CSV')
+  );
+  // Panel de filtros
+  const pf=el('div',{class:'panel'});
+  const grid=el('div',{class:'form-grid c3'});
+  const mk=(id,label,input)=>{ input.addEventListener('input',()=>{BIT[id]=input.value;}); input.value=BIT[id]||''; return el('label',{class:'field'},label,input); };
+  grid.append(mk('usuario','Usuario contiene',el('input',{placeholder:'ej. Alfonso'})));
+  grid.append(mk('accion','Acción contiene',el('input',{placeholder:'ej. usuario, corte, catalogo'})));
+  grid.append(mk('resource_type','Tipo de recurso',el('input',{placeholder:'ej. usuario, corte, cuenta'})));
+  grid.append(mk('ip','IP',el('input',{placeholder:'ej. 187.132.'})));
+  const selSuccess=el('select');['','true','false'].forEach(x=>selSuccess.append(el('option',{value:x},x===''?'—':(x==='true'?'Éxito':'Fallo')))); grid.append(mk('success','Resultado',selSuccess));
+  grid.append(mk('desde','Desde (YYYY-MM-DD)',el('input',{type:'date'})));
+  grid.append(mk('hasta','Hasta (YYYY-MM-DD)',el('input',{type:'date'})));
+  grid.append(mk('q','Detalle contiene',el('input',{placeholder:'ej. clabe, monto, folio'})));
+  pf.append(el('h3',{},'Filtros'),grid);
+  const foot=el('div',{style:'display:flex;gap:8px;margin-top:12px'});
+  foot.append(el('button',{class:'btn',onclick:()=>{BIT.offset=0; render();}},'Aplicar'),
+              el('button',{class:'btn ghost',onclick:()=>{Object.keys(BIT).forEach(k=>{if(!['offset','limit'].includes(k))BIT[k]='';}); BIT.offset=0; render();}},'Limpiar'));
+  pf.append(foot);
+  v.append(pf);
+  // Tabla
+  const q=bitQuery();
+  const r=await api('GET','/api/bitacora'+(q?'?'+q:''));
+  const p=el('div',{class:'panel'});
+  p.append(el('h3',{},'Bitácora',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},`${r.total} totales · viendo ${r.rows.length} desde offset ${r.offset}`))));
+  const rolBadge=x=>`<span class="pill">${esc(ROLES[x]||x)}</span>`;
+  const successBadge=s=> s===false ? '<span class="badge err">Fallo</span>' : '<span class="badge ok">Éxito</span>';
+  p.append(tableWrap(
+    ['Fecha/hora','Usuario','Rol','Acción','Recurso','IP','Detalle',{t:'✓'}],
+    r.rows.map(x=>[
+      new Date(x.ts).toLocaleString('es-MX'),
+      esc(x.usuario||''),
+      rolBadge(x.rol||''),
+      `<span class="badge b">${esc(x.accion||'')}</span>`,
+      esc((x.resource_type||'')+(x.resource_id?' #'+x.resource_id:'')),
+      esc(x.ip||''),
+      esc(x.detalle||''),
+      successBadge(x.success)
+    ]),
+    {empty:'Sin registros con esos filtros'}
+  ));
+  // Paginación
+  if(r.total>r.limit){
+    const pag=el('div',{style:'display:flex;gap:8px;align-items:center;margin-top:10px'});
+    pag.append(
+      el('button',{class:'btn ghost sm',onclick:()=>{BIT.offset=Math.max(0,BIT.offset-BIT.limit); render();},disabled:BIT.offset===0?'true':null},'← Anterior'),
+      el('span',{class:'muted',style:'font-size:12px'},`Página ${Math.floor(BIT.offset/BIT.limit)+1} de ${Math.ceil(r.total/BIT.limit)}`),
+      el('button',{class:'btn ghost sm',onclick:()=>{if(BIT.offset+BIT.limit<r.total){BIT.offset+=BIT.limit; render();}}},'Siguiente →')
+    );
+    p.append(pag);
+  }
   v.append(p);
+}
+function bitQuery(){
+  const params=[];
+  for(const k of ['usuario','accion','resource_type','ip','success','desde','hasta','q']){
+    if(BIT[k]) params.push(k+'='+encodeURIComponent(BIT[k]));
+  }
+  if(BIT.offset) params.push('offset='+BIT.offset);
+  if(BIT.limit!==100) params.push('limit='+BIT.limit);
+  return params.join('&');
 }
 
 /* ---------- import genérico (Excel/CSV) ---------- */

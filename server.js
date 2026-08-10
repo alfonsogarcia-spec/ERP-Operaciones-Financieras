@@ -133,9 +133,39 @@ const requiereRol = (...roles) => (req, res, next) =>
   roles.includes(req.user.rol) ? next() : res.status(403).json({ error: 'rol_no_autorizado', necesita: roles });
 const dbReady = res => { if (!db.isReady()) { res.status(503).json({ error: 'db_no_lista' }); return false; } return true; };
 
-async function bit(req, accion, detalle) {
-  try { await db.query('insert into bitacora(usuario,rol,accion,detalle) values($1,$2,$3,$4)',
-    [req.user ? req.user.nombre : '—', req.user ? req.user.rol : '—', accion, detalle || '']); } catch (e) {}
+// Extrae la IP real detrás del proxy de Render (X-Forwarded-For).
+function realIp(req) {
+  if (!req) return null;
+  const xff = req.headers && req.headers['x-forwarded-for'];
+  if (xff) return String(xff).split(',')[0].trim();
+  return req.ip || (req.connection && req.connection.remoteAddress) || null;
+}
+
+// Escritura auditable con hash-chain. Cada fila guarda hash = sha256(prev_hash || campos).
+// Si alguien altera una fila retroactivamente, la cadena se rompe → detectable.
+// opts: { resource_type, resource_id, success, actor }  — actor overrides req.user (para logins fallidos)
+async function bit(req, accion, detalle, opts) {
+  opts = opts || {};
+  try {
+    const usuario = opts.actor?.nombre || (req && req.user ? req.user.nombre : '—');
+    const rol = opts.actor?.rol || (req && req.user ? req.user.rol : '—');
+    const jti = req && req.user ? (req.user.jti || null) : null;
+    const ip = realIp(req);
+    const ua = req && req.headers ? (req.headers['user-agent'] || null) : null;
+    const rtype = opts.resource_type || null;
+    const rid = opts.resource_id ? String(opts.resource_id) : null;
+    const success = opts.success === false ? false : true;
+    // Trae el último hash para encadenar. Si es la primera fila, prev=null.
+    const prev = (await db.query('select row_hash from bitacora where row_hash is not null order by id desc limit 1')).rows[0];
+    const prev_hash = prev ? prev.row_hash : null;
+    // Hash de los campos (incluye prev_hash → cadena rota si alguien altera algo).
+    const material = [prev_hash || '', usuario, rol, accion, detalle || '', ip || '', ua || '', jti || '', rtype || '', rid || '', String(success)].join('|');
+    const row_hash = crypto.createHash('sha256').update(material, 'utf8').digest('hex');
+    await db.query(
+      'insert into bitacora(usuario,rol,accion,detalle,ip,user_agent,session_jti,resource_type,resource_id,success,prev_hash,row_hash) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
+      [usuario, rol, accion, detalle || '', ip, ua, jti, rtype, rid, success, prev_hash, row_hash]
+    );
+  } catch (_e) { /* la bitácora nunca debe romper el flujo */ }
 }
 
 /* ---------- loaders de catálogo (coaccionan numeric→number) ---------- */
@@ -213,11 +243,16 @@ app.post('/api/login/google', loginLimiter, async (req, res) => {
     const ticket = await googleClient.verifyIdToken({ idToken: credential, audience: GOOGLE_CLIENT_ID });
     payload = ticket.getPayload();
   } catch (e) {
+    await bit(req, 'login_fail', `google_invalido: ${e.message}`, { success: false, actor: { nombre: '(anónimo)', rol: '—' } });
     return res.status(401).json({ error: 'google_invalido', mensaje: e.message });
   }
-  if (!payload || !payload.email || !payload.email_verified) return res.status(401).json({ error: 'email_no_verificado' });
+  if (!payload || !payload.email || !payload.email_verified) {
+    await bit(req, 'login_fail', 'email_no_verificado', { success: false, actor: { nombre: '(anónimo)', rol: '—' } });
+    return res.status(401).json({ error: 'email_no_verificado' });
+  }
   // Segundo blindaje opcional: exigir cuenta Google Workspace del dominio permitido (hd).
   if (ALLOWED_HD && String(payload.hd || '').toLowerCase() !== ALLOWED_HD) {
+    await bit(req, 'login_fail', `dominio_no_permitido: ${payload.email} (hd=${payload.hd || '—'})`, { success: false, actor: { nombre: payload.email, rol: '—' } });
     return res.status(403).json({ error: 'dominio_no_permitido', mensaje: `Solo cuentas de ${ALLOWED_HD} pueden iniciar sesión.` });
   }
   const email = String(payload.email).toLowerCase();
@@ -225,8 +260,14 @@ app.post('/api/login/google', loginLimiter, async (req, res) => {
   const emailHash = C.hmacEmail(email);
   let u = (await db.query('select * from usuarios where email_hash=$1', [emailHash])).rows[0];
   if (!u) u = (await db.query('select * from usuarios where lower(email)=lower($1)', [email])).rows[0];
-  if (!u) return res.status(403).json({ error: 'no_autorizado', mensaje: 'Este correo no tiene acceso. Pide a un administrador que te agregue en Sistema → Usuarios.' });
-  if (!u.activo) return res.status(403).json({ error: 'inactivo', mensaje: 'Tu usuario está desactivado. Contacta a un administrador.' });
+  if (!u) {
+    await bit(req, 'login_fail', `no_autorizado: ${email}`, { success: false, actor: { nombre: email, rol: '—' } });
+    return res.status(403).json({ error: 'no_autorizado', mensaje: 'Este correo no tiene acceso. Pide a un administrador que te agregue en Sistema → Usuarios.' });
+  }
+  if (!u.activo) {
+    await bit(req, 'login_fail', `inactivo: ${email}`, { success: false, actor: { nombre: u.nombre || email, rol: u.rol }, resource_type: 'usuario', resource_id: u.id });
+    return res.status(403).json({ error: 'inactivo', mensaje: 'Tu usuario está desactivado. Contacta a un administrador.' });
+  }
   // Actualiza nombre/foto/last-login (solo campos suaves; email y rol no se tocan).
   const nombre = u.nombre || payload.name || email;
   const fotoUrl = payload.picture || u.foto_url || null;
@@ -235,7 +276,7 @@ app.post('/api/login/google', loginLimiter, async (req, res) => {
     [u.id, nombre, fotoUrl, C.encrypt(nombre), C.hmacEmail(u.email), C.encrypt(u.email)]
   );
   u.nombre = nombre; u.foto_url = fotoUrl;
-  try { await db.query('insert into bitacora(usuario,rol,accion,detalle) values($1,$2,$3,$4)', [u.nombre, u.rol, 'login_google', email]); } catch (_e) {}
+  await bit(req, 'login_google', email, { actor: { nombre: u.nombre, rol: u.rol }, resource_type: 'usuario', resource_id: u.id });
   res.json({ token: firmar(u), user: safeUser(u) });
 });
 app.get('/api/yo', auth, (req, res) => res.json({ id: req.user.sub, nombre: req.user.nombre, email: req.user.email, rol: req.user.rol }));
@@ -281,7 +322,7 @@ app.post('/api/usuarios', auth, requiereRol('admin'), async (req, res) => {
       'update usuarios set email=$2, nombre=$3, rol=$4, activo=$5, email_hash=$6, email_cifrado=$7, nombre_cifrado=$8 where id=$1',
       [id, email, nombre, rol, activo, C.hmacEmail(email), C.encrypt(email), C.encrypt(nombre)]
     );
-    await bit(req, 'usuario_editar', `id=${id} email=${email} rol=${rol} activo=${activo}`);
+    await bit(req, 'usuario_editar', `email=${email} rol=${rol} activo=${activo}`, { resource_type: 'usuario', resource_id: id });
     return res.json({ ok: true, id });
   }
   // Alta (dedupe por hash + fallback a lower(email) para legacy)
@@ -292,7 +333,7 @@ app.post('/api/usuarios', auth, requiereRol('admin'), async (req, res) => {
     'insert into usuarios(email,nombre,rol,activo,creado_por,email_hash,email_cifrado,nombre_cifrado) values($1,$2,$3,$4,$5,$6,$7,$8) returning id',
     [email, nombre, rol, activo, req.user.nombre || req.user.email, C.hmacEmail(email), C.encrypt(email), C.encrypt(nombre)]
   );
-  await bit(req, 'usuario_alta', `id=${r.rows[0].id} email=${email} rol=${rol}`);
+  await bit(req, 'usuario_alta', `email=${email} rol=${rol}`, { resource_type: 'usuario', resource_id: r.rows[0].id });
   // Correo de bienvenida (best-effort, no bloquea el alta).
   let mail = { ok: false, motivo: 'ses_no_configurado' };
   if (activo && sesEnabled()) {
@@ -325,7 +366,7 @@ app.delete('/api/usuarios/:id', auth, requiereRol('admin'), async (req, res) => 
     if (admins === 0) return res.status(409).json({ error: 'ultimo_admin', mensaje: 'No puedes borrar al último administrador activo.' });
   }
   await db.query('delete from usuarios where id=$1', [id]);
-  await bit(req, 'usuario_baja', `id=${id} email=${u.email}`);
+  await bit(req, 'usuario_baja', `email=${u.email}`, { resource_type: 'usuario', resource_id: id });
   res.json({ ok: true });
 });
 
@@ -415,12 +456,12 @@ app.post('/api/catalogo/cuenta', auth, requiereRol('admin'), async (req, res) =>
     else await db.query('insert into cuentas(id_grupo,numero_afiliacion,nombre_comercial,razon_social_beneficiario,banco,clabe,codigo_banco,clabe_hash,clabe_cifrada,razon_social_beneficiario_cifrada,banco_cifrado) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
       [parseInt(b.id_grupo, 10), afil, b.nombre_comercial || '', rzn, bnc, cl, codigo, clHash, clCif, rznCif, bncCif]);
   }
-  await bit(req, 'catalogo', `cuenta grupo ${b.id_grupo} afil ${afil || 'nivel-grupo'}`);
+  await bit(req, b.id ? 'cuenta_editar' : 'cuenta_alta', `grupo ${b.id_grupo} afil ${afil || 'nivel-grupo'} clabe ${cl ? cl.slice(-4).padStart(cl.length, '*') : '—'}`, { resource_type: 'cuenta', resource_id: b.id });
   res.json({ ok: true });
 });
 app.delete('/api/catalogo/cuenta/:id', auth, requiereRol('admin'), async (req, res) => {
   if (!dbReady(res)) return; await db.query('delete from cuentas where id=$1', [parseInt(req.params.id, 10)]);
-  await bit(req, 'catalogo', `eliminó cuenta ${req.params.id}`); res.json({ ok: true });
+  await bit(req, 'cuenta_baja', '', { resource_type: 'cuenta', resource_id: req.params.id }); res.json({ ok: true });
 });
 
 // Bancos (admin)
@@ -697,7 +738,7 @@ app.post('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res)
   const idCorte = ins.id_corte;
   await insertMany('calculos', ['corte_id', 'cliente', 'afil', 'id_grupo', 'razon', 'concepto', 'clabe', 'codigo_banco', 'banco', 'beneficiario', 'calc', 'faltantes', 'ajustes', 'contracargos_ids'],
     c.calculos.map(cc => ({ corte_id: idCorte, cliente: cc.cliente, afil: cc.afil, id_grupo: cc.id_grupo, razon: cc.razon, concepto: cc.concepto, clabe: cc.clabe, codigo_banco: cc.codigo_banco, banco: cc.banco, beneficiario: cc.beneficiario, calc: JSON.stringify(cc.calc), faltantes: JSON.stringify(cc.faltantes), ajustes: JSON.stringify(cc.ajustes), contracargos_ids: JSON.stringify(cc.contracargos_ids || []) })));
-  await bit(req, 'corte', `generó corte #${idCorte} (${E.fmtFecha(E.parseFecha(iso))}), ${c.calculos.length} grupos, contracargos cargados=${rep.n_contracargos||0}`);
+  await bit(req, 'corte_generar', `${E.fmtFecha(E.parseFecha(iso))}, ${c.calculos.length} grupos, contracargos cargados=${rep.n_contracargos||0}`, { resource_type: 'corte', resource_id: idCorte });
   res.json({ id_corte: idCorte, contracargos_no_aplicados: c.cc_no_aplicados });
 });
 
@@ -736,7 +777,7 @@ app.post('/api/cortes/:id/:accion', auth, async (req, res, next) => {
   }
   if (accion === 'dispersar') await db.query('update cortes set estado=$1,dispersado_por=$2 where id_corte=$3', ['Dispersado', req.user.nombre, c.id_corte]);
   if (accion === 'cerrar') await db.query('update cortes set estado=$1 where id_corte=$2', ['Cerrado', c.id_corte]);
-  await bit(req, accion, `corte #${c.id_corte}`);
+  await bit(req, 'corte_' + accion, `estado→${accion === 'validar' ? 'Validado' : accion === 'dispersar' ? 'Dispersado' : 'Cerrado'}`, { resource_type: 'corte', resource_id: c.id_corte });
   res.json({ ok: true });
 });
 app.delete('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res) => {
@@ -754,7 +795,7 @@ app.delete('/api/cortes/:id', auth, requiereRol('admin', 'operador'), async (req
   // Devolver a Pendiente los contracargos que este corte había marcado Aplicado
   await db.query("update contracargos set estatus='Pendiente', aplicado_en_corte_id=null where aplicado_en_corte_id=$1", [id]);
   await db.query('delete from cortes where id_corte=$1', [id]);
-  await bit(req, 'corte', `eliminó corte #${id} (estado ${c.estado})`);
+  await bit(req, 'corte_baja', `estado ${c.estado}`, { resource_type: 'corte', resource_id: id });
   res.json({ ok: true });
 });
 
@@ -1456,13 +1497,13 @@ app.post('/api/destinatarios', auth, requiereRol('admin'), async (req, res) => {
     await db.query('insert into destinatarios(email,nombre,tipo,activo,creado_por,email_hash,email_cifrado,nombre_cifrado) values($1,$2,$3,$4,$5,$6,$7,$8) on conflict(email) do update set nombre=excluded.nombre, tipo=excluded.tipo, activo=excluded.activo, email_hash=excluded.email_hash, email_cifrado=excluded.email_cifrado, nombre_cifrado=excluded.nombre_cifrado',
       [email, nombreD, tipo, b.activo !== false, req.user.nombre, eHash, eCif, nCif]);
   }
-  await bit(req, 'destinatarios', `alta/edición ${email} (${tipo})`);
+  await bit(req, b.id ? 'destinatario_editar' : 'destinatario_alta', `${email} (${tipo})`, { resource_type: 'destinatario', resource_id: b.id });
   res.json({ ok: true });
 });
 app.delete('/api/destinatarios/:id', auth, requiereRol('admin'), async (req, res) => {
   if (!dbReady(res)) return;
   await db.query('delete from destinatarios where id=$1', [parseInt(req.params.id, 10)]);
-  await bit(req, 'destinatarios', `eliminó destinatario #${req.params.id}`);
+  await bit(req, 'destinatario_baja', '', { resource_type: 'destinatario', resource_id: req.params.id });
   res.json({ ok: true });
 });
 
@@ -1645,9 +1686,89 @@ app.get('/api/plantilla/:tipo.xlsx', auth, (req, res) => {
   enviarXLSX(res, `plantilla_${t}.xlsx`, X.buildXLSX([sheet]));
 });
 
+// GET /api/bitacora — queryable con filtros y paginación.
+// Filtros: usuario, rol, accion (contains), resource_type, resource_id, ip,
+//          success ('true'/'false'), desde (ISO), hasta (ISO), q (búsqueda libre en detalle),
+//          limit (default 100, max 500), offset.
 app.get('/api/bitacora', auth, async (req, res) => {
   if (!dbReady(res)) return;
-  res.json((await db.query('select * from bitacora order by id desc limit 300')).rows);
+  const f = req.query || {};
+  const conds = [], vals = [];
+  const add = (sql, v) => { conds.push(sql.replace('$?', '$' + (vals.length + 1))); vals.push(v); };
+  if (f.usuario)       add("lower(usuario) like '%' || lower($?) || '%'", String(f.usuario));
+  if (f.rol)           add('rol=$?', String(f.rol));
+  if (f.accion)        add("accion like '%' || $? || '%'", String(f.accion));
+  if (f.resource_type) add('resource_type=$?', String(f.resource_type));
+  if (f.resource_id)   add('resource_id=$?', String(f.resource_id));
+  if (f.ip)            add('ip=$?', String(f.ip));
+  if (f.success === 'true' || f.success === 'false') add('success=$?', f.success === 'true');
+  if (f.desde && /^\d{4}-\d{2}-\d{2}/.test(f.desde)) add('ts >= $?', String(f.desde));
+  if (f.hasta && /^\d{4}-\d{2}-\d{2}/.test(f.hasta)) add('ts <  ($?::timestamptz + interval \'1 day\')', String(f.hasta));
+  if (f.q)             add("detalle ilike '%' || $? || '%'", String(f.q));
+  const where = conds.length ? ' where ' + conds.join(' and ') : '';
+  const limit = Math.min(parseInt(f.limit, 10) || 100, 500);
+  const offset = Math.max(parseInt(f.offset, 10) || 0, 0);
+  const total = parseInt((await db.query('select count(*)::int as n from bitacora' + where, vals)).rows[0].n, 10);
+  const rows = (await db.query(
+    'select id, ts, usuario, rol, accion, detalle, ip, user_agent, session_jti, resource_type, resource_id, success from bitacora' + where + ' order by id desc limit ' + limit + ' offset ' + offset,
+    vals
+  )).rows;
+  res.json({ total, limit, offset, rows });
+});
+
+// Export CSV para auditores. Mismos filtros que arriba (sin paginación, hasta 10k filas).
+app.get('/api/bitacora.csv', auth, requiereRol('admin', 'tesoreria'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const f = req.query || {};
+  const conds = [], vals = [];
+  const add = (sql, v) => { conds.push(sql.replace('$?', '$' + (vals.length + 1))); vals.push(v); };
+  if (f.usuario)       add("lower(usuario) like '%' || lower($?) || '%'", String(f.usuario));
+  if (f.rol)           add('rol=$?', String(f.rol));
+  if (f.accion)        add("accion like '%' || $? || '%'", String(f.accion));
+  if (f.resource_type) add('resource_type=$?', String(f.resource_type));
+  if (f.resource_id)   add('resource_id=$?', String(f.resource_id));
+  if (f.success === 'true' || f.success === 'false') add('success=$?', f.success === 'true');
+  if (f.desde && /^\d{4}-\d{2}-\d{2}/.test(f.desde)) add('ts >= $?', String(f.desde));
+  if (f.hasta && /^\d{4}-\d{2}-\d{2}/.test(f.hasta)) add('ts <  ($?::timestamptz + interval \'1 day\')', String(f.hasta));
+  if (f.q)             add("detalle ilike '%' || $? || '%'", String(f.q));
+  const where = conds.length ? ' where ' + conds.join(' and ') : '';
+  const rows = (await db.query('select ts, usuario, rol, accion, detalle, ip, resource_type, resource_id, success from bitacora' + where + ' order by id desc limit 10000', vals)).rows;
+  const csvCell = v => { const s = v == null ? '' : String(v); return /["\n,]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const head = ['fecha_hora', 'usuario', 'rol', 'accion', 'detalle', 'ip', 'resource_type', 'resource_id', 'success'];
+  const lines = [head.join(',')].concat(rows.map(r => [r.ts.toISOString(), r.usuario, r.rol, r.accion, r.detalle, r.ip, r.resource_type, r.resource_id, r.success].map(csvCell).join(',')));
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="bitacora_${new Date().toISOString().slice(0,10)}.csv"`);
+  res.send('﻿' + lines.join('\n'));   // BOM para Excel
+});
+
+// Verificar integridad de la cadena de hashes (admin). Recorre todo, valida cada row_hash.
+// Reporta cuántas filas revisó, si la cadena está íntegra, y la primera fila corrupta si la hay.
+app.get('/api/bitacora/verificar-integridad', auth, requiereRol('admin'), async (_req, res) => {
+  if (!dbReady(res)) return;
+  const rows = (await db.query('select id, ts, usuario, rol, accion, detalle, ip, user_agent, session_jti, resource_type, resource_id, success, prev_hash, row_hash from bitacora order by id asc')).rows;
+  let previo = null, ok = 0, primera_falla = null, sin_hash = 0;
+  for (const r of rows) {
+    if (!r.row_hash) { sin_hash++; continue; }   // filas antiguas anteriores a hash-chain
+    const esperado_prev = previo == null ? null : previo;
+    if (r.prev_hash !== esperado_prev) {
+      primera_falla = { id: r.id, motivo: 'prev_hash no coincide', esperado: esperado_prev, actual: r.prev_hash };
+      break;
+    }
+    const material = [r.prev_hash || '', r.usuario, r.rol, r.accion, r.detalle || '', r.ip || '', r.user_agent || '', r.session_jti || '', r.resource_type || '', r.resource_id || '', String(r.success)].join('|');
+    const hash_calc = crypto.createHash('sha256').update(material, 'utf8').digest('hex');
+    if (hash_calc !== r.row_hash) {
+      primera_falla = { id: r.id, motivo: 'row_hash no coincide (fila alterada)', esperado: hash_calc, actual: r.row_hash };
+      break;
+    }
+    previo = r.row_hash; ok++;
+  }
+  res.json({
+    total: rows.length,
+    verificadas: ok,
+    sin_hash_legacy: sin_hash,
+    integra: !primera_falla,
+    primera_falla,
+  });
 });
 
 /* ---------- estáticos + SPA ---------- */
