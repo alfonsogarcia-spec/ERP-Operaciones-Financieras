@@ -26,6 +26,7 @@ const E = require('./engine.js');
 const db = require('./db/index.js');
 const X = require('./lib/excel.js');
 const C = require('./lib/crypto.js');
+const AL = require('./lib/alertas.js');
 if (!C.ready()) console.warn('⚠  Cifrado app-layer NO configurado (falta ENCRYPTION_KEY_V1 o HMAC_PEPPER). Dual-write escribirá "plain:" en las columnas cifradas.');
 
 const app = express();
@@ -165,7 +166,38 @@ async function bit(req, accion, detalle, opts) {
       'insert into bitacora(usuario,rol,accion,detalle,ip,user_agent,session_jti,resource_type,resource_id,success,prev_hash,row_hash) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
       [usuario, rol, accion, detalle || '', ip, ua, jti, rtype, rid, success, prev_hash, row_hash]
     );
+    // Evaluar reglas de alerta (best-effort, en el mismo tick — no bloqueamos con await afuera de bit).
+    evaluarAlertas({ usuario, rol, accion, detalle, ip, resource_type: rtype, resource_id: rid, success, ts: new Date().toISOString() });
   } catch (_e) { /* la bitácora nunca debe romper el flujo */ }
+}
+
+// Dispara alertas por SES a los admins activos. Se invoca desde bit() sin await.
+function evaluarAlertas(fila) {
+  if (!AL.ALERTAS_HABILITADAS || !sesEnabled()) return;
+  (async () => {
+    try {
+      await AL.evaluar({
+        db,
+        adminEmails: async () => {
+          // Trae emails y nombres de admins activos, descifrando al vuelo.
+          const rows = (await db.query("select email, email_cifrado, nombre, nombre_cifrado from usuarios where rol='admin' and activo=true")).rows;
+          return rows.map(u => {
+            const email = descifraTexto(u.email_cifrado, u.email);
+            const nombre = descifraTexto(u.nombre_cifrado, u.nombre) || email;
+            return nombre ? `"${nombre}" <${email}>` : email;
+          }).filter(Boolean);
+        },
+        armarAlertaHTML,
+        sendSES,
+        inlineImages: (function () {
+          try {
+            const buf = require('fs').readFileSync(path.join(__dirname, 'public', 'logo.png'));
+            return [{ cid: 'polipay-logo', filename: 'polipay-logo.png', contentType: 'image/png', content: buf }];
+          } catch (_e) { return []; }
+        })(),
+      }, fila);
+    } catch (_e) { /* silencioso */ }
+  })();
 }
 
 /* ---------- loaders de catálogo (coaccionan numeric→number) ---------- */
@@ -1469,6 +1501,118 @@ app.get('/api/usuarios/bienvenida-preview.html', auth, requiereRol('admin'), (re
   const { html } = armarBienvenidaHTML({ nombre, email, rol }, invitadoPor, { logoSrc: '/public/logo.png' });
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
+});
+
+/* ============================================================================
+   Correo de ALERTA de seguridad (Fase 3.2). Misma paleta Polipay que los
+   otros correos. Un solo layout para todas las reglas; el contenido
+   (regla_titulo, motivo, campos, sugerencia) lo pasa lib/alertas.js.
+   ========================================================================= */
+function armarAlertaHTML(a, logoSrc) {
+  const brand = '#051B3B', accent = '#3083F4', muted = '#667085', line = '#e5e7eb', ink = '#1A1A1A', warn = '#B45309';
+  const logo = logoSrc || 'cid:polipay-logo';
+  const subject = `⚠️ Alerta de seguridad — ${a.regla_titulo}`;
+  const filas = (a.campos || []).map(([k, v]) => `<tr><td width="150" style="color:${muted};padding:6px 0">${escapeHtml(k)}</td><td style="padding:6px 0"><b>${escapeHtml(String(v == null ? '—' : v))}</b></td></tr>`).join('');
+  const cuando = a.cuando ? new Date(a.cuando).toLocaleString('es-MX') : new Date().toLocaleString('es-MX');
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(subject)}</title>
+</head><body style="margin:0;padding:0;background:#f4f6fb;font-family:Montserrat,Arial,sans-serif;color:${ink}">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f6fb;padding:24px 0">
+    <tr><td align="center">
+      <table role="presentation" width="640" cellspacing="0" cellpadding="0" style="max-width:640px;background:#fff;border:1px solid ${line};border-radius:12px;overflow:hidden">
+        <tr><td style="background:#ffffff;padding:26px 32px;border-bottom:1px solid ${line}">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+            <td><img src="${logo}" alt="Polipay" height="34" style="display:block;height:34px;border:0"></td>
+            <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:${brand};letter-spacing:.12em;text-transform:uppercase">Polipay POS Settlement</td>
+          </tr></table>
+        </td></tr>
+        <tr><td style="height:6px;background:${warn}"></td></tr>
+        <tr><td style="padding:34px 40px 8px">
+          <div style="font:700 12px/1 Montserrat,Arial,sans-serif;color:${warn};letter-spacing:.14em;text-transform:uppercase;margin:0 0 10px">⚠ Alerta de seguridad</div>
+          <div style="font:700 22px/1.25 Montserrat,Arial,sans-serif;color:${brand};margin:0 0 8px">${escapeHtml(a.regla_titulo)}</div>
+          <div style="font:400 14px/1.6 Montserrat,Arial,sans-serif;color:${muted};margin:0 0 22px">${escapeHtml(a.motivo)}</div>
+
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid ${line};border-radius:10px;overflow:hidden;margin:0 0 24px">
+            <tr><td style="padding:14px 18px;background:#f9fafb;border-bottom:1px solid ${line};font:700 11px/1 Montserrat,Arial,sans-serif;color:${muted};letter-spacing:.12em;text-transform:uppercase">Detalles del evento</td></tr>
+            <tr><td style="padding:14px 18px">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font:400 13px/1.7 Montserrat,Arial,sans-serif;color:${ink}">
+                ${filas}
+                <tr><td width="150" style="color:${muted};padding:6px 0">Cuándo</td><td style="padding:6px 0"><b>${escapeHtml(cuando)}</b></td></tr>
+              </table>
+            </td></tr>
+          </table>
+
+          <div style="font:700 13px/1 Montserrat,Arial,sans-serif;color:${brand};margin:0 0 10px;letter-spacing:.05em;text-transform:uppercase">Sugerencia</div>
+          <div style="font:400 13px/1.7 Montserrat,Arial,sans-serif;color:${ink};margin:0 0 22px">${escapeHtml(a.sugerencia)}</div>
+
+          <div style="text-align:center;margin:8px 0 18px">
+            <a href="https://polipay-conciliacion-liquidacion.onrender.com" style="display:inline-block;background:${accent};color:#fff;text-decoration:none;font:700 13px/1 Montserrat,Arial,sans-serif;padding:14px 26px;border-radius:8px;letter-spacing:.04em">Abrir Bitácora en Polipay POS Settlement →</a>
+          </div>
+
+          <div style="font:400 12px/1.6 Montserrat,Arial,sans-serif;color:${muted};margin:20px 0 0;padding:14px 16px;background:#f9fafb;border:1px solid ${line};border-radius:8px">
+            Estas alertas se envían automáticamente cuando el sistema detecta un patrón que amerita revisión. Si crees que es un falso positivo, ajustamos los umbrales.
+          </div>
+        </td></tr>
+        <tr><td style="padding:22px 32px 26px;border-top:1px solid ${line};font:400 12px/1.6 Montserrat,Arial,sans-serif;color:${muted}">
+          Sistema: polipay-conciliacion-liquidacion.onrender.com
+        </td></tr>
+        <tr><td style="background:${brand};padding:14px 32px">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+            <td style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">Polipay POS Settlement</td>
+            <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">ops.agregador@polipay.io</td>
+          </tr></table>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+  const textFallback = `[Alerta de seguridad] ${a.regla_titulo}\n${a.motivo}\n` + (a.campos || []).map(([k, v]) => `${k}: ${v}`).join('\n') + `\nCuándo: ${cuando}\nSugerencia: ${a.sugerencia}`;
+  return { subject, html, textFallback };
+}
+
+// Preview HTML por regla (solo admin). Ejemplos: /api/alertas/preview.html?regla=login_fail_ip
+app.get('/api/alertas/preview.html', auth, requiereRol('admin'), (req, res) => {
+  const reglaId = String(req.query.regla || 'login_fail_ip');
+  const regla = AL.REGLAS.find(r => r.id === reglaId) || AL.REGLAS[0];
+  // Fila sintética para renderizar el correo con valores de ejemplo.
+  const filaSample = { usuario: 'Alfonso García', rol: 'admin', accion: 'login_fail', detalle: 'no_autorizado: ejemplo@externo.com', ip: '187.132.44.10', resource_id: 42, ts: new Date().toISOString() };
+  const det = regla.detalles(filaSample, { n: 7 });
+  const { html } = armarAlertaHTML({ regla_titulo: regla.titulo, motivo: det.motivo, campos: det.campos, sugerencia: det.sugerencia, cuando: filaSample.ts }, '/public/logo.png');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
+
+// Envío manual de correo de prueba (admin). Útil para verificar SES + diseño sin esperar un evento.
+app.post('/api/alertas/prueba', auth, requiereRol('admin'), async (req, res) => {
+  if (!sesEnabled()) return res.status(503).json({ error: 'ses_no_configurado' });
+  if (!AL.ALERTAS_HABILITADAS) return res.status(503).json({ error: 'alertas_deshabilitadas' });
+  const to = await (async () => {
+    const rows = (await db.query("select email, email_cifrado, nombre, nombre_cifrado from usuarios where rol='admin' and activo=true")).rows;
+    return rows.map(u => {
+      const email = descifraTexto(u.email_cifrado, u.email);
+      const nombre = descifraTexto(u.nombre_cifrado, u.nombre) || email;
+      return nombre ? `"${nombre}" <${email}>` : email;
+    });
+  })();
+  if (!to.length) return res.status(400).json({ error: 'sin_admins' });
+  const { subject, html, textFallback } = armarAlertaHTML({
+    regla_titulo: 'Correo de prueba',
+    motivo: 'Este es un envío manual desde el endpoint /api/alertas/prueba. Si lo recibes, SES + destinatarios admin están configurados correctamente.',
+    campos: [['Solicitado por', req.user.nombre || req.user.email], ['IP', realIp(req)], ['Ambiente', db.kind()]],
+    sugerencia: 'Ninguna acción requerida. Este es un correo de prueba.',
+    cuando: new Date().toISOString(),
+  }, 'cid:polipay-logo');
+  try {
+    const logoPath = path.join(__dirname, 'public', 'logo.png');
+    const logoBuf = require('fs').readFileSync(logoPath);
+    const messageId = await sendSES({ to, subject, html, textFallback, inlineImages: [{ cid: 'polipay-logo', filename: 'polipay-logo.png', contentType: 'image/png', content: logoBuf }] });
+    await bit(req, 'alerta_prueba', `enviada a ${to.length} admin(s)`);
+    res.json({ ok: true, enviados: to.length, messageId });
+  } catch (e) {
+    await bit(req, 'alerta_prueba_error', e.message, { success: false });
+    res.status(500).json({ error: 'ses_error', mensaje: e.message });
+  }
 });
 
 /* ============================================================================

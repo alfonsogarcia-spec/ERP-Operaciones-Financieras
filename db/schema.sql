@@ -230,6 +230,18 @@ create index if not exists idx_bitacora_ts on bitacora(ts desc);
 create index if not exists idx_bitacora_usuario on bitacora(usuario, ts desc);
 create index if not exists idx_bitacora_accion on bitacora(accion, ts desc);
 create index if not exists idx_bitacora_recurso on bitacora(resource_type, resource_id, ts desc);
+create index if not exists idx_bitacora_ip_accion on bitacora(ip, accion, ts desc);
+
+-- Fase 3 · Deduplicación de alertas por SES. Evita que el mismo evento
+-- (login_fail_ip, corte_baja_final, etc.) envíe correos repetidos dentro
+-- de la ventana definida por la regla.
+create table if not exists alertas_dedup (
+  id          serial primary key,
+  regla_id    text not null,
+  clave       text not null,
+  emitida_at  timestamptz default now()
+);
+create index if not exists idx_alertas_dedup on alertas_dedup(regla_id, clave, emitida_at desc);
 
 -- ============================================================================
 -- Fase 2 · Cifrado en reposo (columnas paralelas). Todas nullable durante la
