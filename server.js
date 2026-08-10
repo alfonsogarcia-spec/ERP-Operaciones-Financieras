@@ -11,8 +11,11 @@ require('dotenv').config({ path: require('path').join(__dirname, '.env'), quiet:
 const express = require('express');
 const path = require('path');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
 const multer = require('multer');
+const { OAuth2Client } = require('google-auth-library');
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
+if (!GOOGLE_CLIENT_ID) console.warn('⚠  GOOGLE_CLIENT_ID no definido: el login por Google no funcionará hasta configurarlo.');
 const E = require('./engine.js');
 const db = require('./db/index.js');
 const X = require('./lib/excel.js');
@@ -28,8 +31,9 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 
 /* ---------- helpers ---------- */
 const N = v => (v == null || v === '') ? null : Number(v);
 const nrm = s => String(s == null ? '' : s).trim().toLowerCase();
-const safeUser = u => ({ id: u.id, email: u.email, nombre: u.nombre, rol: u.rol });
-const ROLES = { admin: 'Administrador', operador: 'Operador (Operaciones)', tesoreria: 'Tesorería' };
+const safeUser = u => ({ id: u.id, email: u.email, nombre: u.nombre, rol: u.rol, foto_url: u.foto_url || null });
+const ROLES = { admin: 'Administrador', operador: 'Operador (Operaciones)', tesoreria: 'Tesorería', consulta: 'Consulta (solo lectura)' };
+const ROLES_VALIDOS = Object.keys(ROLES);
 
 function firmar(u) { return jwt.sign({ sub: u.id, rol: u.rol, nombre: u.nombre, email: u.email }, JWT_SECRET, { expiresIn: '12h' }); }
 function auth(req, res, next) {
@@ -77,16 +81,93 @@ function estadoServicio() { return { ok: true, service: 'conciliacion-liquidacio
 app.get('/healthz', (_req, res) => res.json(estadoServicio()));
 app.get('/api/estado', (_req, res) => res.json(estadoServicio()));
 
-/* ---------- login ---------- */
-app.post('/api/login', async (req, res) => {
+/* ---------- login (Google Sign-In · whitelist) ---------- */
+// Config pública para el front: Client ID de Google + roles (etiquetas).
+app.get('/api/config-publica', (_req, res) => {
+  res.json({ googleClientId: GOOGLE_CLIENT_ID, roles: ROLES });
+});
+
+// Recibe un ID token de Google (Google Identity Services devuelve `credential`).
+// Valida firma + audience contra nuestro Client ID. Solo pasa si el email
+// está registrado como usuario ACTIVO en la BD (whitelist explícito).
+app.post('/api/login/google', async (req, res) => {
   if (!dbReady(res)) return;
-  const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'faltan_datos' });
-  const u = (await db.query('select * from usuarios where lower(email)=lower($1) and activo=true', [email])).rows[0];
-  if (!u || !bcrypt.compareSync(password, u.password_hash)) return res.status(401).json({ error: 'credenciales' });
+  if (!googleClient) return res.status(503).json({ error: 'google_no_configurado', mensaje: 'GOOGLE_CLIENT_ID no está definido en el servidor.' });
+  const { credential } = req.body || {};
+  if (!credential) return res.status(400).json({ error: 'sin_credential' });
+  let payload;
+  try {
+    const ticket = await googleClient.verifyIdToken({ idToken: credential, audience: GOOGLE_CLIENT_ID });
+    payload = ticket.getPayload();
+  } catch (e) {
+    return res.status(401).json({ error: 'google_invalido', mensaje: e.message });
+  }
+  if (!payload || !payload.email || !payload.email_verified) return res.status(401).json({ error: 'email_no_verificado' });
+  const email = String(payload.email).toLowerCase();
+  const u = (await db.query('select * from usuarios where lower(email)=lower($1)', [email])).rows[0];
+  if (!u) return res.status(403).json({ error: 'no_autorizado', mensaje: 'Este correo no tiene acceso. Pide a un administrador que te agregue en Sistema → Usuarios.' });
+  if (!u.activo) return res.status(403).json({ error: 'inactivo', mensaje: 'Tu usuario está desactivado. Contacta a un administrador.' });
+  // Actualiza nombre/foto/last-login (solo campos suaves; email y rol no se tocan).
+  const nombre = u.nombre || payload.name || email;
+  const fotoUrl = payload.picture || u.foto_url || null;
+  await db.query('update usuarios set nombre=$2, foto_url=$3, ultimo_login_at=now() where id=$1', [u.id, nombre, fotoUrl]);
+  u.nombre = nombre; u.foto_url = fotoUrl;
+  try { await db.query('insert into bitacora(usuario,rol,accion,detalle) values($1,$2,$3,$4)', [u.nombre, u.rol, 'login_google', email]); } catch (_e) {}
   res.json({ token: firmar(u), user: safeUser(u) });
 });
 app.get('/api/yo', auth, (req, res) => res.json({ id: req.user.sub, nombre: req.user.nombre, email: req.user.email, rol: req.user.rol }));
+
+/* ---------- gestión de usuarios (solo admin) ---------- */
+app.get('/api/usuarios', auth, requiereRol('admin'), async (_req, res) => {
+  if (!dbReady(res)) return;
+  const rows = (await db.query('select id,email,nombre,rol,activo,ultimo_login_at,creado_at,creado_por,foto_url from usuarios order by activo desc, rol, email')).rows;
+  res.json(rows);
+});
+app.post('/api/usuarios', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const b = req.body || {};
+  const email = String(b.email || '').trim().toLowerCase();
+  const nombre = String(b.nombre || '').trim();
+  const rol = String(b.rol || '').trim();
+  const activo = b.activo === false ? false : true;
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'email_invalido' });
+  if (!nombre) return res.status(400).json({ error: 'nombre_requerido' });
+  if (!ROLES_VALIDOS.includes(rol)) return res.status(400).json({ error: 'rol_invalido', validos: ROLES_VALIDOS });
+  if (b.id) {
+    // Edición
+    const id = parseInt(b.id, 10);
+    const existente = (await db.query('select id,rol from usuarios where id=$1', [id])).rows[0];
+    if (!existente) return res.status(404).json({ error: 'no_existe' });
+    // Regla: no permitas quedarte sin admins activos.
+    if ((existente.rol === 'admin') && (rol !== 'admin' || !activo)) {
+      const admins = (await db.query("select count(*)::int as n from usuarios where rol='admin' and activo=true and id<>$1", [id])).rows[0].n;
+      if (admins === 0) return res.status(409).json({ error: 'ultimo_admin', mensaje: 'No puedes dejar el sistema sin al menos un administrador activo.' });
+    }
+    await db.query('update usuarios set email=$2, nombre=$3, rol=$4, activo=$5 where id=$1', [id, email, nombre, rol, activo]);
+    await bit(req, 'usuario_editar', `id=${id} email=${email} rol=${rol} activo=${activo}`);
+    return res.json({ ok: true, id });
+  }
+  // Alta
+  const dup = (await db.query('select id from usuarios where lower(email)=lower($1)', [email])).rows[0];
+  if (dup) return res.status(409).json({ error: 'email_duplicado' });
+  const r = await db.query('insert into usuarios(email,nombre,rol,activo,creado_por) values($1,$2,$3,$4,$5) returning id', [email, nombre, rol, activo, req.user.nombre || req.user.email]);
+  await bit(req, 'usuario_alta', `id=${r.rows[0].id} email=${email} rol=${rol}`);
+  res.json({ ok: true, id: r.rows[0].id });
+});
+app.delete('/api/usuarios/:id', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const id = parseInt(req.params.id, 10);
+  if (id === req.user.sub) return res.status(409).json({ error: 'no_te_borres', mensaje: 'No puedes borrar tu propio usuario.' });
+  const u = (await db.query('select rol,email from usuarios where id=$1', [id])).rows[0];
+  if (!u) return res.status(404).json({ error: 'no_existe' });
+  if (u.rol === 'admin') {
+    const admins = (await db.query("select count(*)::int as n from usuarios where rol='admin' and activo=true and id<>$1", [id])).rows[0].n;
+    if (admins === 0) return res.status(409).json({ error: 'ultimo_admin', mensaje: 'No puedes borrar al último administrador activo.' });
+  }
+  await db.query('delete from usuarios where id=$1', [id]);
+  await bit(req, 'usuario_baja', `id=${id} email=${u.email}`);
+  res.json({ ok: true });
+});
 
 /* ============================================================================
    CATÁLOGOS

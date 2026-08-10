@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "polipay-conciliacion",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "port": 4174
+    }
+  ]
+}

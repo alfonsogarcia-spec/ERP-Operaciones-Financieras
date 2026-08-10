@@ -21,3 +21,5 @@ services:
         sync: false        # se pega en el dashboard de Render
       - key: DATABASE_URL
         sync: false        # se pega en el dashboard de Render (cadena de Supabase)
+      - key: GOOGLE_CLIENT_ID
+        sync: false        # OAuth Client ID de Google (Console → Credenciales)

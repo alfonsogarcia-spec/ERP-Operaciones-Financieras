@@ -17,6 +17,7 @@
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
     "express": "^4.19.2",
+    "google-auth-library": "^11.0.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.2.0",
     "pg": "^8.22.0",

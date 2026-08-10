@@ -5,11 +5,16 @@ create table if not exists usuarios (
   id            serial primary key,
   email         text unique not null,
   nombre        text not null,
-  rol           text not null default 'operador',   -- admin | operador | tesoreria
-  password_hash text not null,
+  rol           text not null default 'operador',   -- admin | operador | tesoreria | consulta
+  password_hash text,                                -- NULL desde v0.6 (login por Google)
   activo        boolean not null default true,
   creado_at     timestamptz default now()
 );
+-- v0.6: login por Google — password ya no es obligatoria. Trazabilidad de acceso.
+alter table usuarios alter column password_hash drop not null;
+alter table usuarios add column if not exists ultimo_login_at timestamptz;
+alter table usuarios add column if not exists creado_por      text;
+alter table usuarios add column if not exists foto_url        text;
 
 create table if not exists grupos (
   id_grupo      integer primary key,

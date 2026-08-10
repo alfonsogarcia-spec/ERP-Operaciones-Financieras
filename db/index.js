@@ -8,7 +8,6 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const bcrypt = require('bcryptjs');
 
 // Schema dedicado: TODAS las tablas viven aquí (nunca en public), para poder compartir
 // el mismo proyecto Supabase con gestion-operaciones sin colisiones.
@@ -74,23 +73,15 @@ async function migrate() {
   await seedUsuarios();
 }
 
-// Siembra 3 usuarios (admin/operador/tesorería) si no hay ninguno. Password inicial: Polipay2026
+// Bootstrap: garantiza que alfonso.garcia@polipay.io exista como admin activo,
+// para que pueda iniciar sesión con Google y desde allí administrar el resto.
+// No se siembran passwords (login es solo por Google desde v0.6).
 async function seedUsuarios() {
-  const { rows } = await backend.query('select count(*)::int as n from usuarios', []);
-  if (rows[0].n > 0) return;
-  const hash = bcrypt.hashSync('Polipay2026', 10);
-  const seed = [
-    ['alfonso.garcia@polipay.io', 'Alfonso García', 'admin'],
-    ['operador@polipay.io', 'Operador Demo', 'operador'],
-    ['tesoreria@polipay.io', 'Tesorería Demo', 'tesoreria'],
-  ];
-  for (const [email, nombre, rol] of seed) {
-    await backend.query(
-      'insert into usuarios(email,nombre,rol,password_hash) values($1,$2,$3,$4) on conflict(email) do nothing',
-      [email, nombre, rol, hash]
-    );
-  }
-  console.log('Usuarios sembrados (password inicial: Polipay2026).');
+  await backend.query(
+    "insert into usuarios(email,nombre,rol,activo,creado_por) values($1,$2,$3,true,'bootstrap') on conflict(email) do update set rol='admin', activo=true",
+    ['alfonso.garcia@polipay.io', 'Alfonso García', 'admin']
+  );
+  console.log('Admin bootstrap OK: alfonso.garcia@polipay.io');
 }
 
 function query(text, params) {

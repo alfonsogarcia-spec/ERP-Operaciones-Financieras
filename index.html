@@ -169,15 +169,14 @@
     <img class="brand-logo" src="/public/logo.png" alt="Polipay" />
     <h1>Polipay POS Settlement</h1>
     <p class="sub">Agregador / POS · MCEB · Broxel BIN Sponsor</p>
-    <label for="lgEmail">Correo</label>
-    <input id="lgEmail" type="email" placeholder="tu.correo@polipay.io" autocomplete="username" />
-    <label for="lgPass">Contraseña</label>
-    <input id="lgPass" type="password" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()" />
-    <div class="login-err" id="lgErr"></div>
-    <button class="btn" onclick="doLogin()">Entrar</button>
-    <div class="login-foot">v0.5.0 · backend + base de datos</div>
+    <p style="color:#667085;font:400 13px/1.5 Montserrat,Arial,sans-serif;margin:22px 0 14px">Solo los correos autorizados pueden entrar. Contacta a un administrador si necesitas acceso.</p>
+    <div id="gsiBtn" style="display:flex;justify-content:center;min-height:44px"></div>
+    <div class="login-err" id="lgErr" style="margin-top:14px"></div>
+    <div class="login-foot" style="margin-top:22px">Polipay POS Settlement · Autenticación con Google</div>
   </div>
 </div>
+<!-- Google Identity Services -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 
 <!-- APP -->
 <div class="layout" id="app" style="display:none">
@@ -245,22 +244,52 @@ async function descargar(path,filename){
 }
 
 /* ---------- roles ---------- */
-const ROLES={admin:'Administrador',operador:'Operador (Operaciones)',tesoreria:'Tesorería'};
-function can(cap){if(!SES)return false;const M={catalogos:['admin'],ingesta:['admin','operador'],corte:['admin','operador'],validar:['admin','tesoreria'],dispersar:['admin','tesoreria'],params:['admin'],ver:['admin','operador','tesoreria']};return (M[cap]||[]).includes(SES.rol);}
+const ROLES={admin:'Administrador',operador:'Operador (Operaciones)',tesoreria:'Tesorería',consulta:'Consulta (solo lectura)'};
+function can(cap){if(!SES)return false;const M={
+  catalogos:['admin'],ingesta:['admin','operador'],corte:['admin','operador'],
+  validar:['admin','tesoreria'],dispersar:['admin','tesoreria'],params:['admin'],
+  usuarios:['admin'],
+  ver:['admin','operador','tesoreria','consulta']
+};return (M[cap]||[]).includes(SES.rol);}
 
-/* ---------- login ---------- */
-async function doLogin(){
-  const email=$('#lgEmail').value.trim(), password=$('#lgPass').value;
-  const errBox=$('#lgErr'); errBox.className='login-err';
-  if(!email||!password){errBox.textContent='Escribe correo y contraseña';errBox.className='login-err show';return;}
+/* ---------- login (Google Sign-In) ---------- */
+let GOOGLE_CLIENT_ID=''; let GSI_TRIES=0;
+async function initLogin(){
   try{
-    const r=await withBusy('Entrando…',()=>fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,password})}).then(x=>x.json().then(j=>({ok:x.ok,j}))));
-    if(!r.ok){errBox.textContent=r.j.error==='credenciales'?'Correo o contraseña incorrectos':('Error: '+(r.j.error||''));errBox.className='login-err show';return;}
+    const cfg=await fetch('/api/config-publica').then(r=>r.json());
+    GOOGLE_CLIENT_ID=cfg.googleClientId||'';
+  }catch(_e){GOOGLE_CLIENT_ID='';}
+  if(!GOOGLE_CLIENT_ID){$('#lgErr').textContent='Sistema no configurado: falta GOOGLE_CLIENT_ID en el servidor.';$('#lgErr').className='login-err show';return;}
+  renderGoogleBtn();
+}
+function renderGoogleBtn(){
+  if(!window.google||!window.google.accounts||!window.google.accounts.id){
+    if(GSI_TRIES++<40) return setTimeout(renderGoogleBtn,150);
+    $('#lgErr').textContent='No se pudo cargar el servicio de Google. Revisa tu conexión.';$('#lgErr').className='login-err show';return;
+  }
+  google.accounts.id.initialize({client_id:GOOGLE_CLIENT_ID,callback:onGoogleCredential,ux_mode:'popup',auto_select:false});
+  google.accounts.id.renderButton($('#gsiBtn'),{theme:'filled_blue',size:'large',shape:'pill',text:'signin_with',logo_alignment:'left',width:280});
+}
+async function onGoogleCredential(response){
+  const errBox=$('#lgErr'); errBox.className='login-err';
+  try{
+    const r=await withBusy('Entrando…',()=>fetch('/api/login/google',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({credential:response.credential})}).then(x=>x.json().then(j=>({ok:x.ok,j}))));
+    if(!r.ok){
+      const e=r.j||{};
+      const msg={no_autorizado:'Este correo no tiene acceso al sistema. Pídeselo a un administrador.',inactivo:'Tu usuario está desactivado. Contacta a un administrador.',email_no_verificado:'Tu cuenta de Google no está verificada.',google_invalido:'La validación con Google falló. Intenta de nuevo.',google_no_configurado:'El servidor no tiene configurado Google. Contacta al administrador.'}[e.error]||e.mensaje||('Error: '+(e.error||''));
+      errBox.textContent=msg;errBox.className='login-err show';return;
+    }
     localStorage.setItem('cl_token',r.j.token); localStorage.setItem('cl_user',JSON.stringify(r.j.user)); SES=r.j.user;
     mountApp();
   }catch(e){errBox.textContent='No se pudo conectar con el servidor';errBox.className='login-err show';}
 }
-function logout(){localStorage.removeItem('cl_token');localStorage.removeItem('cl_user');SES=null;$('#app').style.display='none';$('#loginScreen').style.display='grid';}
+function logout(){
+  try{if(window.google&&google.accounts&&google.accounts.id)google.accounts.id.disableAutoSelect();}catch(_){}
+  localStorage.removeItem('cl_token');localStorage.removeItem('cl_user');SES=null;
+  $('#app').style.display='none';$('#loginScreen').style.display='grid';
+  // Redibuja el botón porque quedó sin listener tras logout
+  GSI_TRIES=0; renderGoogleBtn();
+}
 function forzarLogout(){logout();toast('Sesión expirada, vuelve a entrar','err');}
 
 /* ---------- modales / util UI ---------- */
@@ -304,16 +333,18 @@ const NAV=[
   {sec:'Sistema'},
   {id:'parametros',t:'Parámetros',ic:'ic_16'},
   {id:'destinatarios',t:'Destinatarios',ic:'ic_17'},
+  {id:'usuarios',t:'Usuarios',ic:'ic_20',cap:'usuarios'},
   {id:'bitacora',t:'Bitácora',ic:'ic_20'},
 ];
 function renderNav(){const nav=$('#nav');nav.innerHTML='';NAV.forEach(item=>{
   if(item.sec){nav.append(el('div',{class:'navlbl'},item.sec));return;}
+  if(item.cap && !can(item.cap)) return;
   nav.append(el('a',{class:VIEW===item.id?'active':'',onclick:()=>go(item.id)},el('img',{src:`/public/brand-icons/${item.ic}.png`,alt:''}),el('span',{},item.t)));});}
-const TITLES={dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],destinatarios:['Destinatarios','Correos que reciben el aviso automático de corte'],bitacora:['Bitácora','Trazabilidad de acciones']};
+const TITLES={dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],destinatarios:['Destinatarios','Correos que reciben el aviso automático de corte'],usuarios:['Usuarios','Quién tiene acceso a la plataforma y con qué rol'],bitacora:['Bitácora','Trazabilidad de acciones']};
 function go(v){VIEW=v;render();}
 async function render(){renderNav();const[t,s]=TITLES[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
   const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
-  try{await ({dashboard:vDashboard,ingesta:vIngesta,contracargos:vContracargos,cortes:vCortes,contable:vContable,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,destinatarios:vDestinatarios,bitacora:vBitacora}[VIEW]||vDashboard)(v);}
+  try{await ({dashboard:vDashboard,ingesta:vIngesta,contracargos:vContracargos,cortes:vCortes,contable:vContable,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,destinatarios:vDestinatarios,usuarios:vUsuarios,bitacora:vBitacora}[VIEW]||vDashboard)(v);}
   catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
 }
 function setView(v,node){v.innerHTML='';v.append(node);}
@@ -782,6 +813,51 @@ function editDestinatario(d){
   modal(isNew?'Nuevo destinatario':'Editar destinatario',body,foot);
 }
 
+/* ---------- USUARIOS (solo admin) ---------- */
+async function vUsuarios(v){
+  if(!can('usuarios')){v.innerHTML='';v.append(el('div',{class:'banner err'},'Solo un administrador puede gestionar usuarios.'));return;}
+  $('#pageAction').append(el('button',{class:'btn',onclick:()=>editUsuario()},'+ Usuario'));
+  const list=await api('GET','/api/usuarios');
+  v.innerHTML='';
+  const p=el('div',{class:'panel'});
+  const activos=list.filter(u=>u.activo).length;
+  p.append(el('h3',{},'Usuarios con acceso',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},activos+' activo(s) de '+list.length))));
+  p.append(el('div',{class:'banner',html:'La plataforma acepta login <b>solo con Google</b> y los correos aquí registrados. Roles: <b>admin</b> (todo, incluidos usuarios), <b>operador</b> (ingesta y cortes), <b>tesorería</b> (validar y dispersar), <b>consulta</b> (solo lectura).'}));
+  const rolBadge=r=>({admin:'<span class="badge v">Admin</span>',operador:'<span class="badge b">Operador</span>',tesoreria:'<span class="badge ok">Tesorería</span>',consulta:'<span class="badge g">Consulta</span>'}[r]||('<span class="pill">'+esc(r)+'</span>'));
+  const rows=list.map(u=>{
+    const st = u.activo ? '<span class="badge ok">Activo</span>' : '<span class="badge g">Inactivo</span>';
+    const last = u.ultimo_login_at ? new Date(u.ultimo_login_at).toLocaleString('es-MX') : '—';
+    return [esc(u.email),esc(u.nombre||''),rolBadge(u.rol),st,last,el('button',{class:'btn ghost sm',onclick:e=>{e.stopPropagation();editUsuario(u);}},'Editar')];
+  });
+  p.append(tableWrap(['Correo','Nombre','Rol','Estado','Último acceso',''],rows,{empty:'Sin usuarios registrados.'}));
+  v.append(p);
+}
+function editUsuario(u){
+  const isNew=!u; u=u||{};
+  const body=el('div',{});
+  const email=el('input',{type:'email',value:u.email||'',placeholder:'nombre@polipay.io'});
+  const nombre=el('input',{value:u.nombre||'',placeholder:'Nombre y apellido'});
+  const rol=el('select');
+  Object.entries(ROLES).forEach(([k,label])=>rol.append(el('option',{value:k},label)));
+  rol.value = u.rol || 'operador';
+  const activo=el('input',{type:'checkbox'}); activo.checked = u.activo !== false;
+  body.append(fld('Correo (Google)',email),fld('Nombre',nombre),fld('Rol',rol),el('label',{class:'field',style:'flex-direction:row;align-items:center;gap:8px'},activo,el('span',{},'Activo (puede iniciar sesión)')));
+  body.append(el('div',{class:'req-note'},'El correo debe coincidir exactamente con la cuenta Google del usuario. Marcar como inactivo bloquea el acceso sin borrar el registro.'));
+  const foot=el('div',{});
+  if(!isNew && u.id !== (SES&&SES.id)) foot.append(el('button',{class:'btn danger',onclick:async()=>{
+    if(!confirm('¿Eliminar a '+u.email+'? Esto revoca su acceso definitivamente.'))return;
+    try{await api('DELETE','/api/usuarios/'+u.id);closeModal();toast('Usuario eliminado','ok');render();}
+    catch(e){toast(e.data&&e.data.mensaje?e.data.mensaje:errMsg(e),'err');}
+  }},'Eliminar'),el('div',{style:'flex:1'}));
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    try{
+      await api('POST','/api/usuarios',{id:u.id,email:email.value,nombre:nombre.value,rol:rol.value,activo:activo.checked});
+      closeModal(); toast('Guardado','ok'); render();
+    }catch(e){toast(e.data&&e.data.mensaje?e.data.mensaje:(e.data&&e.data.error==='email_duplicado'?'Ese correo ya está registrado':errMsg(e)),'err');}
+  }},'Guardar'));
+  modal(isNew?'Nuevo usuario':'Editar usuario',body,foot);
+}
+
 async function vBitacora(v){
   const b=await api('GET','/api/bitacora');v.innerHTML='';
   const p=el('div',{class:'panel'});p.append(el('h3',{},'Bitácora de acciones'));
@@ -812,6 +888,7 @@ async function boot(){
   const tok=TOKEN();
   if(tok){try{const u=await api('GET','/api/yo');SES=u;mountApp();return;}catch(_){logout();}}
   $('#loginScreen').style.display='grid';
+  initLogin();
 }
 boot();
 </script>
