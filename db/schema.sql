@@ -243,6 +243,19 @@ create table if not exists alertas_dedup (
 );
 create index if not exists idx_alertas_dedup on alertas_dedup(regla_id, clave, emitida_at desc);
 
+-- Fase 3.3 · Snapshots WORM de la bitácora. Un registro por día: qué se
+-- envió, hash del contenido, timestamp. Impide re-enviar el mismo día.
+create table if not exists worm_snapshots (
+  fecha         date primary key,
+  n_registros   integer not null,
+  hash_sha256   text not null,
+  bytes_cifrado integer not null,
+  enviado_a     text,                       -- lista de emails destino
+  message_id    text,
+  enviado_at    timestamptz default now(),
+  origen        text default 'auto'         -- 'auto' | 'manual'
+);
+
 -- ============================================================================
 -- Fase 2 · Cifrado en reposo (columnas paralelas). Todas nullable durante la
 -- migración dual-write; el cutover posterior las hará source-of-truth y

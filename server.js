@@ -27,6 +27,7 @@ const db = require('./db/index.js');
 const X = require('./lib/excel.js');
 const C = require('./lib/crypto.js');
 const AL = require('./lib/alertas.js');
+const WORM = require('./lib/worm.js');
 if (!C.ready()) console.warn('⚠  Cifrado app-layer NO configurado (falta ENCRYPTION_KEY_V1 o HMAC_PEPPER). Dual-write escribirá "plain:" en las columnas cifradas.');
 
 const app = express();
@@ -1616,6 +1617,138 @@ app.post('/api/alertas/prueba', auth, requiereRol('admin'), async (req, res) => 
 });
 
 /* ============================================================================
+   WORM · Snapshot diario de bitácora (Sprint 3.3). Sin AWS: se envía como
+   adjunto cifrado por correo a los admins. Reusa ENCRYPTION_KEY_V1.
+   ========================================================================= */
+function armarWormHTML(s, logoSrc) {
+  const brand = '#051B3B', accent = '#3083F4', muted = '#667085', line = '#e5e7eb', ink = '#1A1A1A';
+  const logo = logoSrc || 'cid:polipay-logo';
+  const subject = `[WORM] Bitácora del ${s.fecha} · ${s.n_registros} registros`;
+  const cuando = new Date().toLocaleString('es-MX');
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${escapeHtml(subject)}</title></head>
+<body style="margin:0;padding:0;background:#f4f6fb;font-family:Montserrat,Arial,sans-serif;color:${ink}">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f6fb;padding:24px 0"><tr><td align="center">
+    <table role="presentation" width="640" cellspacing="0" cellpadding="0" style="max-width:640px;background:#fff;border:1px solid ${line};border-radius:12px;overflow:hidden">
+      <tr><td style="background:#ffffff;padding:26px 32px;border-bottom:1px solid ${line}">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+          <td><img src="${logo}" alt="Polipay" height="34" style="display:block;height:34px;border:0"></td>
+          <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:${brand};letter-spacing:.12em;text-transform:uppercase">Polipay POS Settlement</td>
+        </tr></table>
+      </td></tr>
+      <tr><td style="height:6px;background:${accent}"></td></tr>
+      <tr><td style="padding:34px 40px 8px">
+        <div style="font:700 12px/1 Montserrat,Arial,sans-serif;color:${accent};letter-spacing:.14em;text-transform:uppercase;margin:0 0 10px">WORM · Snapshot de auditoría</div>
+        <div style="font:700 22px/1.25 Montserrat,Arial,sans-serif;color:${brand};margin:0 0 8px">Bitácora del ${escapeHtml(s.fecha)}</div>
+        <div style="font:400 14px/1.6 Montserrat,Arial,sans-serif;color:${muted};margin:0 0 22px">
+          Copia inmutable de la bitácora del día para retención de auditoría. Archiva este correo (o configura auto-archive en Gmail) para conservar la evidencia por al menos 90 días.
+        </div>
+
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid ${line};border-radius:10px;overflow:hidden;margin:0 0 24px">
+          <tr><td style="padding:14px 18px;background:#f9fafb;border-bottom:1px solid ${line};font:700 11px/1 Montserrat,Arial,sans-serif;color:${muted};letter-spacing:.12em;text-transform:uppercase">Contenido</td></tr>
+          <tr><td style="padding:14px 18px">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font:400 13px/1.7 Montserrat,Arial,sans-serif;color:${ink}">
+              <tr><td width="200" style="color:${muted}">Día cubierto</td><td><b>${escapeHtml(s.fecha)}</b></td></tr>
+              <tr><td style="color:${muted}">Registros</td><td><b>${s.n_registros}</b></td></tr>
+              <tr><td style="color:${muted}">SHA-256 (plaintext)</td><td style="font-family:monospace;font-size:11px;word-break:break-all">${escapeHtml(s.hash)}</td></tr>
+              <tr><td style="color:${muted}">Tamaño cifrado</td><td>${s.bytes} bytes</td></tr>
+              <tr><td style="color:${muted}">Origen</td><td>${escapeHtml(s.origen || 'auto')}</td></tr>
+              <tr><td style="color:${muted}">Enviado</td><td>${escapeHtml(cuando)}</td></tr>
+            </table>
+          </td></tr>
+        </table>
+
+        <div style="font:700 13px/1 Montserrat,Arial,sans-serif;color:${brand};margin:0 0 10px;letter-spacing:.05em;text-transform:uppercase">Cómo descifrar el adjunto</div>
+        <div style="font:400 13px/1.7 Montserrat,Arial,sans-serif;color:${ink};margin:0 0 12px">
+          El adjunto <code>bitacora_${escapeHtml(s.fecha)}.jsonl.enc</code> está cifrado con AES-256-GCM. Para leerlo necesitas la variable <code>ENCRYPTION_KEY_V1</code> (guardada en Render, respalda una copia en 1Password).
+        </div>
+        <pre style="background:#0b1220;color:#e5e7eb;font:400 11px/1.5 Menlo,monospace;padding:14px 16px;border-radius:8px;overflow-x:auto;margin:0 0 22px">ENCRYPTION_KEY_V1=&lt;pega tu llave&gt; \\
+node -e "
+const fs=require('fs'), c=require('crypto');
+const s=fs.readFileSync('bitacora_${escapeHtml(s.fecha)}.jsonl.enc','utf8').split(':');
+const iv=Buffer.from(s[1],'base64'), ct=Buffer.from(s[2],'base64'), tag=Buffer.from(s[3],'base64');
+const d=c.createDecipheriv('aes-256-gcm',Buffer.from(process.env.ENCRYPTION_KEY_V1,'hex'),iv);
+d.setAuthTag(tag);
+console.log(Buffer.concat([d.update(ct),d.final()]).toString('utf8'));
+" &gt; bitacora_${escapeHtml(s.fecha)}.jsonl</pre>
+
+        <div style="font:400 12px/1.6 Montserrat,Arial,sans-serif;color:${muted};margin:20px 0 0;padding:14px 16px;background:#f9fafb;border:1px solid ${line};border-radius:8px">
+          <b style="color:${ink}">Integridad:</b> el SHA-256 del texto plano queda registrado tanto aquí como en la tabla worm_snapshots. Cualquier cambio retroactivo en la bitácora se detecta comparando ese hash con el que da el descifrado.
+        </div>
+      </td></tr>
+      <tr><td style="padding:22px 32px 26px;border-top:1px solid ${line};font:400 12px/1.6 Montserrat,Arial,sans-serif;color:${muted}">
+        Sistema: polipay-conciliacion-liquidacion.onrender.com · No respondas a este correo.
+      </td></tr>
+      <tr><td style="background:${brand};padding:14px 32px">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+          <td style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">Polipay POS Settlement</td>
+          <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">ops.agregador@polipay.io</td>
+        </tr></table>
+      </td></tr>
+    </table>
+  </td></tr></table>
+</body></html>`;
+  const textFallback = `[WORM] Bitácora del ${s.fecha} · ${s.n_registros} registros · SHA-256 ${s.hash}. Adjunto cifrado en bitacora_${s.fecha}.jsonl.enc — usa ENCRYPTION_KEY_V1 para descifrar.`;
+  return { subject, html, textFallback };
+}
+
+// Dependencias reutilizables para lib/worm.js
+function wormDeps() {
+  return {
+    db, C,
+    adminEmails: async () => {
+      const rows = (await db.query("select email, email_cifrado, nombre, nombre_cifrado from usuarios where rol='admin' and activo=true")).rows;
+      return rows.map(u => {
+        const email = descifraTexto(u.email_cifrado, u.email);
+        const nombre = descifraTexto(u.nombre_cifrado, u.nombre) || email;
+        return nombre ? `"${nombre}" <${email}>` : email;
+      });
+    },
+    armarWormHTML,
+    sendSES,
+    inlineImages: (function () {
+      try { const buf = require('fs').readFileSync(path.join(__dirname, 'public', 'logo.png')); return [{ cid: 'polipay-logo', filename: 'polipay-logo.png', contentType: 'image/png', content: buf }]; }
+      catch (_e) { return []; }
+    })(),
+  };
+}
+
+// Preview HTML del correo WORM (admin) — sin datos sensibles, solo diseño.
+app.get('/api/worm/preview.html', auth, requiereRol('admin'), (_req, res) => {
+  const { html } = armarWormHTML({
+    fecha: WORM.isoDia(WORM.ayerUTC()),
+    n_registros: 42,
+    hash: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2',
+    bytes: 12345,
+    origen: 'preview',
+  }, '/public/logo.png');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
+
+// Ejecuta el snapshot manualmente (admin). fecha opcional (YYYY-MM-DD); default ayer UTC.
+app.post('/api/worm/enviar', auth, requiereRol('admin'), async (req, res) => {
+  if (!sesEnabled()) return res.status(503).json({ error: 'ses_no_configurado' });
+  const fecha = String(req.query.fecha || req.body?.fecha || WORM.isoDia(WORM.ayerUTC()));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return res.status(400).json({ error: 'fecha_invalida' });
+  try {
+    const r = await WORM.ejecutar(wormDeps(), fecha, 'manual');
+    if (!r.ok) return res.status(409).json(r);
+    await bit(req, 'worm_enviar', `${fecha}: ${r.n_registros} registros → ${r.enviados_a} admin(s)`, { resource_type: 'worm', resource_id: fecha });
+    res.json(r);
+  } catch (e) {
+    await bit(req, 'worm_enviar_error', `${fecha}: ${e.message}`, { success: false });
+    res.status(500).json({ error: 'worm_error', mensaje: e.message });
+  }
+});
+
+// Estado: últimos snapshots + días pendientes desde el más antiguo con bitácora.
+app.get('/api/worm/status', auth, requiereRol('admin'), async (_req, res) => {
+  const snaps = (await db.query('select fecha::text as fecha, n_registros, hash_sha256, bytes_cifrado, message_id, enviado_at, origen from worm_snapshots order by fecha desc limit 60')).rows;
+  const cont = (await db.query('select count(*)::int as n from worm_snapshots')).rows[0].n;
+  res.json({ total: cont, ultimos: snaps, habilitado: String(process.env.WORM_HABILITADO || 'true').toLowerCase() !== 'false' });
+});
+
+/* ============================================================================
    DESTINATARIOS del correo de notificación
    ========================================================================= */
 app.get('/api/destinatarios', auth, async (req, res) => {
@@ -1927,4 +2060,6 @@ app.get('*', (req, res) => {
   try { const kind = await db.initDB(); console.log('Base de datos:', kind); }
   catch (e) { console.error('No se pudo inicializar la BD:', e.message); }
   app.listen(PORT, () => console.log(`Polipay POS Settlement en http://localhost:${PORT}`));
+  // Agenda el snapshot WORM diario (best-effort; si SES no está o falla, se reintenta).
+  if (sesEnabled()) WORM.agendar(wormDeps());
 })();
