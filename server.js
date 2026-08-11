@@ -334,7 +334,9 @@ app.post('/api/login/google', loginLimiter, async (req, res) => {
     [u.id, nombre, fotoUrl, C.encrypt(nombre), C.hmacEmail(u.email), C.encrypt(u.email)]
   );
   u.nombre = nombre; u.foto_url = fotoUrl;
-  await bit(req, 'login_google', email, { actor: { nombre: u.nombre, rol: u.rol }, resource_type: 'usuario', resource_id: u.id });
+  // Registrar amr para tener visibilidad de qué logins usaron MFA reforzado por Google.
+  const amrStr = Array.isArray(payload.amr) && payload.amr.length ? payload.amr.join(',') : 'none';
+  await bit(req, 'login_google', `${email} · amr=${amrStr} · hd=${payload.hd || '—'}`, { actor: { nombre: u.nombre, rol: u.rol }, resource_type: 'usuario', resource_id: u.id });
   res.json({ token: firmar(u), user: safeUser(u) });
 });
 app.get('/api/yo', auth, (req, res) => res.json({ id: req.user.sub, nombre: req.user.nombre, email: req.user.email, rol: req.user.rol }));
