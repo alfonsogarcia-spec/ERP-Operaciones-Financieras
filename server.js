@@ -122,7 +122,7 @@ function validaArchivo(req, res, next) {
 const N = v => (v == null || v === '') ? null : Number(v);
 const nrm = s => String(s == null ? '' : s).trim().toLowerCase();
 const safeUser = u => ({ id: u.id, email: u.email, nombre: u.nombre, rol: u.rol, foto_url: u.foto_url || null });
-const ROLES = { admin: 'Administrador', operador: 'Operador (Operaciones)', tesoreria: 'Tesorería', consulta: 'Consulta (solo lectura)' };
+const ROLES = { admin: 'Administrador', operador: 'Operador (Operaciones)', tesoreria: 'Tesorería (valida)', bancos: 'Bancos (dispersa y cierra)', consulta: 'Consulta (solo lectura)' };
 const ROLES_VALIDOS = Object.keys(ROLES);
 
 // jti único por sesión — permite revocarla al cerrar sesión (blacklist en memoria).
@@ -821,7 +821,8 @@ app.post('/api/cortes/:id/:accion', auth, async (req, res, next) => {
   if (req.params.accion === 'notificar') return next();
   if (!dbReady(res)) return;
   const accion = req.params.accion; if (!['validar', 'dispersar', 'cerrar'].includes(accion)) return res.status(404).json({ error: 'accion' });
-  const rolOk = accion === 'validar' ? ['admin', 'tesoreria'] : accion === 'dispersar' ? ['admin', 'tesoreria'] : ['admin', 'tesoreria'];
+  // Segregación de funciones: tesorería valida, bancos dispersa y cierra. Admin puede todo.
+  const rolOk = accion === 'validar' ? ['admin', 'tesoreria'] : accion === 'dispersar' ? ['admin', 'bancos'] : ['admin', 'bancos'];
   if (!rolOk.includes(req.user.rol)) return res.status(403).json({ error: 'rol_no_autorizado', necesita: rolOk });
   const c = (await db.query('select * from cortes where id_corte=$1', [parseInt(req.params.id, 10)])).rows[0];
   if (!c) return res.status(404).json({ error: 'no_existe' });
@@ -1418,10 +1419,17 @@ function permisosPorRol(rol) {
       'No puede validar, dispersar ni editar catálogos.',
     ],
     tesoreria: [
-      'Validar, dispersar y cerrar los cortes que generó Operaciones.',
+      'Validar los cortes que generó Operaciones (Borrador → Validado).',
       'Notificar el corte a los destinatarios por correo (📧).',
       'Ver todos los cortes, catálogos y bitácora.',
-      'No puede generar cortes ni cargar transacciones.',
+      'No puede generar, dispersar ni cerrar cortes.',
+    ],
+    bancos: [
+      'Confirmar dispersión de cortes validados (Validado → Dispersado).',
+      'Cerrar el corte una vez completada la dispersión (Dispersado → Cerrado).',
+      'Notificar el corte a los destinatarios por correo (📧).',
+      'Ver todos los cortes, catálogos y bitácora.',
+      'No puede generar cortes ni validar.',
     ],
     consulta: [
       'Solo lectura: puede ver toda la operación.',
@@ -1481,6 +1489,24 @@ function armarBienvenidaHTML(user, invitadoPor, opts) {
           <ul style="margin:0 0 24px;padding:0 0 0 18px;font:400 13px/1.7 Montserrat,Arial,sans-serif;color:${ink}">
             ${bullets.map(b => `<li style="margin:2px 0">${escapeHtml(b)}</li>`).join('')}
           </ul>
+
+          ${MFA_REQUIRED_ROLES.includes(String(user.rol).toLowerCase()) ? `
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #F0C674;background:#FFFBEB;border-radius:10px;margin:0 0 24px">
+            <tr><td style="padding:16px 18px">
+              <div style="font:700 12px/1 Montserrat,Arial,sans-serif;color:#B45309;letter-spacing:.12em;text-transform:uppercase;margin:0 0 8px">⚠ Verificación en dos pasos requerida</div>
+              <div style="font:400 13px/1.6 Montserrat,Arial,sans-serif;color:${ink};margin:0 0 12px">
+                Tu rol <b>${escapeHtml(rolLabel)}</b> requiere que tu cuenta Google tenga <b>verificación en dos pasos (2FA)</b> activa. Sin esto, el sistema puede rechazar tu inicio de sesión.
+              </div>
+              <div style="font:700 12px/1 Montserrat,Arial,sans-serif;color:${brand};margin:0 0 8px;letter-spacing:.05em;text-transform:uppercase">Antes de tu primer login</div>
+              <ol style="margin:0;padding:0 0 0 18px;font:400 13px/1.7 Montserrat,Arial,sans-serif;color:${ink}">
+                <li>Abre <a href="https://myaccount.google.com/signinoptions/two-step-verification" style="color:${accent}">myaccount.google.com/signinoptions/two-step-verification</a></li>
+                <li>Haz clic en <b>Empezar</b> y sigue el asistente (recomendado: usar Google Authenticator).</li>
+                <li>Verifica que quede como <b>Activada</b>.</li>
+                <li>Regresa a este correo y entra a Polipay POS Settlement.</li>
+              </ol>
+            </td></tr>
+          </table>
+          ` : ''}
 
           <div style="font:700 13px/1 Montserrat,Arial,sans-serif;color:${brand};margin:0 0 10px;letter-spacing:.05em;text-transform:uppercase">Cómo entrar</div>
           <ol style="margin:0 0 22px;padding:0 0 0 18px;font:400 13px/1.7 Montserrat,Arial,sans-serif;color:${ink}">
@@ -1946,7 +1972,7 @@ async function armarAdjuntosCorte(idCorte) {
   return adj;
 }
 
-app.post('/api/cortes/:id/notificar', auth, requiereRol('admin', 'tesoreria'), async (req, res) => {
+app.post('/api/cortes/:id/notificar', auth, requiereRol('admin', 'tesoreria', 'bancos'), async (req, res) => {
   if (!dbReady(res)) return;
   if (!sesEnabled()) return res.status(503).json({ error: 'ses_no_configurado', mensaje: 'Configura AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY y AWS_REGION en el entorno del servidor.' });
   const idCorte = parseInt(req.params.id, 10);

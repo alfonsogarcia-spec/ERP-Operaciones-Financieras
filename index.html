@@ -249,12 +249,14 @@ async function descargar(path,filename){
 }
 
 /* ---------- roles ---------- */
-const ROLES={admin:'Administrador',operador:'Operador (Operaciones)',tesoreria:'Tesorería',consulta:'Consulta (solo lectura)'};
+const ROLES={admin:'Administrador',operador:'Operador (Operaciones)',tesoreria:'Tesorería (valida)',bancos:'Bancos (dispersa y cierra)',consulta:'Consulta (solo lectura)'};
 function can(cap){if(!SES)return false;const M={
   catalogos:['admin'],ingesta:['admin','operador'],corte:['admin','operador'],
-  validar:['admin','tesoreria'],dispersar:['admin','tesoreria'],params:['admin'],
+  validar:['admin','tesoreria'],dispersar:['admin','bancos'],cerrar:['admin','bancos'],
+  notificar:['admin','tesoreria','bancos'],
+  params:['admin'],
   usuarios:['admin'],
-  ver:['admin','operador','tesoreria','consulta']
+  ver:['admin','operador','tesoreria','bancos','consulta']
 };return (M[cap]||[]).includes(SES.rol);}
 
 /* ---------- login (Google Sign-In) ---------- */
@@ -587,8 +589,8 @@ async function abrirCorte(id){
   acc.append(el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/cortes/'+id+'/reporte.xlsx','reporte_corte_'+id+'.xlsx')},'⬇ Reporte por cliente'));
   const trans=async(a,label)=>{try{await api('POST','/api/cortes/'+id+'/'+a);toast(label,'ok');abrirCorte(id);}catch(e){toast(errMsg(e),'err');}};
   if(c.estado==='Borrador'&&can('validar'))acc.append(el('button',{class:'btn ok sm',disabled:(!c.cuadra||c.bloqueos)?true:null,onclick:()=>trans('validar','Corte validado')},'Validar corte'));
-  // Botón Notificar (envía el informe por correo). Disponible a admin/tesorería en cualquier estado.
-  if(can('validar')) acc.append(el('button',{class:'btn sm',style:'background:#0F56AC;color:#fff',onclick:async()=>{
+  // Botón Notificar (envía el informe por correo). Disponible a admin/tesorería/bancos en cualquier estado.
+  if(can('notificar')) acc.append(el('button',{class:'btn sm',style:'background:#0F56AC;color:#fff',onclick:async()=>{
     if(!confirm('¿Enviar el informe de este corte por correo a los destinatarios activos?')) return;
     try{
       const r=await withBusy('Enviando correo…',()=>api('POST','/api/cortes/'+id+'/notificar'));
@@ -602,7 +604,7 @@ async function abrirCorte(id){
     }
   }},'📧 Notificar'));
   if(c.estado==='Validado'&&can('dispersar'))acc.append(el('button',{class:'btn sm',style:'background:var(--violet);color:#fff',onclick:()=>trans('dispersar','Marcado como dispersado')},'Marcar dispersado'));
-  if(c.estado==='Dispersado'&&can('validar'))acc.append(el('button',{class:'btn sm',onclick:()=>trans('cerrar','Corte cerrado')},'Cerrar corte (inmutable)'));
+  if(c.estado==='Dispersado'&&can('cerrar'))acc.append(el('button',{class:'btn sm',onclick:()=>trans('cerrar','Corte cerrado')},'Cerrar corte (inmutable)'));
   pa.append(acc);
   pa.append(el('div',{class:'foot-links'},`Creado por ${esc(c.creado_por||'—')}`,c.validado_por?`· Validado por ${esc(c.validado_por)}`:'',c.dispersado_por?`· Dispersado por ${esc(c.dispersado_por)}`:''));
   v.append(pa);
@@ -830,7 +832,7 @@ async function vUsuarios(v){
   const activos=list.filter(u=>u.activo).length;
   p.append(el('h3',{},'Usuarios con acceso',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},activos+' activo(s) de '+list.length))));
   p.append(el('div',{class:'banner',html:'La plataforma acepta login <b>solo con Google</b> y los correos aquí registrados. Roles: <b>admin</b> (todo, incluidos usuarios), <b>operador</b> (ingesta y cortes), <b>tesorería</b> (validar y dispersar), <b>consulta</b> (solo lectura).'}));
-  const rolBadge=r=>({admin:'<span class="badge v">Admin</span>',operador:'<span class="badge b">Operador</span>',tesoreria:'<span class="badge ok">Tesorería</span>',consulta:'<span class="badge g">Consulta</span>'}[r]||('<span class="pill">'+esc(r)+'</span>'));
+  const rolBadge=r=>({admin:'<span class="badge v">Admin</span>',operador:'<span class="badge b">Operador</span>',tesoreria:'<span class="badge ok">Tesorería</span>',bancos:'<span class="badge err">Bancos</span>',consulta:'<span class="badge g">Consulta</span>'}[r]||('<span class="pill">'+esc(r)+'</span>'));
   const rows=list.map(u=>{
     const st = u.activo ? '<span class="badge ok">Activo</span>' : '<span class="badge g">Inactivo</span>';
     const last = u.ultimo_login_at ? new Date(u.ultimo_login_at).toLocaleString('es-MX') : '—';
