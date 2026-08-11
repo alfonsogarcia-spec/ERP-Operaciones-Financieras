@@ -22,6 +22,17 @@ if (!GOOGLE_CLIENT_ID) console.warn('⚠  GOOGLE_CLIENT_ID no definido: el login
 // Restricción opcional al dominio Google Workspace (ej. ALLOWED_HD=polipay.io).
 // Si está vacía, cualquier cuenta Google puede intentar (whitelist en BD sigue mandando).
 const ALLOWED_HD = (process.env.ALLOWED_HD || '').trim().toLowerCase();
+// Roles que requieren MFA (ej. MFA_REQUIRED_ROLES=admin,tesoreria).
+// Vacío = MFA no requerida. La verificación es best-effort a nivel app (Google puede
+// omitir la claim amr en el ID token); el enforcement 100% real vive en Google Workspace.
+const MFA_REQUIRED_ROLES = String(process.env.MFA_REQUIRED_ROLES || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+// Métodos que consideramos MFA válidos si aparecen en payload.amr.
+const MFA_VALID_METHODS = new Set(['mfa', 'sms', 'otp', 'hwk', 'wia', 'swk', 'tel']);
+function tieneMFA(payload) {
+  if (!payload) return false;
+  const amr = Array.isArray(payload.amr) ? payload.amr : [];
+  return amr.some(m => MFA_VALID_METHODS.has(String(m).toLowerCase()));
+}
 const E = require('./engine.js');
 const db = require('./db/index.js');
 const X = require('./lib/excel.js');
@@ -300,6 +311,20 @@ app.post('/api/login/google', loginLimiter, async (req, res) => {
   if (!u.activo) {
     await bit(req, 'login_fail', `inactivo: ${email}`, { success: false, actor: { nombre: u.nombre || email, rol: u.rol }, resource_type: 'usuario', resource_id: u.id });
     return res.status(403).json({ error: 'inactivo', mensaje: 'Tu usuario está desactivado. Contacta a un administrador.' });
+  }
+  // Enforcement MFA por rol. Se rechaza solo si (a) el rol del usuario está en la lista
+  // Y (b) la claim amr del ID token no incluye un método MFA. Si Google no envía amr
+  // (sesión persistente), se hace *warning* pero se permite entrar — la verificación
+  // dura vive en Google Workspace (admin.google.com forzar 2-Step Verification).
+  if (MFA_REQUIRED_ROLES.length && MFA_REQUIRED_ROLES.includes(String(u.rol).toLowerCase())) {
+    const amrPresente = Array.isArray(payload.amr) && payload.amr.length > 0;
+    if (amrPresente && !tieneMFA(payload)) {
+      await bit(req, 'login_fail', `mfa_requerido: ${email} rol=${u.rol}`, { success: false, actor: { nombre: u.nombre || email, rol: u.rol }, resource_type: 'usuario', resource_id: u.id });
+      return res.status(403).json({
+        error: 'mfa_requerido',
+        mensaje: `Tu rol (${u.rol}) requiere verificación en dos pasos activa en tu cuenta Google. Actívala en https://myaccount.google.com/signinoptions/two-step-verification y vuelve a iniciar sesión.`,
+      });
+    }
   }
   // Actualiza nombre/foto/last-login (solo campos suaves; email y rol no se tocan).
   const nombre = u.nombre || payload.name || email;

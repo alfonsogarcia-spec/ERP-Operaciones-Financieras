@@ -281,7 +281,7 @@ async function onGoogleCredential(response){
     const r=await withBusy('Entrando…',()=>fetch('/api/login/google',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({credential:response.credential})}).then(x=>x.json().then(j=>({ok:x.ok,j}))));
     if(!r.ok){
       const e=r.j||{};
-      const msg={no_autorizado:'Este correo no tiene acceso al sistema. Pídeselo a un administrador.',inactivo:'Tu usuario está desactivado. Contacta a un administrador.',email_no_verificado:'Tu cuenta de Google no está verificada.',google_invalido:'La validación con Google falló. Intenta de nuevo.',google_no_configurado:'El servidor no tiene configurado Google. Contacta al administrador.'}[e.error]||e.mensaje||('Error: '+(e.error||''));
+      const msg={no_autorizado:'Este correo no tiene acceso al sistema. Pídeselo a un administrador.',inactivo:'Tu usuario está desactivado. Contacta a un administrador.',email_no_verificado:'Tu cuenta de Google no está verificada.',google_invalido:'La validación con Google falló. Intenta de nuevo.',google_no_configurado:'El servidor no tiene configurado Google. Contacta al administrador.',mfa_requerido:'Tu rol requiere verificación en dos pasos activa en tu cuenta Google. Actívala en myaccount.google.com y vuelve a intentar.',dominio_no_permitido:'Solo cuentas del dominio autorizado pueden iniciar sesión.'}[e.error]||e.mensaje||('Error: '+(e.error||''));
       errBox.textContent=msg;errBox.className='login-err show';return;
     }
     localStorage.setItem('cl_token',r.j.token); localStorage.setItem('cl_user',JSON.stringify(r.j.user)); SES=r.j.user;
