@@ -312,17 +312,24 @@ app.post('/api/login/google', loginLimiter, async (req, res) => {
     await bit(req, 'login_fail', `inactivo: ${email}`, { success: false, actor: { nombre: u.nombre || email, rol: u.rol }, resource_type: 'usuario', resource_id: u.id });
     return res.status(403).json({ error: 'inactivo', mensaje: 'Tu usuario está desactivado. Contacta a un administrador.' });
   }
-  // Enforcement MFA por rol. Se rechaza solo si (a) el rol del usuario está en la lista
-  // Y (b) la claim amr del ID token no incluye un método MFA. Si Google no envía amr
-  // (sesión persistente), se hace *warning* pero se permite entrar — la verificación
-  // dura vive en Google Workspace (admin.google.com forzar 2-Step Verification).
+  // Enforcement MFA estricto por rol. Se rechaza si:
+  //   (a) amr contiene métodos NO-MFA (ej. solo password) → usuario sí tiene sesión pero sin 2FA
+  //   (b) amr está ausente por completo → Google no confirmó el método (sesión persistente)
+  // El caso (b) es común cuando Google reusa una sesión existente. Para conseguir un amr
+  // "fresco" el usuario debe cerrar sesión de Google (accounts.google.com/logout) y volver
+  // a entrar seleccionando la cuenta explícitamente.
   if (MFA_REQUIRED_ROLES.length && MFA_REQUIRED_ROLES.includes(String(u.rol).toLowerCase())) {
     const amrPresente = Array.isArray(payload.amr) && payload.amr.length > 0;
-    if (amrPresente && !tieneMFA(payload)) {
-      await bit(req, 'login_fail', `mfa_requerido: ${email} rol=${u.rol}`, { success: false, actor: { nombre: u.nombre || email, rol: u.rol }, resource_type: 'usuario', resource_id: u.id });
+    const conMFA = tieneMFA(payload);
+    if (!amrPresente || !conMFA) {
+      const motivo = !amrPresente ? 'mfa_sin_amr' : 'mfa_sin_metodo';
+      await bit(req, 'login_fail', `${motivo}: ${email} rol=${u.rol} amr=${amrPresente ? payload.amr.join(',') : 'none'}`, { success: false, actor: { nombre: u.nombre || email, rol: u.rol }, resource_type: 'usuario', resource_id: u.id });
       return res.status(403).json({
         error: 'mfa_requerido',
-        mensaje: `Tu rol (${u.rol}) requiere verificación en dos pasos activa en tu cuenta Google. Actívala en https://myaccount.google.com/signinoptions/two-step-verification y vuelve a iniciar sesión.`,
+        motivo,
+        mensaje: !amrPresente
+          ? `Tu rol (${u.rol}) requiere confirmación de verificación en dos pasos en cada inicio de sesión. Google no envió esa confirmación (probablemente porque reusó una sesión existente). Cierra completamente tu sesión de Google en https://accounts.google.com/Logout y vuelve a entrar seleccionando la cuenta. Si aún no tienes 2FA activa, actívala primero en https://myaccount.google.com/signinoptions/two-step-verification.`
+          : `Tu rol (${u.rol}) requiere verificación en dos pasos activa en tu cuenta Google. Actívala en https://myaccount.google.com/signinoptions/two-step-verification y vuelve a iniciar sesión.`,
       });
     }
   }
