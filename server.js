@@ -27,7 +27,9 @@ const ALLOWED_HD = (process.env.ALLOWED_HD || '').trim().toLowerCase();
 // omitir la claim amr en el ID token); el enforcement 100% real vive en Google Workspace.
 const MFA_REQUIRED_ROLES = String(process.env.MFA_REQUIRED_ROLES || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 // Métodos que consideramos MFA válidos si aparecen en payload.amr.
-const MFA_VALID_METHODS = new Set(['mfa', 'sms', 'otp', 'hwk', 'wia', 'swk', 'tel']);
+// mfa/otp/sms/tel = 2FA clásico. hwk/wia/swk = passkeys (hardware/Windows Hello/software).
+// phr = phishing-resistant (passkeys biométricos). face/fpt = biométricos independientes.
+const MFA_VALID_METHODS = new Set(['mfa', 'sms', 'otp', 'hwk', 'wia', 'swk', 'tel', 'phr', 'face', 'fpt', 'pop']);
 function tieneMFA(payload) {
   if (!payload) return false;
   const amr = Array.isArray(payload.amr) ? payload.amr : [];
