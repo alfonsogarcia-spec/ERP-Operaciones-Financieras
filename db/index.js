@@ -70,7 +70,15 @@ async function migrate() {
   await backend.query(`create schema if not exists ${SCHEMA}`);
   const sql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
   await backend.exec(sql);
+  // Módulo Disputas: schema aislado 'disputa' (portado del sistema Python de Contracargos).
+  try {
+    const sqlDisp = fs.readFileSync(path.join(__dirname, 'schema-disputa.sql'), 'utf8');
+    await backend.exec(sqlDisp);
+    // Aseguramos que el search_path vuelva al schema del sistema tras schema-disputa.sql (usa `set search_path`).
+    await backend.query(`set search_path to ${SCHEMA}`);
+  } catch (e) { console.warn('⚠ schema-disputa migrate:', e.message); }
   await seedUsuarios();
+  await seedReasonCodes();
 }
 
 // Bootstrap: garantiza que alfonso.garcia@polipay.io exista como admin activo,
@@ -89,6 +97,28 @@ async function seedUsuarios() {
     [email, nombre, emailHash, emailCif, nombreCif]
   );
   console.log('Admin bootstrap OK: alfonso.garcia@polipay.io');
+}
+
+// Seed inicial del catálogo de reason codes (idempotente por (brand, codigo)).
+// Se puede editar libremente desde la UI después; esto solo garantiza que el módulo
+// tenga un punto de partida usable en el primer arranque.
+async function seedReasonCodes() {
+  const seed = [
+    ['VISA', '10.4', 'Card absent environment (fraude CNP)', 'CARD_NOT_PRESENT', 15, 30, true],
+    ['VISA', '13.1', 'Merchandise/services not received', 'CARD_NOT_PRESENT', 15, 60, true],
+    ['VISA', '13.7', 'Cancelled merchandise/services', 'CARD_NOT_PRESENT', 15, 60, true],
+    ['MASTERCARD', '4837', 'No cardholder authorization', 'AMBOS', 15, 45, true],
+    ['MASTERCARD', '4863', 'Cardholder does not recognize', 'AMBOS', 15, 45, true],
+    ['AMEX', 'C08', 'Goods/services returned or refused', 'CARD_NOT_PRESENT', 20, 60, true],
+    ['AMEX', 'FR2', 'Fraud full recourse', 'CARD_NOT_PRESENT', 0, 0, false],
+    ['CID', '2001', 'Domestic - card presence disputed', 'CARD_PRESENT', 10, 30, true],
+  ];
+  for (const [brand, codigo, descripcion, presence, pc, pr, rep] of seed) {
+    await backend.query(
+      "insert into disputa.reason_codes(brand, codigo, descripcion, card_presence, plazo_comercio_dias, plazo_representacion_dias, representable) values($1,$2,$3,$4,$5,$6,$7) on conflict(brand, codigo) do nothing",
+      [brand, codigo, descripcion, presence, pc, pr, rep]
+    );
+  }
 }
 
 function query(text, params) {

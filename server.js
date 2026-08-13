@@ -41,6 +41,8 @@ const X = require('./lib/excel.js');
 const C = require('./lib/crypto.js');
 const AL = require('./lib/alertas.js');
 const WORM = require('./lib/worm.js');
+const D = require('./lib/disputas.js');
+const mountDisputasRoutes = require('./lib/disputas-routes.js');
 if (!C.ready()) console.warn('⚠  Cifrado app-layer NO configurado (falta ENCRYPTION_KEY_V1 o HMAC_PEPPER). Dual-write escribirá "plain:" en las columnas cifradas.');
 
 const app = express();
@@ -2105,6 +2107,9 @@ app.get('/api/bitacora/verificar-integridad', auth, requiereRol('admin'), async 
     primera_falla,
   });
 });
+
+/* ---------- Módulo DISPUTAS (Sprint 1 · portado de sistema Python Contracargos) ---------- */
+mountDisputasRoutes(app, { auth, requiereRol, bit, db, C, D });
 
 /* ---------- estáticos + SPA ---------- */
 app.use('/public', express.static(path.join(__dirname, 'public'), { maxAge: '7d' }));
