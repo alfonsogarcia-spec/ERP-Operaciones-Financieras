@@ -2111,6 +2111,86 @@ app.get('/api/bitacora/verificar-integridad', auth, requiereRol('admin'), async 
 /* ---------- Módulo DISPUTAS (Sprint 1 · portado de sistema Python Contracargos) ---------- */
 mountDisputasRoutes(app, { auth, requiereRol, bit, db, C, D });
 
+/* ---------- Webhook público para ingesta de contracargos (Disputas Sprint 6) ----------
+   Autentica con X-Webhook-Token; se compara HMAC contra providers.webhook_token_hash.
+   Idempotente por (provider_id, external_id): si ya existe, retorna el mismo folio.
+   Rate limit específico: 120/min por IP para tolerar ingestas por lotes de proveedores.
+--------------------------------------------------------------------------------------- */
+const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 120,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: 'rate_limit' },
+});
+app.post('/api/webhooks/contracargos', webhookLimiter, express.json({ limit: '2mb' }), async (req, res) => {
+  const token = req.headers['x-webhook-token'];
+  if (!token) return res.status(401).json({ error: 'sin_token' });
+  const tokenHash = C.hmac(String(token));
+  const provider = (await db.query('select id, nombre, activo from disputa.providers where webhook_token_hash=$1', [tokenHash])).rows[0];
+  if (!provider || !provider.activo) return res.status(401).json({ error: 'token_invalido' });
+  const body = req.body || {};
+  const external_id = body.external_id ? String(body.external_id).trim() : null;
+  if (!external_id) return res.status(400).json({ error: 'external_id_requerido' });
+  // Dedup por (provider_id, external_id)
+  const existente = (await db.query('select id, folio from disputa.chargebacks where provider_id=$1 and external_id=$2', [provider.id, external_id])).rows[0];
+  if (existente) return res.json({ ok: true, deduplicado: true, id: existente.id, folio: existente.folio });
+  // Resolver reason_code por (brand, codigo) si viene, o dejar null.
+  let reason_code_id = null;
+  if (body.brand && body.reason_code_raw) {
+    const rc = (await db.query('select id from disputa.reason_codes where brand=$1 and codigo=$2', [String(body.brand).toUpperCase(), String(body.reason_code_raw).trim()])).rows[0];
+    if (rc) reason_code_id = rc.id;
+  }
+  const brand = ['VISA', 'MASTERCARD', 'AMEX', 'CARNET', 'NACIONAL', 'INTERNACIONAL', 'OTHER'].includes(body.brand) ? body.brand : 'OTHER';
+  const channel = ['POS', 'ECOMMERCE', 'MOTO', 'RECURRING', 'OTHER'].includes(body.channel) ? body.channel : 'OTHER';
+  const card_presence = channel === 'POS' ? 'CARD_PRESENT' : 'CARD_NOT_PRESENT';
+  const cycle = ['RETRIEVAL', 'FIRST_CHARGEBACK', 'REPRESENTMENT', 'PRE_ARBITRATION', 'ARBITRATION'].includes(body.cycle) ? body.cycle : 'FIRST_CHARGEBACK';
+  const arn = body.arn ? String(body.arn).trim() : null;
+  const case_number = body.case_number ? String(body.case_number).trim() : null;
+  const amount = body.disputed_amount != null && body.disputed_amount !== '' ? Number(body.disputed_amount) : null;
+  const merchant_name = body.merchant_name ? String(body.merchant_name).trim() : null;
+  const afil = body.merchant_affiliation ? String(body.merchant_affiliation).replace(/\D/g, '') : null;
+  const fecha_evento = body.fecha_evento && /^\d{4}-\d{2}-\d{2}$/.test(body.fecha_evento) ? body.fecha_evento : new Date().toISOString().slice(0, 10);
+  const fecha_recepcion = new Date().toISOString().slice(0, 10);
+  const fecha_limite_comercio = await D.computarLimiteComercio(db, fecha_recepcion, reason_code_id);
+  const fecha_limite_representacion = await D.computarLimiteRepresentacion(db, fecha_recepcion, reason_code_id);
+  // Resolver merchant por afiliacion_hash si existe.
+  let merchant_id = null;
+  if (afil) {
+    const m = (await db.query('select id from disputa.merchants where afiliacion_hash=$1', [C.hmac(afil)])).rows[0];
+    if (m) merchant_id = m.id;
+  }
+  const folio = await D.generarFolio(db, 'CB', 'chargebacks');
+  const cols = ['folio', 'folio_hash', 'provider_id', 'merchant_id', 'reason_code_id', 'external_id', 'external_id_hash',
+    'arn', 'arn_cifrado', 'arn_hash', 'case_number', 'case_number_cifrado',
+    'brand', 'card_presence', 'channel', 'cycle', 'status', 'reason_code_raw', 'reason_description',
+    'disputed_amount_cifrado', 'currency_code',
+    'merchant_name', 'merchant_name_cifrado', 'merchant_affiliation', 'merchant_affiliation_hash',
+    'fecha_evento', 'fecha_recepcion', 'fecha_limite_comercio', 'fecha_limite_representacion',
+    'origen', 'creado_por'];
+  const vals = [folio, C.hmac(folio), provider.id, merchant_id, reason_code_id, external_id, C.hmac(external_id),
+    arn, C.encrypt(arn), arn ? C.hmac(arn) : null, case_number, C.encrypt(case_number),
+    brand, card_presence, channel, cycle, 'NEW', body.reason_code_raw || null, body.reason_description || null,
+    C.encrypt(amount != null ? String(amount) : null), (body.currency_code || 'MXN').toUpperCase().slice(0, 3),
+    merchant_name, C.encrypt(merchant_name), afil, afil ? C.hmac(afil) : null,
+    fecha_evento, fecha_recepcion, fecha_limite_comercio, fecha_limite_representacion,
+    'webhook', 'webhook:' + provider.nombre];
+  const ph = cols.map((_, i) => '$' + (i + 1)).join(',');
+  const r = await db.query(`insert into disputa.chargebacks(${cols.join(',')}) values(${ph}) returning id, folio`, vals);
+  const idNuevo = r.rows[0].id;
+  await D.agregarEventoCB(db, idNuevo, { tipo: 'created', estado_nuevo: 'NEW', actor: 'webhook:' + provider.nombre, detalle: 'Alta vía webhook · external_id=' + external_id });
+  await db.query('update disputa.providers set ultima_sync=now() where id=$1', [provider.id]);
+  res.status(201).json({ ok: true, deduplicado: false, id: idNuevo, folio: r.rows[0].folio });
+});
+
+// Regenera el token del webhook para un provider (solo admin). Devuelve el token en claro UNA sola vez.
+app.post('/api/disputa/providers/:id/regenerate-token', auth, requiereRol('admin'), async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const token = crypto.randomBytes(24).toString('hex');
+  const r = await db.query('update disputa.providers set webhook_token_hash=$1, actualizado_at=now() where id=$2 returning id, nombre', [C.hmac(token), id]);
+  if (!r.rows.length) return res.status(404).json({ error: 'no_existe' });
+  await bit(req, 'disputa_provider_token', `id=${id}`, { resource_type: 'disputa_provider', resource_id: id });
+  res.json({ ok: true, provider: r.rows[0], webhook_token: token, mensaje: 'Guarda este token ahora — no se puede volver a mostrar.' });
+});
+
 /* ---------- estáticos + SPA ---------- */
 app.use('/public', express.static(path.join(__dirname, 'public'), { maxAge: '7d' }));
 app.get('*', (req, res) => {

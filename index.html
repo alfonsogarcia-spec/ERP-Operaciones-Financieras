@@ -343,6 +343,7 @@ const NAV=[
   {id:'disp_duplicates',t:'Transacciones duplicadas',ic:'ic_04',cap:'disputas_ver'},
   {id:'disp_merchants',t:'Comercios y contactos',ic:'ic_09',cap:'disputas_ver'},
   {id:'disp_reasoncodes',t:'Catálogo reason codes',ic:'ic_13',cap:'disputas_ver'},
+  {id:'disp_providers',t:'Proveedores / API',ic:'ic_12',cap:'disputas_ver'},
   {sec:'Contable'},
   {id:'contable',t:'Registro contable',ic:'ic_15'},
   {sec:'Catálogos'},
@@ -366,12 +367,13 @@ disp_chargebacks:['Contracargos (disputas)','Ciclo completo de disputa: 1er cont
 disp_refunds:['Devoluciones sospechosas','Notificación al comercio y respuesta procede / no procede'],
 disp_duplicates:['Transacciones duplicadas','Comparación de posibles dobles cobros'],
 disp_merchants:['Comercios y contactos','Merchants, contactos por comercio y agrupación'],
-disp_reasoncodes:['Catálogo reason codes','Visa / Mastercard / AMEX / CID con plazos de representación editables']};
+disp_reasoncodes:['Catálogo reason codes','Visa / Mastercard / AMEX / CID con plazos de representación editables'],
+disp_providers:['Proveedores / API','Conectores REST configurables y webhook para ingesta automática']};
 function go(v){VIEW=v;render();}
 async function render(){renderNav();const[t,s]=TITLES[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
   const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
   try{await ({dashboard:vDashboard,ingesta:vIngesta,contracargos:vContracargos,cortes:vCortes,contable:vContable,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,destinatarios:vDestinatarios,usuarios:vUsuarios,bitacora:vBitacora,
-    disp_dashboard:vDispDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC}[VIEW]||vDashboard)(v);}
+    disp_dashboard:vDispDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC,disp_providers:vDispProviders}[VIEW]||vDashboard)(v);}
   catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
 }
 function setView(v,node){v.innerHTML='';v.append(node);}
@@ -1255,6 +1257,58 @@ function openRCNuevo(rc){
     catch(e){toast(errMsg(e),'err');}
   }},'Guardar'));
   modal(rc.id?'Editar reason code':'Nuevo reason code',body,foot,true);
+}
+
+/* --------- PROVIDERS + WEBHOOK --------- */
+async function vDispProviders(v){
+  v.innerHTML='';
+  if(can('disputas'))$('#pageAction').append(el('button',{class:'btn',onclick:()=>openProviderNuevo()},'+ Proveedor'));
+  const origen=location.origin;
+  v.append(el('div',{class:'banner ok',html:'<b>Webhook público:</b> los proveedores pueden mandar contracargos vía <code style="font-family:monospace">POST '+origen+'/api/webhooks/contracargos</code> con header <code style="font-family:monospace">X-Webhook-Token: &lt;token&gt;</code>. El body es JSON con <code>external_id</code> (requerido, para dedup), <code>brand</code>, <code>reason_code_raw</code>, <code>arn</code>, <code>disputed_amount</code>, <code>merchant_affiliation</code>, <code>fecha_evento</code>.'}));
+  try{
+    const rows=await api('GET','/api/disputa/providers');
+    const p=el('div',{class:'panel'});
+    p.append(el('h3',{},'Proveedores conectados',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},rows.length+' registrados'))));
+    if(!rows.length)p.append(el('div',{class:'empty'},'Sin proveedores. Agrega uno con "+ Proveedor" — o crea uno manual (tipo MANUAL) que aún no requiere token de webhook.'));
+    else p.append(tableWrap(['Nombre','Tipo','Conector','Estado','Última sync',''],rows.map(pr=>{
+      const acciones=el('div',{style:'display:flex;gap:6px;flex-wrap:wrap'});
+      if(can('disputas'))acciones.append(el('button',{class:'btn ghost sm',onclick:e=>{e.stopPropagation();openProviderNuevo(pr);}},'Editar'));
+      if(SES && SES.rol==='admin')acciones.append(el('button',{class:'btn sm',style:'background:#B45309;color:#fff',onclick:async e=>{e.stopPropagation();if(!confirm('¿Regenerar token del webhook? El token anterior dejará de funcionar.'))return;try{const r=await api('POST','/api/disputa/providers/'+pr.id+'/regenerate-token');showTokenModal(r.provider.nombre,r.webhook_token);}catch(ex){toast(errMsg(ex),'err');}}},'🔑 Regenerar token'));
+      return [
+        esc(pr.nombre),
+        `<span class="pill">${esc(pr.tipo)}</span>`,
+        `<code style="font-family:monospace;font-size:12px">${esc(pr.conector||'—')}</code>`,
+        pr.activo?'<span class="badge ok">Activo</span>':'<span class="badge g">Inactivo</span>',
+        pr.ultima_sync?esc(new Date(pr.ultima_sync).toLocaleString('es-MX')):'—',
+        acciones,
+      ];
+    })));
+    v.append(p);
+  }catch(e){v.append(el('div',{class:'banner err'},'No se pudo cargar proveedores: '+errMsg(e)));}
+}
+function openProviderNuevo(pr){
+  pr=pr||{};
+  const body=el('div',{});
+  const nombre=el('input',{value:pr.nombre||''});
+  const tipoSel=el('select');['ACQUIRER','PROCESSOR','GATEWAY','MANUAL'].forEach(t=>tipoSel.append(el('option',{},t)));tipoSel.value=pr.tipo||'MANUAL';
+  const conector=el('input',{value:pr.conector||'manual',placeholder:'ej. broxel, generic_rest, manual'});
+  const activo=el('input',{type:'checkbox'});activo.checked=pr.activo!==false;
+  body.append(el('div',{class:'form-grid c3'},fld('Nombre',nombre),fld('Tipo',tipoSel),fld('Conector',conector),el('label',{class:'field',style:'flex-direction:row;align-items:center;gap:8px'},activo,el('span',{},'Activo'))));
+  body.append(el('div',{class:'muted',style:'font-size:12px;margin-top:8px'},'Para habilitar el webhook, después de guardar usa el botón "🔑 Regenerar token" y comparte el token con el proveedor.'));
+  const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    try{await api('POST','/api/disputa/providers',{id:pr.id,nombre:nombre.value,tipo:tipoSel.value,conector:conector.value,activo:activo.checked});toast('Guardado','ok');closeModal();go('disp_providers');}
+    catch(e){toast(errMsg(e),'err');}
+  }},'Guardar'));
+  modal(pr.id?'Editar proveedor':'Nuevo proveedor',body,foot);
+}
+function showTokenModal(nombre,token){
+  const body=el('div',{});
+  body.append(el('div',{class:'banner err',style:'background:#FFFBEB;border-color:#F0C674;color:#7C4A03'},'⚠ Guarda este token AHORA. No podremos volver a mostrarlo.'));
+  body.append(el('div',{style:'margin:14px 0'},el('div',{class:'muted',style:'font-size:11px;text-transform:uppercase;letter-spacing:.08em'},'Proveedor'),el('div',{style:'font:600 15px Montserrat,sans-serif'},esc(nombre))));
+  body.append(el('div',{style:'margin:12px 0'},el('div',{class:'muted',style:'font-size:11px;text-transform:uppercase;letter-spacing:.08em'},'Token del webhook'),el('input',{value:token,readonly:'true',style:'width:100%;font-family:monospace;font-size:13px;padding:10px;border:1px solid var(--line);border-radius:8px;background:#f9fafb'})));
+  const curl=`curl -X POST ${location.origin}/api/webhooks/contracargos \\\n  -H "X-Webhook-Token: ${token}" \\\n  -H "content-type: application/json" \\\n  -d '{"external_id":"CB-EXT-001","brand":"VISA","reason_code_raw":"10.4","arn":"ARN-...","disputed_amount":1250.50,"merchant_affiliation":"9989455"}'`;
+  body.append(el('div',{style:'margin:12px 0'},el('div',{class:'muted',style:'font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px'},'Ejemplo de uso'),el('pre',{style:'background:#0b1220;color:#e5e7eb;font:400 11px/1.5 Menlo,monospace;padding:12px;border-radius:8px;overflow-x:auto'},curl)));
+  modal('Token generado',body,el('div',{},el('button',{class:'btn',onclick:closeModal},'Cerrar')),true);
 }
 
 async function vBitacora(v){
