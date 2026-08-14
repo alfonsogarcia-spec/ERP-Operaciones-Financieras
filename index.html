@@ -344,6 +344,7 @@ const NAV=[
   {id:'disp_merchants',t:'Comercios y contactos',ic:'ic_09',cap:'disputas_ver'},
   {id:'disp_reasoncodes',t:'Catálogo reason codes',ic:'ic_13',cap:'disputas_ver'},
   {id:'disp_providers',t:'Proveedores / API',ic:'ic_12',cap:'disputas_ver'},
+  {id:'disp_reports',t:'Reportes de disputas',ic:'ic_15',cap:'disputas_ver'},
   {sec:'Contable'},
   {id:'contable',t:'Registro contable',ic:'ic_15'},
   {sec:'Catálogos'},
@@ -368,12 +369,13 @@ disp_refunds:['Devoluciones sospechosas','Notificación al comercio y respuesta 
 disp_duplicates:['Transacciones duplicadas','Comparación de posibles dobles cobros'],
 disp_merchants:['Comercios y contactos','Merchants, contactos por comercio y agrupación'],
 disp_reasoncodes:['Catálogo reason codes','Visa / Mastercard / AMEX / CID con plazos de representación editables'],
-disp_providers:['Proveedores / API','Conectores REST configurables y webhook para ingesta automática']};
+disp_providers:['Proveedores / API','Conectores REST configurables y webhook para ingesta automática'],
+disp_reports:['Reportes de disputas','Exportables por rango, comercio, reason code, casos vencidos y ratio de ganancia']};
 function go(v){VIEW=v;render();}
 async function render(){renderNav();const[t,s]=TITLES[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
   const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
   try{await ({dashboard:vDashboard,ingesta:vIngesta,contracargos:vContracargos,cortes:vCortes,contable:vContable,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,destinatarios:vDestinatarios,usuarios:vUsuarios,bitacora:vBitacora,
-    disp_dashboard:vDispDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC,disp_providers:vDispProviders}[VIEW]||vDashboard)(v);}
+    disp_dashboard:vDispDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC,disp_providers:vDispProviders,disp_reports:vDispReports}[VIEW]||vDashboard)(v);}
   catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
 }
 function setView(v,node){v.innerHTML='';v.append(node);}
@@ -1361,6 +1363,48 @@ function showTokenModal(nombre,token){
   const curl=`curl -X POST ${location.origin}/api/webhooks/contracargos \\\n  -H "X-Webhook-Token: ${token}" \\\n  -H "content-type: application/json" \\\n  -d '{"external_id":"CB-EXT-001","brand":"VISA","reason_code_raw":"10.4","arn":"ARN-...","disputed_amount":1250.50,"merchant_affiliation":"9989455"}'`;
   body.append(el('div',{style:'margin:12px 0'},el('div',{class:'muted',style:'font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px'},'Ejemplo de uso'),el('pre',{style:'background:#0b1220;color:#e5e7eb;font:400 11px/1.5 Menlo,monospace;padding:12px;border-radius:8px;overflow-x:auto'},curl)));
   modal('Token generado',body,el('div',{},el('button',{class:'btn',onclick:closeModal},'Cerrar')),true);
+}
+
+/* --------- REPORTES DE DISPUTAS --------- */
+async function vDispReports(v){
+  v.innerHTML='';
+  // Filtros globales
+  const RF={desde:'',hasta:'',merchant_id:''};
+  const pf=el('div',{class:'panel'});
+  pf.append(el('h3',{},'Filtros comunes'));
+  const d1=el('input',{type:'date'});d1.addEventListener('change',()=>RF.desde=d1.value);
+  const d2=el('input',{type:'date'});d2.addEventListener('change',()=>RF.hasta=d2.value);
+  const mSel=el('select');mSel.append(el('option',{value:''},'— todos los comercios —'));
+  try{const m=await api('GET','/api/disputa/merchants');m.forEach(x=>mSel.append(el('option',{value:x.id},x.nombre+' ('+(x.afiliacion||'—')+')')));}catch(_e){}
+  mSel.addEventListener('change',()=>RF.merchant_id=mSel.value);
+  pf.append(el('div',{class:'form-grid c3'},fld('Desde',d1),fld('Hasta',d2),fld('Comercio',mSel)));
+  pf.append(el('div',{class:'muted',style:'font-size:12px;margin-top:8px'},'Los reportes aplican rango sobre fecha_evento (CB) o fecha_reporte (refunds/duplicates). Sin fechas = todo el histórico.'));
+  v.append(pf);
+  // Lista de reportes
+  const reportes=[
+    {icon:'📊',t:'Contracargos por rango',s:'Todos los CB entre las fechas y comercio seleccionados con todos los campos.',path:'rango'},
+    {icon:'🏪',t:'CB por comercio',s:'Agrupado por comercio: total, abiertos, ganados, perdidos, vencidos, ratio.',path:'por-comercio'},
+    {icon:'📋',t:'CB por reason code',s:'Distribución por reason code (Visa/MC/AMEX/CID) con % del total.',path:'por-reason'},
+    {icon:'🔁',t:'Devoluciones + duplicados',s:'Refunds y duplicados en el rango con estado y decisión.',path:'refunds-dup'},
+    {icon:'⏰',t:'Casos vencidos',s:'CB, refunds y duplicados con plazo expirado y sin resolver.',path:'vencidos'},
+    {icon:'💰',t:'Ratio de ganancia',s:'CB ganados vs total resuelto (WON/(WON+LOST)) por comercio y por marca.',path:'ratio'},
+  ];
+  const p=el('div',{class:'panel'});p.append(el('h3',{},'Reportes disponibles'));
+  reportes.forEach(r=>{
+    const card=el('div',{style:'display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px'});
+    card.append(el('div',{style:'flex:1'},el('div',{style:'font:600 14px Montserrat,Arial,sans-serif'},r.icon+' '+r.t),el('div',{class:'muted',style:'font-size:12px;margin-top:4px'},r.s)));
+    const dl=(fmt)=>{
+      const q=Object.entries(RF).filter(([,x])=>x).map(([k,x])=>`${k}=${encodeURIComponent(x)}`).join('&');
+      const url='/api/disputa/reports/'+r.path+'?formato='+fmt+(q?'&'+q:'')+'&token='+encodeURIComponent(TOKEN());
+      window.open(url,'_blank');
+    };
+    card.append(el('div',{style:'display:flex;gap:6px'},
+      el('button',{class:'btn secondary sm',onclick:()=>dl('csv')},'⬇ CSV'),
+      el('button',{class:'btn sm',onclick:()=>dl('xlsx')},'⬇ Excel'),
+    ));
+    p.append(card);
+  });
+  v.append(p);
 }
 
 async function vBitacora(v){

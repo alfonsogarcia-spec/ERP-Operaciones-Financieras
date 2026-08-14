@@ -2168,7 +2168,7 @@ app.get('/api/bitacora/verificar-integridad', auth, requiereRol('admin'), async 
 });
 
 /* ---------- Módulo DISPUTAS (Sprint 1 · portado de sistema Python Contracargos) ---------- */
-mountDisputasRoutes(app, { auth, requiereRol, bit, db, C, D, upload, sesEnabled, sendSES, armarNotifDisputaHTML, path, fs: require('fs') });
+mountDisputasRoutes(app, { auth, requiereRol, bit, db, C, D, upload, sesEnabled, sendSES, armarNotifDisputaHTML, path, fs: require('fs'), X, enviarXLSX });
 
 /* ---------- Webhook público para ingesta de contracargos (Disputas Sprint 6) ----------
    Autentica con X-Webhook-Token; se compara HMAC contra providers.webhook_token_hash.
