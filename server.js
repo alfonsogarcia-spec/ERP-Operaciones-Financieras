@@ -2237,6 +2237,11 @@ app.post('/api/webhooks/contracargos', webhookLimiter, express.json({ limit: '2m
   const idNuevo = r.rows[0].id;
   await D.agregarEventoCB(db, idNuevo, { tipo: 'created', estado_nuevo: 'NEW', actor: 'webhook:' + provider.nombre, detalle: 'Alta vía webhook · external_id=' + external_id });
   await db.query('update disputa.providers set ultima_sync=now() where id=$1', [provider.id]);
+  // Registrar en bitácora (hash-chain + posible alerta 'disputa_webhook_lote' si hay volumen).
+  await bit(req, 'disputa_cb_webhook', `folio=${folio} · provider=${provider.nombre} · external_id=${external_id}`, {
+    actor: { nombre: 'webhook:' + provider.nombre, rol: '—' },
+    resource_type: 'disputa_cb', resource_id: idNuevo,
+  });
   res.status(201).json({ ok: true, deduplicado: false, id: idNuevo, folio: r.rows[0].folio });
 });
 
