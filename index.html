@@ -256,6 +256,8 @@ function can(cap){if(!SES)return false;const M={
   notificar:['admin','tesoreria','bancos'],
   params:['admin'],
   usuarios:['admin'],
+  disputas:['admin','operador'],
+  disputas_ver:['admin','operador','tesoreria','bancos','consulta'],
   ver:['admin','operador','tesoreria','bancos','consulta']
 };return (M[cap]||[]).includes(SES.rol);}
 
@@ -334,6 +336,13 @@ const NAV=[
   {id:'ingesta',t:'Ingesta de transacciones',ic:'ic_04'},
   {id:'contracargos',t:'Contracargos',ic:'ic_05'},
   {id:'cortes',t:'Cortes y liquidación',ic:'ic_06'},
+  {sec:'Disputas',cap:'disputas_ver'},
+  {id:'disp_dashboard',t:'Panel de disputas',ic:'ic_01',cap:'disputas_ver'},
+  {id:'disp_chargebacks',t:'Contracargos (disputas)',ic:'ic_05',cap:'disputas_ver'},
+  {id:'disp_refunds',t:'Devoluciones sospechosas',ic:'ic_17',cap:'disputas_ver'},
+  {id:'disp_duplicates',t:'Transacciones duplicadas',ic:'ic_04',cap:'disputas_ver'},
+  {id:'disp_merchants',t:'Comercios y contactos',ic:'ic_09',cap:'disputas_ver'},
+  {id:'disp_reasoncodes',t:'Catálogo reason codes',ic:'ic_13',cap:'disputas_ver'},
   {sec:'Contable'},
   {id:'contable',t:'Registro contable',ic:'ic_15'},
   {sec:'Catálogos'},
@@ -348,14 +357,21 @@ const NAV=[
   {id:'bitacora',t:'Bitácora',ic:'ic_20'},
 ];
 function renderNav(){const nav=$('#nav');nav.innerHTML='';NAV.forEach(item=>{
-  if(item.sec){nav.append(el('div',{class:'navlbl'},item.sec));return;}
+  if(item.sec){if(item.cap && !can(item.cap))return; nav.append(el('div',{class:'navlbl'},item.sec));return;}
   if(item.cap && !can(item.cap)) return;
   nav.append(el('a',{class:VIEW===item.id?'active':'',onclick:()=>go(item.id)},el('img',{src:`/public/brand-icons/${item.ic}.png`,alt:''}),el('span',{},item.t)));});}
-const TITLES={dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],destinatarios:['Destinatarios','Correos que reciben el aviso automático de corte'],usuarios:['Usuarios','Quién tiene acceso a la plataforma y con qué rol'],bitacora:['Bitácora','Trazabilidad de acciones']};
+const TITLES={dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],destinatarios:['Destinatarios','Correos que reciben el aviso automático de corte'],usuarios:['Usuarios','Quién tiene acceso a la plataforma y con qué rol'],bitacora:['Bitácora','Trazabilidad de acciones'],
+disp_dashboard:['Panel de disputas','KPIs de contracargos, devoluciones y duplicados'],
+disp_chargebacks:['Contracargos (disputas)','Ciclo completo de disputa: 1er contracargo → representación → arbitraje'],
+disp_refunds:['Devoluciones sospechosas','Notificación al comercio y respuesta procede / no procede'],
+disp_duplicates:['Transacciones duplicadas','Comparación de posibles dobles cobros'],
+disp_merchants:['Comercios y contactos','Merchants, contactos por comercio y agrupación'],
+disp_reasoncodes:['Catálogo reason codes','Visa / Mastercard / AMEX / CID con plazos de representación editables']};
 function go(v){VIEW=v;render();}
 async function render(){renderNav();const[t,s]=TITLES[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
   const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
-  try{await ({dashboard:vDashboard,ingesta:vIngesta,contracargos:vContracargos,cortes:vCortes,contable:vContable,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,destinatarios:vDestinatarios,usuarios:vUsuarios,bitacora:vBitacora}[VIEW]||vDashboard)(v);}
+  try{await ({dashboard:vDashboard,ingesta:vIngesta,contracargos:vContracargos,cortes:vCortes,contable:vContable,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,destinatarios:vDestinatarios,usuarios:vUsuarios,bitacora:vBitacora,
+    disp_dashboard:vDispDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC}[VIEW]||vDashboard)(v);}
   catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
 }
 function setView(v,node){v.innerHTML='';v.append(node);}
@@ -883,6 +899,364 @@ function editUsuario(u){
 }
 
 const BIT={usuario:'',accion:'',resource_type:'',ip:'',success:'',desde:'',hasta:'',q:'',offset:0,limit:100};
+/* ============================================================================
+   DISPUTAS · UI conectada al backend real /api/disputa/*
+   ========================================================================= */
+const CB_ESTADOS=['NEW','NOTIFIED','EVIDENCE_REQUESTED','UNDER_REVIEW','REPRESENTED','IN_DISPUTE','WON','LOST','ACCEPTED','EXPIRED','CANCELLED'];
+const CB_CICLOS=['RETRIEVAL','FIRST_CHARGEBACK','REPRESENTMENT','PRE_ARBITRATION','ARBITRATION'];
+const BRANDS=['VISA','MASTERCARD','AMEX','CARNET','NACIONAL','INTERNACIONAL','OTHER'];
+const CHANNELS=['POS','ECOMMERCE','MOTO','RECURRING','OTHER'];
+function badgeEstadoDisp(estado){
+  const map={NEW:['b','Nuevo'],NOTIFIED:['b','Notificado'],EVIDENCE_REQUESTED:['b','Solicitando evidencia'],UNDER_REVIEW:['b','En revisión'],REPRESENTED:['b','Representado'],IN_DISPUTE:['b','En disputa'],WON:['ok','Ganado'],LOST:['err','Perdido'],ACCEPTED:['g','Aceptado'],EXPIRED:['err','Vencido'],CANCELLED:['g','Cancelado'],ANSWERED:['ok','Respondido'],PROCEDE:['ok','Procede'],NO_PROCEDE:['err','No procede'],DUPLICADA:['err','Duplicada'],NO_DUPLICADA:['ok','No duplicada']};
+  const [c,l]=map[estado]||['g',esc(estado||'—')];return `<span class="badge ${c}">${esc(l)}</span>`;
+}
+function semDias(d){if(d==null)return '<span class="muted">—</span>';return d<=0?`<span class="badge err">${d}d</span>`:d<=3?`<span class="badge b">${d}d</span>`:`<span class="badge ok">${d}d</span>`;}
+
+async function vDispDashboard(v){
+  v.innerHTML='';
+  try{
+    const k=await api('GET','/api/disputa/dashboard');
+    v.append(cards([
+      ['Casos abiertos',k.abiertos.total,(k.abiertos.chargebacks+' CB · '+k.abiertos.refunds+' refunds · '+k.abiertos.duplicates+' dup')],
+      ['Por vencer (≤3 días)',k.por_vencer,'contracargos con plazo próximo'],
+      ['Vencidos',k.vencidos,'sin resolución'],
+      ['Ganados este mes',k.ganados_mes,'CB con estado WON'],
+    ]));
+    if(k.distribucion_ciclos && k.distribucion_ciclos.length){
+      const p=el('div',{class:'panel'});p.append(el('h3',{},'Distribución por ciclo (CB activos)'));
+      const total=k.distribucion_ciclos.reduce((s,x)=>s+x.n,0);
+      p.append(tableWrap(['Ciclo',{t:'Casos'},'% del total'],k.distribucion_ciclos.map(r=>[r.cycle,{num:r.n},((r.n/total)*100).toFixed(0)+'%'])));
+      v.append(p);
+    }
+  }catch(e){v.append(el('div',{class:'banner err'},'No se pudo cargar KPIs: '+errMsg(e)));}
+}
+
+const CBF={estado:'',ciclo:'',brand:'',q:'',desde:'',hasta:'',solo_vencidos:false,limit:100,offset:0};
+async function vDispCB(v){
+  v.innerHTML='';
+  if(can('disputas'))$('#pageAction').append(el('button',{class:'btn',onclick:openCBNuevo},'+ Nuevo contracargo'));
+  // Filtros
+  const pf=el('div',{class:'panel'});
+  const g=el('div',{class:'form-grid c3'});
+  const mkTxt=(id,l,ph)=>{const i=el('input',{placeholder:ph||'',value:CBF[id]||''});i.addEventListener('input',()=>CBF[id]=i.value);return el('label',{class:'field'},l,i);};
+  const mkSel=(id,l,opts)=>{const s=el('select');['—',...opts].forEach(o=>s.append(el('option',{value:o==='—'?'':o},o)));s.value=CBF[id]||'';s.addEventListener('change',()=>CBF[id]=s.value);return el('label',{class:'field'},l,s);};
+  g.append(mkTxt('q','Folio o texto','CB-2026-...'));
+  g.append(mkSel('estado','Estado',CB_ESTADOS));
+  g.append(mkSel('ciclo','Ciclo',CB_CICLOS));
+  g.append(mkSel('brand','Marca',BRANDS));
+  const d1=el('input',{type:'date',value:CBF.desde||''});d1.addEventListener('change',()=>CBF.desde=d1.value);
+  const d2=el('input',{type:'date',value:CBF.hasta||''});d2.addEventListener('change',()=>CBF.hasta=d2.value);
+  g.append(el('label',{class:'field'},'Desde',d1),el('label',{class:'field'},'Hasta',d2));
+  const cv=el('input',{type:'checkbox'});cv.checked=!!CBF.solo_vencidos;cv.addEventListener('change',()=>CBF.solo_vencidos=cv.checked);
+  g.append(el('label',{class:'field',style:'flex-direction:row;align-items:center;gap:8px'},cv,el('span',{},'Solo vencidos')));
+  pf.append(el('h3',{},'Filtros'),g,el('div',{style:'margin-top:12px'},el('button',{class:'btn',onclick:()=>{CBF.offset=0;render();}},'Aplicar'),' ',el('button',{class:'btn ghost',onclick:()=>{Object.assign(CBF,{estado:'',ciclo:'',brand:'',q:'',desde:'',hasta:'',solo_vencidos:false,offset:0});render();}},'Limpiar')));
+  v.append(pf);
+  // Query
+  const q=Object.entries(CBF).filter(([,x])=>x!=='' && x!==false && x!=null).map(([k,x])=>`${k}=${encodeURIComponent(x)}`).join('&');
+  try{
+    const r=await api('GET','/api/disputa/chargebacks'+(q?'?'+q:''));
+    const p=el('div',{class:'panel'});
+    p.append(el('h3',{},'Contracargos',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},`${r.total} casos · viendo ${r.rows.length}`))));
+    if(!r.rows.length){p.append(el('div',{class:'empty'},'Sin resultados con esos filtros.'));}
+    else p.append(tableWrap(['Folio','Marca','Canal','Comercio','ARN','Ciclo','Estado','Monto','Vence','Días'],r.rows.map(x=>{
+      const row=[esc(x.folio),`<span class="pill">${esc(x.brand)}</span>`,`<span class="pill">${esc(x.channel)}</span>`,esc(x.merchant_name_out||'—'),esc(x.arn||'—'),`<span class="pill">${esc(x.cycle)}</span>`,badgeEstadoDisp(x.status),{num:x.disputed_amount!=null?mxn(x.disputed_amount):'—'},esc(x.fecha_limite_comercio||'—'),semDias(x.dias_para_vencer)];
+      row._onclick=()=>abrirDispCB(x.id);
+      return row;
+    })));
+    v.append(p);
+  }catch(e){v.append(el('div',{class:'banner err'},'No se pudieron cargar los contracargos: '+errMsg(e)));}
+}
+
+async function abrirDispCB(id){
+  try{
+    const d=await api('GET','/api/disputa/chargebacks/'+id);
+    const body=el('div',{});
+    body.append(el('div',{class:'grid2'},
+      el('div',{},el('div',{class:'muted',style:'font-size:11px;text-transform:uppercase;letter-spacing:.08em'},'Folio'),el('div',{style:'font:700 18px Montserrat,sans-serif'},esc(d.folio))),
+      el('div',{},el('div',{class:'muted',style:'font-size:11px;text-transform:uppercase;letter-spacing:.08em'},'Estado'),el('div',{html:badgeEstadoDisp(d.status)})),
+    ));
+    body.append(el('div',{style:'margin-top:14px'},cards([
+      ['Marca',d.brand||'—'],['Canal',d.channel||'—'],['Ciclo',d.cycle||'—'],
+      ['Monto',d.disputed_amount!=null?mxn(d.disputed_amount):'—'],
+      ['ARN',d.arn||'—'],['Case number',d.case_number||'—'],
+      ['Fecha evento',d.fecha_evento||'—'],['Fecha recepción',d.fecha_recepcion||'—'],
+      ['Vence comercio',d.fecha_limite_comercio||'—'],['Vence representación',d.fecha_limite_representacion||'—'],
+    ])));
+    if(d.reason_description){body.append(el('div',{class:'banner'},'Razón: '+esc(d.reason_description)));}
+    // Timeline
+    if(d.eventos && d.eventos.length){
+      const tl=el('div',{class:'panel',style:'margin-top:16px'});tl.append(el('h3',{},'Timeline del ciclo'));
+      d.eventos.forEach(ev=>{
+        const it=el('div',{style:'padding:10px 0;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:flex-start'});
+        it.append(el('div',{style:'min-width:150px;font-size:12px;color:var(--muted)'},new Date(ev.ts).toLocaleString('es-MX')));
+        it.append(el('div',{},
+          el('div',{},el('span',{class:'badge b'},esc(ev.tipo)),' ',ev.estado_anterior?el('span',{},esc(ev.estado_anterior)+' → '):'',el('b',{},esc(ev.estado_nuevo||'')),' · ',el('span',{class:'muted'},esc(ev.actor||'—'))),
+          ev.detalle?el('div',{class:'muted',style:'margin-top:4px;font-size:13px'},esc(ev.detalle)):'',
+        ));
+        tl.append(it);
+      });
+      body.append(tl);
+    }
+    const foot=el('div',{});
+    // Botones de transición
+    if(can('disputas') && !['WON','LOST','ACCEPTED','EXPIRED','CANCELLED'].includes(d.status)){
+      const transiciones={
+        NEW:['NOTIFIED','CANCELLED'],
+        NOTIFIED:['EVIDENCE_REQUESTED','UNDER_REVIEW','ACCEPTED','CANCELLED'],
+        EVIDENCE_REQUESTED:['UNDER_REVIEW','EXPIRED','ACCEPTED','CANCELLED'],
+        UNDER_REVIEW:['REPRESENTED','ACCEPTED','CANCELLED'],
+        REPRESENTED:['IN_DISPUTE','WON','LOST','CANCELLED'],
+        IN_DISPUTE:['WON','LOST','CANCELLED'],
+      }[d.status]||[];
+      transiciones.forEach(t=>{
+        foot.append(el('button',{class:'btn ghost sm',onclick:async()=>{
+          const nota=prompt('Nota opcional para la transición '+d.status+' → '+t);
+          try{await api('POST','/api/disputa/chargebacks/'+id+'/status',{status:t,nota:nota||''});toast('Cambio de estado registrado','ok');closeModal();go('disp_chargebacks');}
+          catch(e){toast(errMsg(e),'err');}
+        }},'→ '+t));
+      });
+    }
+    foot.append(el('div',{style:'flex:1'}),el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'));
+    modal('Detalle · '+d.folio,body,foot,true);
+  }catch(e){toast('No se pudo abrir el CB: '+errMsg(e),'err');}
+}
+
+async function openCBNuevo(){
+  try{
+    const [merchants,rcs]=await Promise.all([api('GET','/api/disputa/merchants'),api('GET','/api/disputa/reason-codes')]);
+    const body=el('div',{});
+    const merchantSel=el('select');merchantSel.append(el('option',{value:''},'— sin comercio catálogo —'));
+    merchants.forEach(m=>merchantSel.append(el('option',{value:m.id},m.nombre+' · '+(m.afiliacion||'—'))));
+    const rcSel=el('select');rcSel.append(el('option',{value:''},'— sin reason code —'));
+    rcs.forEach(r=>rcSel.append(el('option',{value:r.id},r.brand+' '+r.codigo+' · '+r.descripcion.slice(0,40))));
+    const brandSel=el('select');BRANDS.forEach(b=>brandSel.append(el('option',{},b)));
+    const chSel=el('select');CHANNELS.forEach(c=>chSel.append(el('option',{},c)));
+    const arn=el('input',{placeholder:'Acquirer Reference Number'});
+    const cn=el('input',{placeholder:'Case number'});
+    const merchantNombre=el('input',{placeholder:'Nombre libre si no está en catálogo'});
+    const afil=el('input',{placeholder:'Número de afiliación'});
+    const monto=el('input',{type:'number',step:'0.01',placeholder:'0.00'});
+    const fEv=el('input',{type:'date',value:new Date().toISOString().slice(0,10)});
+    const rDesc=el('textarea',{rows:3,placeholder:'Razón / descripción del contracargo'});
+    body.append(el('div',{class:'form-grid c3'},
+      fld('Comercio (catálogo)',merchantSel),fld('Reason code',rcSel),fld('Marca',brandSel),
+      fld('Canal',chSel),fld('ARN',arn),fld('Case number',cn),
+      fld('Nombre libre',merchantNombre),fld('Afiliación',afil),fld('Monto',monto),
+      fld('Fecha evento',fEv),
+    ));
+    body.append(fld('Descripción',rDesc));
+    const foot=el('div',{});
+    foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+      try{
+        const r=await api('POST','/api/disputa/chargebacks',{
+          merchant_id:merchantSel.value?Number(merchantSel.value):null,
+          reason_code_id:rcSel.value?Number(rcSel.value):null,
+          brand:brandSel.value,channel:chSel.value,
+          arn:arn.value,case_number:cn.value,
+          merchant_name:merchantNombre.value,merchant_affiliation:afil.value,
+          disputed_amount:monto.value?Number(monto.value):null,
+          fecha_evento:fEv.value,reason_description:rDesc.value,
+        });
+        toast('Alta OK · '+r.folio,'ok');closeModal();go('disp_chargebacks');
+      }catch(e){toast(errMsg(e),'err');}
+    }},'Guardar'));
+    modal('Nuevo contracargo',body,foot,true);
+  }catch(e){toast('No se pudo abrir el formulario: '+errMsg(e),'err');}
+}
+
+/* --------- REFUNDS + DUPLICATES --------- */
+async function vDispRefunds(v){
+  v.innerHTML='';
+  if(can('disputas'))$('#pageAction').append(el('button',{class:'btn',onclick:openRefundNuevo},'+ Nueva devolución'));
+  try{
+    const rows=await api('GET','/api/disputa/refunds');
+    const p=el('div',{class:'panel'});
+    p.append(el('h3',{},'Devoluciones sospechosas',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},rows.length+' casos'))));
+    if(!rows.length)p.append(el('div',{class:'empty'},'Sin devoluciones registradas.'));
+    else p.append(tableWrap(['Folio','Fecha reporte','Monto','Ref. original','Estado','Vence','Días','Decisión'],rows.map(x=>{
+      const row=[esc(x.folio),esc(x.fecha_reporte||'—'),{num:x.amount!=null?mxn(x.amount):'—'},esc(x.reference_original||'—'),badgeEstadoDisp(x.status),esc(x.fecha_limite_respuesta||'—'),semDias(x.dias_para_vencer),x.decision?badgeEstadoDisp(x.decision):'—'];
+      row._onclick=()=>abrirRefundTransicion(x);
+      return row;
+    })));
+    v.append(p);
+  }catch(e){v.append(el('div',{class:'banner err'},'No se pudo cargar refunds: '+errMsg(e)));}
+}
+async function abrirRefundTransicion(r){
+  if(!can('disputas'))return;
+  const body=el('div',{});
+  body.append(cards([['Folio',r.folio],['Estado actual',r.status],['Monto',r.amount!=null?mxn(r.amount):'—']]));
+  const transiciones={NEW:['NOTIFIED','CANCELLED'],NOTIFIED:['ANSWERED','EXPIRED','CANCELLED'],ANSWERED:['CANCELLED']}[r.status]||[];
+  if(!transiciones.length){body.append(el('div',{class:'banner'},'Sin transiciones disponibles (estado final).'));modal('Detalle · '+r.folio,body,el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cerrar')));return;}
+  const nuevoSel=el('select');transiciones.forEach(t=>nuevoSel.append(el('option',{},t)));
+  const decSel=el('select');['','PROCEDE','NO_PROCEDE'].forEach(d=>decSel.append(el('option',{value:d},d||'—')));
+  body.append(fld('Nuevo estado',nuevoSel),fld('Decisión (solo si ANSWERED)',decSel));
+  const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    try{await api('POST','/api/disputa/refunds/'+r.id+'/status',{status:nuevoSel.value,decision:decSel.value||undefined});toast('Cambio registrado','ok');closeModal();go('disp_refunds');}
+    catch(e){toast(errMsg(e),'err');}
+  }},'Aplicar'));
+  modal('Transición · '+r.folio,body,foot);
+}
+async function openRefundNuevo(){
+  try{
+    const merchants=await api('GET','/api/disputa/merchants');
+    const body=el('div',{});
+    const merchantSel=el('select');merchantSel.append(el('option',{value:''},'—'));
+    merchants.forEach(m=>merchantSel.append(el('option',{value:m.id},m.nombre)));
+    const monto=el('input',{type:'number',step:'0.01'});
+    const refOrig=el('input',{placeholder:'Referencia de venta original'});
+    const fRep=el('input',{type:'date',value:new Date().toISOString().slice(0,10)});
+    body.append(el('div',{class:'form-grid c3'},fld('Comercio',merchantSel),fld('Monto',monto),fld('Ref. original',refOrig),fld('Fecha reporte',fRep)));
+    const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+      try{const r=await api('POST','/api/disputa/refunds',{merchant_id:merchantSel.value?Number(merchantSel.value):null,amount:monto.value?Number(monto.value):null,reference_original:refOrig.value,fecha_reporte:fRep.value});toast('Alta OK · '+r.folio,'ok');closeModal();go('disp_refunds');}
+      catch(e){toast(errMsg(e),'err');}
+    }},'Guardar'));
+    modal('Nueva devolución sospechosa',body,foot);
+  }catch(e){toast(errMsg(e),'err');}
+}
+
+async function vDispDup(v){
+  v.innerHTML='';
+  if(can('disputas'))$('#pageAction').append(el('button',{class:'btn',onclick:openDupNuevo},'+ Nuevo duplicado'));
+  try{
+    const rows=await api('GET','/api/disputa/duplicates');
+    const p=el('div',{class:'panel'});
+    p.append(el('h3',{},'Transacciones duplicadas',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},rows.length+' casos'))));
+    if(!rows.length)p.append(el('div',{class:'empty'},'Sin duplicados registrados.'));
+    else p.append(tableWrap(['Folio','Fecha reporte','Diferencia','Campos','Estado','Vence','Días','Decisión'],rows.map(x=>{
+      const row=[esc(x.folio),esc(x.fecha_reporte||'—'),x.diferencia_segundos!=null?x.diferencia_segundos+' seg':'—',esc((x.campos_coincidentes||[]).join(', ')||'—'),badgeEstadoDisp(x.status),esc(x.fecha_limite_respuesta||'—'),semDias(x.dias_para_vencer),x.decision?badgeEstadoDisp(x.decision):'—'];
+      row._onclick=()=>abrirDupTransicion(x);
+      return row;
+    })));
+    v.append(p);
+  }catch(e){v.append(el('div',{class:'banner err'},'No se pudo cargar duplicados: '+errMsg(e)));}
+}
+async function abrirDupTransicion(r){
+  if(!can('disputas'))return;
+  const body=el('div',{});
+  body.append(cards([['Folio',r.folio],['Estado',r.status],['Diferencia',r.diferencia_segundos!=null?r.diferencia_segundos+' seg':'—']]));
+  const transiciones={NEW:['NOTIFIED','CANCELLED'],NOTIFIED:['ANSWERED','EXPIRED','CANCELLED'],ANSWERED:['CANCELLED']}[r.status]||[];
+  if(!transiciones.length){body.append(el('div',{class:'banner'},'Sin transiciones (estado final).'));modal('Detalle · '+r.folio,body,el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cerrar')));return;}
+  const nuevoSel=el('select');transiciones.forEach(t=>nuevoSel.append(el('option',{},t)));
+  const decSel=el('select');['','DUPLICADA','NO_DUPLICADA'].forEach(d=>decSel.append(el('option',{value:d},d||'—')));
+  body.append(fld('Nuevo estado',nuevoSel),fld('Decisión (solo si ANSWERED)',decSel));
+  const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    try{await api('POST','/api/disputa/duplicates/'+r.id+'/status',{status:nuevoSel.value,decision:decSel.value||undefined});toast('Cambio registrado','ok');closeModal();go('disp_duplicates');}
+    catch(e){toast(errMsg(e),'err');}
+  }},'Aplicar'));
+  modal('Transición · '+r.folio,body,foot);
+}
+async function openDupNuevo(){
+  try{
+    const merchants=await api('GET','/api/disputa/merchants');
+    const body=el('div',{});
+    const merchantSel=el('select');merchantSel.append(el('option',{value:''},'—'));
+    merchants.forEach(m=>merchantSel.append(el('option',{value:m.id},m.nombre)));
+    const dif=el('input',{type:'number',placeholder:'segundos entre las 2 transacciones'});
+    const campos=el('input',{placeholder:'amount, card_last4, authorization (separados por coma)'});
+    const fRep=el('input',{type:'date',value:new Date().toISOString().slice(0,10)});
+    body.append(el('div',{class:'form-grid c3'},fld('Comercio',merchantSel),fld('Diferencia (seg)',dif),fld('Fecha reporte',fRep)));
+    body.append(fld('Campos coincidentes',campos));
+    const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+      try{const r=await api('POST','/api/disputa/duplicates',{merchant_id:merchantSel.value?Number(merchantSel.value):null,diferencia_segundos:dif.value?Number(dif.value):null,campos_coincidentes:campos.value.split(',').map(s=>s.trim()).filter(Boolean),fecha_reporte:fRep.value});toast('Alta OK · '+r.folio,'ok');closeModal();go('disp_duplicates');}
+      catch(e){toast(errMsg(e),'err');}
+    }},'Guardar'));
+    modal('Nuevo duplicado',body,foot);
+  }catch(e){toast(errMsg(e),'err');}
+}
+
+/* --------- MERCHANTS + REASON CODES --------- */
+async function vDispMerchants(v){
+  v.innerHTML='';
+  if(can('disputas'))$('#pageAction').append(el('button',{class:'btn',onclick:openMerchantNuevo},'+ Comercio'));
+  try{
+    const [rows,groups]=await Promise.all([api('GET','/api/disputa/merchants'),api('GET','/api/disputa/client-groups').catch(()=>[])]);
+    const p=el('div',{class:'panel'});
+    p.append(el('h3',{},'Comercios',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},rows.length+' registrados'))));
+    if(!rows.length)p.append(el('div',{class:'empty'},'Sin comercios. Agrega uno con "+ Comercio".'));
+    else p.append(tableWrap(['Nombre','Afiliación','Grupo cliente','Contactos activos','Estado'],rows.map(m=>{
+      const row=[esc(m.nombre||'—'),esc(m.afiliacion||'—'),esc(m.client_group_nombre||'—'),{num:m.contactos_activos},m.activo?'<span class="badge ok">Activo</span>':'<span class="badge g">Inactivo</span>'];
+      row._onclick=()=>abrirMerchant(m,groups);
+      return row;
+    })));
+    v.append(p);
+  }catch(e){v.append(el('div',{class:'banner err'},'No se pudo cargar comercios: '+errMsg(e)));}
+}
+async function abrirMerchant(m,groups){
+  try{
+    const contacts=await api('GET','/api/disputa/merchants/'+m.id+'/contacts');
+    const body=el('div',{});
+    body.append(cards([['Nombre',m.nombre||'—'],['Afiliación',m.afiliacion||'—'],['Grupo',m.client_group_nombre||'—']]));
+    const cp=el('div',{class:'panel',style:'margin-top:16px'});cp.append(el('h3',{},'Contactos',el('span',{class:'right'},el('button',{class:'btn sm',onclick:()=>openContactoNuevo(m.id)},'+ Contacto'))));
+    if(!contacts.length)cp.append(el('div',{class:'empty'},'Sin contactos.'));
+    else cp.append(tableWrap(['Nombre','Rol','Email','Principal',''],contacts.map(c=>[esc(c.nombre||'—'),esc(c.rol||'—'),esc(c.email||'—'),c.es_principal?'<span class="badge ok">Sí</span>':'<span class="badge g">No</span>',can('disputas')?el('button',{class:'btn ghost sm',onclick:async()=>{if(confirm('¿Eliminar?')){await api('DELETE','/api/disputa/contacts/'+c.id);toast('Contacto eliminado','ok');closeModal();go('disp_merchants');}}},'Borrar'):''])));
+    body.append(cp);
+    modal('Comercio · '+esc(m.nombre||''),body,el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cerrar')),true);
+  }catch(e){toast(errMsg(e),'err');}
+}
+async function openMerchantNuevo(){
+  try{
+    const groups=await api('GET','/api/disputa/client-groups').catch(()=>[]);
+    const body=el('div',{});
+    const nombre=el('input',{placeholder:'Nombre del comercio'});
+    const afil=el('input',{placeholder:'Número de afiliación'});
+    const groupSel=el('select');groupSel.append(el('option',{value:''},'— sin grupo —'));groups.forEach(g=>groupSel.append(el('option',{value:g.id},g.nombre)));
+    body.append(el('div',{class:'form-grid c3'},fld('Nombre',nombre),fld('Afiliación',afil),fld('Grupo cliente',groupSel)));
+    const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+      try{await api('POST','/api/disputa/merchants',{nombre:nombre.value,afiliacion:afil.value,client_group_id:groupSel.value?Number(groupSel.value):null});toast('Comercio agregado','ok');closeModal();go('disp_merchants');}
+      catch(e){toast(errMsg(e),'err');}
+    }},'Guardar'));
+    modal('Nuevo comercio',body,foot);
+  }catch(e){toast(errMsg(e),'err');}
+}
+async function openContactoNuevo(merchantId){
+  const body=el('div',{});
+  const nombre=el('input',{placeholder:'Nombre del contacto'});
+  const email=el('input',{type:'email',placeholder:'email@dominio.com'});
+  const rol=el('input',{placeholder:'ej. Disputas, Operaciones'});
+  const principal=el('input',{type:'checkbox'});
+  body.append(el('div',{class:'form-grid c3'},fld('Nombre',nombre),fld('Email',email),fld('Rol',rol),el('label',{class:'field',style:'flex-direction:row;align-items:center;gap:8px'},principal,el('span',{},'Principal'))));
+  const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    try{await api('POST','/api/disputa/merchants/'+merchantId+'/contacts',{nombre:nombre.value,email:email.value,rol:rol.value,es_principal:principal.checked});toast('Contacto agregado','ok');closeModal();}
+    catch(e){toast(errMsg(e),'err');}
+  }},'Guardar'));
+  modal('Nuevo contacto',body,foot);
+}
+
+async function vDispRC(v){
+  v.innerHTML='';
+  if(can('disputas'))$('#pageAction').append(el('button',{class:'btn',onclick:()=>openRCNuevo()},'+ Reason code'));
+  try{
+    const rows=await api('GET','/api/disputa/reason-codes');
+    const p=el('div',{class:'panel'});
+    p.append(el('h3',{},'Reason codes por red',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},rows.length+' códigos activos'))));
+    if(!rows.length)p.append(el('div',{class:'empty'},'Sin reason codes.'));
+    else p.append(tableWrap(['Red','Código','Descripción','Presencia',{t:'Plazo comercio'},{t:'Plazo representación'},'Representable'],rows.map(r=>{
+      const row=[`<span class="pill">${esc(r.brand)}</span>`,`<b>${esc(r.codigo)}</b>`,esc(r.descripcion||''),`<span class="pill">${esc(r.card_presence||'—')}</span>`,{num:r.plazo_comercio_dias+' d'},{num:r.plazo_representacion_dias+' d'},r.representable?'<span class="badge ok">Sí</span>':'<span class="badge g">No</span>'];
+      row._onclick=()=>openRCNuevo(r);
+      return row;
+    })));
+    v.append(p);
+  }catch(e){v.append(el('div',{class:'banner err'},'No se pudo cargar reason codes: '+errMsg(e)));}
+}
+function openRCNuevo(rc){
+  rc=rc||{};
+  const body=el('div',{});
+  const brand=el('select');['VISA','MASTERCARD','AMEX','CARNET','CID','OTHER'].forEach(b=>brand.append(el('option',{},b)));brand.value=rc.brand||'VISA';
+  const codigo=el('input',{value:rc.codigo||''});
+  const desc=el('input',{value:rc.descripcion||''});
+  const presence=el('select');['CARD_PRESENT','CARD_NOT_PRESENT','AMBOS'].forEach(p=>presence.append(el('option',{},p)));presence.value=rc.card_presence||'CARD_NOT_PRESENT';
+  const pc=el('input',{type:'number',value:rc.plazo_comercio_dias!=null?rc.plazo_comercio_dias:10});
+  const pr=el('input',{type:'number',value:rc.plazo_representacion_dias!=null?rc.plazo_representacion_dias:30});
+  const repr=el('input',{type:'checkbox'});repr.checked=rc.representable!==false;
+  body.append(el('div',{class:'form-grid c3'},fld('Red',brand),fld('Código',codigo),fld('Presencia',presence),fld('Plazo comercio (d)',pc),fld('Plazo representación (d)',pr),el('label',{class:'field',style:'flex-direction:row;align-items:center;gap:8px'},repr,el('span',{},'Representable'))));
+  body.append(fld('Descripción',desc));
+  const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    try{await api('POST','/api/disputa/reason-codes',{id:rc.id,brand:brand.value,codigo:codigo.value,descripcion:desc.value,card_presence:presence.value,plazo_comercio_dias:Number(pc.value)||0,plazo_representacion_dias:Number(pr.value)||0,representable:repr.checked});toast('Guardado','ok');closeModal();go('disp_reasoncodes');}
+    catch(e){toast(errMsg(e),'err');}
+  }},'Guardar'));
+  modal(rc.id?'Editar reason code':'Nuevo reason code',body,foot,true);
+}
+
 async function vBitacora(v){
   v.innerHTML='';
   // Toolbar de acciones a la derecha
