@@ -1809,6 +1809,65 @@ app.get('/api/worm/status', auth, requiereRol('admin'), async (_req, res) => {
 });
 
 /* ============================================================================
+   Correo de notificación al COMERCIO por una disputa (Sprint 7 Disputas).
+   Usa la misma paleta Polipay y logo inline. Se llama para CB, refund y dup.
+   ========================================================================= */
+function armarNotifDisputaHTML(n, opts) {
+  opts = opts || {};
+  const brand = '#051B3B', accent = '#3083F4', muted = '#667085', line = '#e5e7eb', ink = '#1A1A1A';
+  const logo = opts.logoSrc || 'cid:polipay-logo';
+  const tipoTxt = n.tipo === 'refund' ? 'Devolución sospechosa' : n.tipo === 'duplicate' ? 'Posible transacción duplicada' : 'Contracargo (chargeback)';
+  const subject = `[${n.folio}] ${tipoTxt} en tu comercio · Polipay`;
+  const filas = (n.campos || []).map(([k, v]) => `<tr><td width="180" style="color:${muted};padding:6px 0">${escapeHtml(k)}</td><td style="padding:6px 0"><b>${escapeHtml(String(v == null ? '—' : v))}</b></td></tr>`).join('');
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${escapeHtml(subject)}</title></head>
+<body style="margin:0;padding:0;background:#f4f6fb;font-family:Montserrat,Arial,sans-serif;color:${ink}">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f6fb;padding:24px 0"><tr><td align="center">
+    <table role="presentation" width="640" cellspacing="0" cellpadding="0" style="max-width:640px;background:#fff;border:1px solid ${line};border-radius:12px;overflow:hidden">
+      <tr><td style="background:#ffffff;padding:26px 32px;border-bottom:1px solid ${line}">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+          <td><img src="${logo}" alt="Polipay" height="34" style="display:block;height:34px;border:0"></td>
+          <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:${brand};letter-spacing:.12em;text-transform:uppercase">Polipay POS Settlement</td>
+        </tr></table>
+      </td></tr>
+      <tr><td style="height:6px;background:${accent}"></td></tr>
+      <tr><td style="padding:34px 40px 8px">
+        <div style="font:700 12px/1 Montserrat,Arial,sans-serif;color:${accent};letter-spacing:.14em;text-transform:uppercase;margin:0 0 10px">${escapeHtml(tipoTxt)}</div>
+        <div style="font:700 22px/1.25 Montserrat,Arial,sans-serif;color:${brand};margin:0 0 8px">Estimado(a) ${escapeHtml(n.destinatario_nombre || 'contacto')},</div>
+        <div style="font:400 14px/1.6 Montserrat,Arial,sans-serif;color:${muted};margin:0 0 22px">
+          Te notificamos que se registró un caso en tu comercio <b style="color:${ink}">${escapeHtml(n.merchant || '—')}</b> que requiere tu atención. Los detalles están abajo.
+          ${n.fecha_limite_respuesta ? '<br><br><b style="color:'+ink+'">Fecha límite para tu respuesta: '+escapeHtml(n.fecha_limite_respuesta)+'</b>.' : ''}
+        </div>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid ${line};border-radius:10px;overflow:hidden;margin:0 0 24px">
+          <tr><td style="padding:14px 18px;background:#f9fafb;border-bottom:1px solid ${line};font:700 11px/1 Montserrat,Arial,sans-serif;color:${muted};letter-spacing:.12em;text-transform:uppercase">Detalles del caso</td></tr>
+          <tr><td style="padding:14px 18px">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font:400 13px/1.7 Montserrat,Arial,sans-serif;color:${ink}">${filas}</table>
+          </td></tr>
+        </table>
+        ${n.mensaje_extra ? `<div style="font:400 13px/1.6 Montserrat,Arial,sans-serif;color:${ink};margin:0 0 20px;padding:14px 16px;background:#f9fafb;border:1px solid ${line};border-radius:8px">${escapeHtml(n.mensaje_extra)}</div>` : ''}
+        <div style="font:400 13px/1.6 Montserrat,Arial,sans-serif;color:${ink};margin:0 0 22px">
+          Por favor responde a este correo con la <b>evidencia y documentación</b> que justifique la venta o autorice la devolución. Si no recibimos respuesta antes de la fecha límite, procederemos con la aceptación del caso.
+        </div>
+        <div style="font:400 12px/1.6 Montserrat,Arial,sans-serif;color:${muted};margin:20px 0 0;padding:14px 16px;background:#f9fafb;border:1px solid ${line};border-radius:8px">
+          Este mensaje fue enviado automáticamente por el sistema de Polipay POS Settlement. Cualquier duda escribe a <a href="mailto:ops.agregador@polipay.io" style="color:${accent}">ops.agregador@polipay.io</a>.
+        </div>
+      </td></tr>
+      <tr><td style="padding:22px 32px 26px;border-top:1px solid ${line};font:400 12px/1.6 Montserrat,Arial,sans-serif;color:${muted}">
+        Sistema: polipay-conciliacion-liquidacion.onrender.com · Polipay · MCEB
+      </td></tr>
+      <tr><td style="background:${brand};padding:14px 32px">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+          <td style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">Polipay POS Settlement</td>
+          <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">ops.agregador@polipay.io</td>
+        </tr></table>
+      </td></tr>
+    </table>
+  </td></tr></table>
+</body></html>`;
+  const textFallback = `[${n.folio}] ${tipoTxt} · Comercio ${n.merchant} · Fecha límite ${n.fecha_limite_respuesta || 'no aplica'}. Responde con evidencia. Polipay POS Settlement.`;
+  return { subject, html, textFallback };
+}
+
+/* ============================================================================
    DESTINATARIOS del correo de notificación
    ========================================================================= */
 app.get('/api/destinatarios', auth, async (req, res) => {
@@ -2109,7 +2168,7 @@ app.get('/api/bitacora/verificar-integridad', auth, requiereRol('admin'), async 
 });
 
 /* ---------- Módulo DISPUTAS (Sprint 1 · portado de sistema Python Contracargos) ---------- */
-mountDisputasRoutes(app, { auth, requiereRol, bit, db, C, D });
+mountDisputasRoutes(app, { auth, requiereRol, bit, db, C, D, upload, sesEnabled, sendSES, armarNotifDisputaHTML, path, fs: require('fs') });
 
 /* ---------- Webhook público para ingesta de contracargos (Disputas Sprint 6) ----------
    Autentica con X-Webhook-Token; se compara HMAC contra providers.webhook_token_hash.

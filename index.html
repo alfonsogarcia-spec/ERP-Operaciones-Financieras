@@ -985,6 +985,18 @@ async function abrirDispCB(id){
       ['Vence comercio',d.fecha_limite_comercio||'—'],['Vence representación',d.fecha_limite_representacion||'—'],
     ])));
     if(d.reason_description){body.append(el('div',{class:'banner'},'Razón: '+esc(d.reason_description)));}
+    // Attachments
+    const att=el('div',{class:'panel',style:'margin-top:16px'});
+    att.append(el('h3',{},'Evidencia adjunta',el('span',{class:'right'},can('disputas')?el('button',{class:'btn sm',onclick:()=>openAttUpload('chargebacks',id)},'📎 Adjuntar'):'')));
+    if(!(d.attachments||[]).length){att.append(el('div',{class:'empty'},'Sin archivos adjuntos.'));}
+    else att.append(tableWrap(['Archivo','Tipo','Tamaño','Subido por','Cuándo',''],d.attachments.map(a=>[
+      esc(a.filename||'—'),`<code style="font-family:monospace;font-size:11px">${esc(a.mime||'—')}</code>`,{num:(a.bytes_size||0)+' B'},esc(a.subido_por||'—'),esc(new Date(a.subido_at).toLocaleString('es-MX')),
+      el('div',{style:'display:flex;gap:6px'},
+        el('button',{class:'btn ghost sm',onclick:()=>{const url='/api/disputa/attachments/'+a.id+'/download?token='+encodeURIComponent(TOKEN());window.open(url,'_blank');}},'⬇ Descargar'),
+        can('disputas')?el('button',{class:'btn ghost sm',style:'color:#B45309',onclick:async e=>{e.stopPropagation();if(confirm('¿Eliminar este adjunto?')){try{await api('DELETE','/api/disputa/attachments/'+a.id);toast('Borrado','ok');closeModal();abrirDispCB(id);}catch(ex){toast(errMsg(ex),'err');}}}},'Borrar'):''
+      )
+    ])));
+    body.append(att);
     // Timeline
     if(d.eventos && d.eventos.length){
       const tl=el('div',{class:'panel',style:'margin-top:16px'});tl.append(el('h3',{},'Timeline del ciclo'));
@@ -1000,6 +1012,14 @@ async function abrirDispCB(id){
       body.append(tl);
     }
     const foot=el('div',{});
+    // Botón notificar comercio
+    if(can('disputas')){
+      foot.append(el('button',{class:'btn sm',style:'background:#0F56AC;color:#fff',onclick:async()=>{
+        const mensaje=prompt('Mensaje adicional para el comercio (opcional):');
+        try{const r=await api('POST','/api/disputa/chargebacks/'+id+'/notify',{mensaje:mensaje||''});toast('Correo enviado a '+r.enviados+' contacto(s)','ok');closeModal();go('disp_chargebacks');}
+        catch(e){const d=e.data||{};if(d.error==='sin_contactos')toast('El comercio no tiene contactos activos con email.','err');else if(d.error==='ses_no_configurado')toast('SES no configurado en el servidor.','err');else toast(errMsg(e),'err');}
+      }},'📧 Notificar comercio'));
+    }
     // Botones de transición
     if(can('disputas') && !['WON','LOST','ACCEPTED','EXPIRED','CANCELLED'].includes(d.status)){
       const transiciones={
@@ -1066,6 +1086,24 @@ async function openCBNuevo(){
   }catch(e){toast('No se pudo abrir el formulario: '+errMsg(e),'err');}
 }
 
+/* --------- ATTACHMENTS: upload universal --------- */
+async function openAttUpload(tabla,casoId){
+  const body=el('div',{});
+  const info=el('div',{class:'muted',style:'font-size:12px;margin-bottom:10px'},'Tipos aceptados: PDF, imágenes, xlsx/xls, docx/doc, csv, txt, zip. Máx 15 MB.');
+  const inp=el('input',{type:'file',accept:'.pdf,.jpg,.jpeg,.png,.gif,.webp,.xlsx,.xls,.docx,.doc,.txt,.csv,.zip'});
+  const desc=el('input',{placeholder:'Descripción breve (opcional)'});
+  body.append(info,fld('Archivo',inp),fld('Descripción',desc));
+  const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    if(!inp.files||!inp.files[0])return toast('Selecciona un archivo','err');
+    const fd=new FormData();fd.append('archivo',inp.files[0]);fd.append('descripcion',desc.value||'');
+    try{await api('POST','/api/disputa/'+tabla+'/'+casoId+'/attachments',fd);toast('Adjunto subido','ok');closeModal();
+      if(tabla==='chargebacks')abrirDispCB(casoId);
+    }
+    catch(e){const d=e.data||{};if(d.error==='mime_no_permitido')toast('Tipo de archivo no aceptado.','err');else if(d.error==='archivo_muy_grande')toast('Archivo mayor a 15 MB.','err');else toast(errMsg(e),'err');}
+  }},'Subir'));
+  modal('Adjuntar evidencia',body,foot);
+}
+
 /* --------- REFUNDS + DUPLICATES --------- */
 async function vDispRefunds(v){
   v.innerHTML='';
@@ -1092,7 +1130,14 @@ async function abrirRefundTransicion(r){
   const nuevoSel=el('select');transiciones.forEach(t=>nuevoSel.append(el('option',{},t)));
   const decSel=el('select');['','PROCEDE','NO_PROCEDE'].forEach(d=>decSel.append(el('option',{value:d},d||'—')));
   body.append(fld('Nuevo estado',nuevoSel),fld('Decisión (solo si ANSWERED)',decSel));
-  const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+  const foot=el('div',{});
+  foot.append(el('button',{class:'btn sm',style:'background:#0F56AC;color:#fff',onclick:async()=>{
+    const msg=prompt('Mensaje adicional (opcional):');
+    try{const rr=await api('POST','/api/disputa/refunds/'+r.id+'/notify',{mensaje:msg||''});toast('Correo enviado a '+rr.enviados,'ok');closeModal();go('disp_refunds');}
+    catch(e){const d=e.data||{};toast(d.error==='sin_contactos'?'Sin contactos con email.':d.error==='ses_no_configurado'?'SES no configurado.':errMsg(e),'err');}
+  }},'📧 Notificar'));
+  foot.append(el('div',{style:'flex:1'}));
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
     try{await api('POST','/api/disputa/refunds/'+r.id+'/status',{status:nuevoSel.value,decision:decSel.value||undefined});toast('Cambio registrado','ok');closeModal();go('disp_refunds');}
     catch(e){toast(errMsg(e),'err');}
   }},'Aplicar'));
@@ -1141,7 +1186,14 @@ async function abrirDupTransicion(r){
   const nuevoSel=el('select');transiciones.forEach(t=>nuevoSel.append(el('option',{},t)));
   const decSel=el('select');['','DUPLICADA','NO_DUPLICADA'].forEach(d=>decSel.append(el('option',{value:d},d||'—')));
   body.append(fld('Nuevo estado',nuevoSel),fld('Decisión (solo si ANSWERED)',decSel));
-  const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+  const foot=el('div',{});
+  foot.append(el('button',{class:'btn sm',style:'background:#0F56AC;color:#fff',onclick:async()=>{
+    const msg=prompt('Mensaje adicional (opcional):');
+    try{const rr=await api('POST','/api/disputa/duplicates/'+r.id+'/notify',{mensaje:msg||''});toast('Correo enviado a '+rr.enviados,'ok');closeModal();go('disp_duplicates');}
+    catch(e){const d=e.data||{};toast(d.error==='sin_contactos'?'Sin contactos.':d.error==='ses_no_configurado'?'SES no configurado.':errMsg(e),'err');}
+  }},'📧 Notificar'));
+  foot.append(el('div',{style:'flex:1'}));
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
     try{await api('POST','/api/disputa/duplicates/'+r.id+'/status',{status:nuevoSel.value,decision:decSel.value||undefined});toast('Cambio registrado','ok');closeModal();go('disp_duplicates');}
     catch(e){toast(errMsg(e),'err');}
   }},'Aplicar'));
