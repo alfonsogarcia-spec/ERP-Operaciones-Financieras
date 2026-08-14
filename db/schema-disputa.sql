@@ -65,9 +65,12 @@ create table if not exists disputa.client_groups (
   creado_at     timestamptz default now(),
   actualizado_at timestamptz default now()
 );
-alter table disputa.merchants
-  add constraint fk_merchant_group foreign key (client_group_id)
-  references disputa.client_groups(id) on delete set null;
+do $$ begin
+  alter table disputa.merchants
+    add constraint fk_merchant_group foreign key (client_group_id)
+    references disputa.client_groups(id) on delete set null;
+exception when duplicate_object then null;
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- Contactos por comercio / grupo — email cifrado + hash para lookup.
@@ -89,6 +92,9 @@ create table if not exists disputa.contacts (
   actualizado_at    timestamptz default now(),
   check (merchant_id is not null or client_group_id is not null)
 );
+-- Campos adicionales del catálogo interno de contactos (canal de aviso).
+alter table disputa.contacts add column if not exists es_cc     boolean not null default false;
+alter table disputa.contacts add column if not exists notifica  boolean not null default true;
 create index if not exists idx_contacts_merchant on disputa.contacts(merchant_id);
 create index if not exists idx_contacts_group on disputa.contacts(client_group_id);
 create index if not exists idx_contacts_email_hash on disputa.contacts(email_hash);
@@ -111,6 +117,12 @@ create table if not exists disputa.reason_codes (
   unique(brand, codigo)
 );
 create index if not exists idx_reason_brand on disputa.reason_codes(brand);
+-- Campos ricos importados del catálogo interno (categoría de reason, evidencia
+-- sugerida y acción de política) para ayudar al operador en la disputa.
+alter table disputa.reason_codes add column if not exists categoria         text;
+alter table disputa.reason_codes add column if not exists titulo            text;
+alter table disputa.reason_codes add column if not exists evidencia_sugerida text;
+alter table disputa.reason_codes add column if not exists accion_politica   text;
 
 -- ---------------------------------------------------------------------------
 -- Transacciones vinculables (para asociar el CB con la venta original).
@@ -200,6 +212,19 @@ create index if not exists idx_cb_fecha_evento on disputa.chargebacks(fecha_even
 create index if not exists idx_cb_limite_com on disputa.chargebacks(fecha_limite_comercio) where status not in ('WON','LOST','ACCEPTED','EXPIRED','CANCELLED');
 create index if not exists idx_cb_folio_hash on disputa.chargebacks(folio_hash);
 create index if not exists idx_cb_arn_hash on disputa.chargebacks(arn_hash);
+
+-- Campos del formulario "Registrar contracargo" (SS oficial): notas operativas
+-- y datos de la transacción original (para reconciliación y evidencia).
+alter table disputa.chargebacks add column if not exists notas                     text;
+alter table disputa.chargebacks add column if not exists tx_fecha                  date;
+alter table disputa.chargebacks add column if not exists tx_referencia             text;
+alter table disputa.chargebacks add column if not exists tx_referencia_hash        text;
+alter table disputa.chargebacks add column if not exists tx_autorizacion_cifrada   text;
+alter table disputa.chargebacks add column if not exists tx_autorizacion_hash      text;
+alter table disputa.chargebacks add column if not exists tx_last4_cifrada          text;
+alter table disputa.chargebacks add column if not exists tx_monto_cifrado          text;
+alter table disputa.chargebacks add column if not exists tx_tipo_tarjeta           text;
+alter table disputa.chargebacks add column if not exists tx_banco_emisor           text;
 
 -- Bitácora de eventos del ciclo de vida del chargeback.
 create table if not exists disputa.chargeback_events (
