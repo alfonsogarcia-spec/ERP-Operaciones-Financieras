@@ -926,25 +926,33 @@ app.get('/api/cortes/:id/layout.xlsx', auth, async (req, res) => {
   const orders = [...dom, ...amex];
   const bloq = orders.filter(o => !o.clabe || !o.cod);
   if (bloq.length) return res.status(409).json({ error: 'bloqueado', detalle: bloq.map(o => ({ razon: o.razon, afil: o.afil, importe: o.cant, falta: !o.clabe ? 'CLABE' : 'codigo_banco' })) });
-  // Plantilla LAYOUT (dispersor): 8 columnas. Se llenan solo las que tenemos; el resto en blanco.
-  const head = [
-    'Concepto',
-    'Cuenta clabe del beneficiario',
-    'Código del banco del beneficiario',
-    'Nombre del beneficiario',
-    'RFC o CURP del beneficiario',
-    'Cantidad',
-    'Referencia numérica',
-    'Fecha de pago (Opcional, solo para transacciones futuras) Formato YYYY-mm-dd HH:mm',
-  ];
   // Referencia numérica: "1" + DDMMYY del día en que se genera (zona Mexico_City). Ej: 05/08/26 -> 1050826
   const pz = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: '2-digit', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
   const gp = t => (pz.find(p => p.type === t) || {}).value || '';
   const referencia = Number(`1${gp('day')}${gp('month')}${gp('year')}`);
-  // Nombre del beneficiario = nombre del GRUPO DE CLIENTE (o.razon)
-  const rows = orders.map(o => [o.concepto, String(o.clabe), Number(o.cod) || o.cod, o.razon, '', o.cant, referencia, '']);
+  const rowsL = orders.map(o => [o.concepto, String(o.clabe || ''), Number(o.cod) || o.cod, o.razon, '', o.cant, referencia, '']);
+  const metaL = X.metaCorte(c);
+  const buf = await X.buildPolipayXLSX({
+    title: 'Layout SPEI · Órdenes de dispersión',
+    meta: `Corte ${c.id_corte}   ·   ${metaL.fechaLarga}   ·   Generado ${metaL.hoy}   ·   ${orders.length} orden(es): ${dom.length} DOM + ${amex.length} AMEX`,
+    footer: `Polipay POS Settlement · Generado ${metaL.hoy} por ${c.creado_por || '—'}   ·   Todas las cifras en MXN`,
+    sheets: [{
+      name: 'LAYOUT',
+      columns: [
+        { header: 'Concepto', width: 26, align: 'left' },
+        { header: 'Cuenta clabe del beneficiario', width: 24, align: 'left' },
+        { header: 'Código del banco del beneficiario', width: 20, align: 'center' },
+        { header: 'Nombre del beneficiario', width: 32, align: 'left' },
+        { header: 'RFC o CURP del beneficiario', width: 22, align: 'left' },
+        { header: 'Cantidad', width: 16, numFmt: 'mxn' },
+        { header: 'Referencia numérica', width: 20, align: 'center' },
+        { header: 'Fecha de pago (Opcional)', width: 22, align: 'center' },
+      ],
+      rows: rowsL,
+    }],
+  });
   await bit(req, 'layout', `exportó layout corte #${c.id_corte} (${orders.length} órdenes: ${dom.length} dom + ${amex.length} AMEX)`);
-  enviarXLSX(res, `layout_spei_corte_${c.id_corte}_${c.fli}.xlsx`, X.buildXLSX([{ name: 'LAYOUT', aoa: [head, ...rows], cols: [{ wch: 22 }, { wch: 22 }, { wch: 16 }, { wch: 28 }, { wch: 20 }, { wch: 14 }, { wch: 18 }, { wch: 40 }] }]));
+  enviarXLSX(res, `layout_spei_corte_${c.id_corte}_${c.fli}.xlsx`, buf);
 });
 app.get('/api/cortes/:id/reporte.xlsx', auth, async (req, res) => {
   if (!dbReady(res)) return;
@@ -970,14 +978,14 @@ app.get('/api/cortes/:id/detalle-transaccional.xlsx', auth, async (req, res) => 
   )).rows;
   const [params, grupos, afilGrupo, costos] = [await getParams(), await getGrupos(), await getAfilGrupo(), await getCostos()];
   await bit(req, 'reporte', `exportó detalle transaccional corte #${c.id_corte}`);
-  const buf = buildDetalleTransaccionalXLSX(c, cal, txs, { params, grupos, afilGrupo, costos });
+  const buf = await buildDetalleTransaccionalXLSX(c, cal, txs, { params, grupos, afilGrupo, costos });
   enviarXLSX(res, `detalle_transaccional_corte_${c.id_corte}_${c.fli}.xlsx`, buf);
 });
 
 // Construye el .xlsx con "Resumen" + una hoja por grupo cliente (agrupado por
 // cliente/afiliación tal como lo agrupa el motor). Muestra sólo la información
 // que un cliente debe ver: monto, comisión pactada, IVA y monto a dispersar.
-function buildDetalleTransaccionalXLSX(corte, calculos, txs, cat) {
+async function buildDetalleTransaccionalXLSX(corte, calculos, txs, cat) {
   const { params, grupos, afilGrupo } = cat;
   const IVA = Number(params.iva) || 0.16;
   const grupoPorNombre = nombre => grupos.find(g => nrm(g.nombre_cliente) === nrm(nombre));
@@ -1006,75 +1014,65 @@ function buildDetalleTransaccionalXLSX(corte, calculos, txs, cat) {
     while (usadoName.has(s.toLowerCase())) { const suf = ` (${i++})`; s = (n.slice(0, 31 - suf.length) + suf); }
     usadoName.add(s.toLowerCase()); return s;
   };
-  // --- Hoja Resumen ---
-  const resAoa = [
-    [`Detalle de corte de liquidación`],
-    [`Corte #${corte.id_corte} · Fecha de liquidación: ${corte.fecha_liq || corte.fli}`],
-    [],
-    ['Grupo cliente', 'Transacciones', 'Monto operado', 'Comisión pactada', 'IVA', 'Monto a dispersar'],
+  const meta = X.metaCorte(corte);
+  const metaComun = `Corte ${corte.id_corte}   ·   ${meta.fechaLarga}   ·   Generado ${meta.hoy}`;
+  const footer = `Polipay POS Settlement · Generado ${meta.hoy} por ${corte.creado_por || '—'}   ·   Todas las cifras en MXN`;
+  const colsGrupo = [
+    { header: 'Fecha', width: 12, align: 'center' },
+    { header: 'Hora', width: 10, align: 'center' },
+    { header: 'Afiliación', width: 14, align: 'left' },
+    { header: 'Producto', width: 12, align: 'center' },
+    { header: 'Referencia', width: 18, align: 'left' },
+    { header: 'Autorización', width: 14, align: 'center' },
+    { header: 'Comercio', width: 26, align: 'left' },
+    { header: 'Monto', width: 14, numFmt: 'mxn' },
+    { header: 'Comisión pactada', width: 16, numFmt: 'mxn' },
+    { header: 'IVA', width: 12, numFmt: 'mxn' },
+    { header: 'Monto a dispersar', width: 18, numFmt: 'mxn' },
   ];
-  const resSheetLinks = [];  // { row, name }
+  const colsResumen = [
+    { header: 'Grupo cliente', width: 34, align: 'left' },
+    { header: 'Transacciones', width: 14, align: 'right' },
+    { header: 'Monto operado', width: 18, numFmt: 'mxn' },
+    { header: 'Comisión pactada', width: 18, numFmt: 'mxn' },
+    { header: 'IVA', width: 14, numFmt: 'mxn' },
+    { header: 'Monto a dispersar', width: 18, numFmt: 'mxn' },
+  ];
+  const resumenRows = [];
   let totOp = 0, totCom = 0, totIVA = 0, totDisp = 0, totTx = 0;
-  // --- Hojas por grupo ---
   const hojasGrupo = [];
   for (const cc of calculos) {
     const nombreGrupo = cc.razon || cc.cliente || 'Sin grupo';
-    // Todas las tx de este grupo (todas las afiliaciones cuyo cliente cae en este razón)
     const rawTx = (grupTx.get(nombreGrupo) || []).filter(t => String(t.afil) === String(cc.afil));
-    const aoa = [
-      [nombreGrupo],
-      [`Afiliación ${cc.afil} · Corte #${corte.id_corte} · Fecha de liquidación: ${corte.fecha_liq || corte.fli}`],
-      [],
-      ['Fecha', 'Hora', 'Afiliación', 'Producto', 'Referencia', 'Autorización', 'Comercio', 'Monto', 'Comisión pactada', 'IVA', 'Monto a dispersar'],
-    ];
-    let sMonto = 0, sCom = 0, sIVA = 0, sDisp = 0;
+    const rowsTx = []; let sMonto = 0, sCom = 0, sIVA = 0, sDisp = 0;
     for (const t of rawTx) {
       const monto = Number(t.monto) || 0;
       const tasa = tasaPACPorProducto(cc.id_grupo, cc.afil, t.producto);
       const com = E.round2(monto * tasa);
       const iva = E.round2(com * IVA);
       const disp = E.round2(monto - com - iva);
-      aoa.push([t.fecha || '', t.hora || '', t.afil || '', t.producto || '', t.referencia || '', t.autorizacion || '', t.comercio || '', monto, com, iva, disp]);
+      rowsTx.push([t.fecha || '', t.hora || '', t.afil || '', t.producto || '', t.referencia || '', t.autorizacion || '', t.comercio || '', monto, com, iva, disp]);
       sMonto += monto; sCom += com; sIVA += iva; sDisp += disp;
     }
-    aoa.push([]);
-    aoa.push(['', '', '', '', '', '', 'TOTAL', E.round2(sMonto), E.round2(sCom), E.round2(sIVA), E.round2(sDisp)]);
-    // Estilos: título grande + encabezados de tabla
-    const styles = [
-      { cell: 'A1', style: { font: { name: 'Montserrat', sz: 16, bold: true, color: { rgb: '051B3B' } } } },
-      { cell: 'A2', style: { font: { name: 'Montserrat', sz: 10, color: { rgb: '6b7280' } } } },
-      { range: 'A4:K4', style: { fill: { fgColor: { rgb: '051B3B' } }, font: { name: 'Montserrat', sz: 11, bold: true, color: { rgb: 'FFFFFF' } }, align: { horizontal: 'center', vertical: 'center' } } },
-      { range: `A${aoa.length}:K${aoa.length}`, style: { fill: { fgColor: { rgb: 'EEF2F7' } }, font: { name: 'Montserrat', sz: 11, bold: true, color: { rgb: '051B3B' } } } },
-    ];
+    const nombreEnHoja = nombreGrupo + (calculos.filter(x => x.razon === cc.razon).length > 1 ? ' ' + cc.afil : '');
     hojasGrupo.push({
-      name: uniqueSheetName(nombreGrupo + (calculos.filter(x => x.razon === cc.razon).length > 1 ? ' ' + cc.afil : '')),
-      aoa,
-      cols: [{ wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 14 }, { wch: 26 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 18 }],
-      freeze: { xSplit: 0, ySplit: 4, topLeftCell: 'A5' },
-      fmt: { z: '#,##0.00', cols: [7, 8, 9, 10], rowFrom: 4 },
-      styles,
+      name: uniqueSheetName(nombreEnHoja),
+      columns: colsGrupo,
+      rows: rowsTx,
+      total: ['', '', '', '', '', '', 'TOTAL', E.round2(sMonto), E.round2(sCom), E.round2(sIVA), E.round2(sDisp)],
     });
-    // Fila del resumen
-    resAoa.push([nombreGrupo + (calculos.filter(x => x.razon === cc.razon).length > 1 ? ' · afil ' + cc.afil : ''), rawTx.length, E.round2(sMonto), E.round2(sCom), E.round2(sIVA), E.round2(sDisp)]);
-    resSheetLinks.push({ row: resAoa.length, name: hojasGrupo[hojasGrupo.length - 1].name });
+    resumenRows.push([nombreGrupo + (calculos.filter(x => x.razon === cc.razon).length > 1 ? ' · afil ' + cc.afil : ''), rawTx.length, E.round2(sMonto), E.round2(sCom), E.round2(sIVA), E.round2(sDisp)]);
     totOp += sMonto; totCom += sCom; totIVA += sIVA; totDisp += sDisp; totTx += rawTx.length;
   }
-  resAoa.push([]);
-  resAoa.push(['TOTAL', totTx, E.round2(totOp), E.round2(totCom), E.round2(totIVA), E.round2(totDisp)]);
-  const resSheet = {
-    name: 'Resumen',
-    aoa: resAoa,
-    cols: [{ wch: 34 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 18 }],
-    freeze: { xSplit: 0, ySplit: 4, topLeftCell: 'A5' },
-    fmt: { z: '#,##0.00', cols: [2, 3, 4, 5], rowFrom: 4 },
-    styles: [
-      { cell: 'A1', style: { font: { name: 'Montserrat', sz: 18, bold: true, color: { rgb: '051B3B' } } } },
-      { cell: 'A2', style: { font: { name: 'Montserrat', sz: 10, color: { rgb: '6b7280' } } } },
-      { range: 'A4:F4', style: { fill: { fgColor: { rgb: '051B3B' } }, font: { name: 'Montserrat', sz: 11, bold: true, color: { rgb: 'FFFFFF' } }, align: { horizontal: 'center', vertical: 'center' } } },
-      { range: `A${resAoa.length}:F${resAoa.length}`, style: { fill: { fgColor: { rgb: 'EEF2F7' } }, font: { name: 'Montserrat', sz: 12, bold: true, color: { rgb: '051B3B' } } } },
+  return X.buildPolipayXLSX({
+    title: 'Detalle de corte de liquidación · por grupo y transacción',
+    meta: metaComun,
+    footer,
+    sheets: [
+      { name: 'Resumen', columns: colsResumen, rows: resumenRows, total: ['TOTAL', totTx, E.round2(totOp), E.round2(totCom), E.round2(totIVA), E.round2(totDisp)] },
+      ...hojasGrupo,
     ],
-  };
-  return X.buildXLSX([resSheet, ...hojasGrupo]);
+  });
 }
 
 // Reporte por cliente con el formato+estilo de PLANTILLA REPORTE.xlsx.
@@ -2217,9 +2215,27 @@ async function armarAdjuntosCorte(idCorte) {
   const pz = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: '2-digit', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
   const gp = t => (pz.find(p => p.type === t) || {}).value || '';
   const referencia = Number(`1${gp('day')}${gp('month')}${gp('year')}`);
-  const headL = ['Concepto', 'Cuenta clabe del beneficiario', 'Código del banco del beneficiario', 'Nombre del beneficiario', 'RFC o CURP del beneficiario', 'Cantidad', 'Referencia numérica', 'Fecha de pago (Opcional, solo para transacciones futuras) Formato YYYY-mm-dd HH:mm'];
   const rowsL = orders.map(o => [o.concepto, String(o.clabe || ''), Number(o.cod) || o.cod, o.razon, '', o.cant, referencia, '']);
-  const layoutBuf = X.buildXLSX([{ name: 'LAYOUT', aoa: [headL, ...rowsL] }]);
+  const metaLay = X.metaCorte(c);
+  const layoutBuf = await X.buildPolipayXLSX({
+    title: 'Layout SPEI · Órdenes de dispersión',
+    meta: `Corte ${c.id_corte}   ·   ${metaLay.fechaLarga}   ·   Generado ${metaLay.hoy}   ·   ${orders.length} orden(es)`,
+    footer: `Polipay POS Settlement · Generado ${metaLay.hoy} por ${c.creado_por || '—'}   ·   Todas las cifras en MXN`,
+    sheets: [{
+      name: 'LAYOUT',
+      columns: [
+        { header: 'Concepto', width: 26, align: 'left' },
+        { header: 'Cuenta clabe del beneficiario', width: 24, align: 'left' },
+        { header: 'Código del banco del beneficiario', width: 20, align: 'center' },
+        { header: 'Nombre del beneficiario', width: 32, align: 'left' },
+        { header: 'RFC o CURP del beneficiario', width: 22, align: 'left' },
+        { header: 'Cantidad', width: 16, numFmt: 'mxn' },
+        { header: 'Referencia numérica', width: 20, align: 'center' },
+        { header: 'Fecha de pago (Opcional)', width: 22, align: 'center' },
+      ],
+      rows: rowsL,
+    }],
+  });
   // Reporte por cliente (con estilos de la plantilla)
   const reporteBuf = await buildReporteXLSX(c, cal);
   const adj = [
@@ -2315,7 +2331,7 @@ app.post('/api/cortes/:id/notificar-clientes', auth, requiereRol('admin', 'tesor
     // XLSX filtrado a las afiliaciones de este grupo
     const afiles = new Set(calGrupo.map(c => String(c.afil)));
     const txsGrupo = txs.filter(t => afiles.has(String(t.afil)));
-    const buf = buildDetalleTransaccionalXLSX(corte, calGrupo, txsGrupo, { params, grupos, afilGrupo, costos });
+    const buf = await buildDetalleTransaccionalXLSX(corte, calGrupo, txsGrupo, { params, grupos, afilGrupo, costos });
     const nombreGrupo = calGrupo[0].razon;
     const subject = `Detalle de liquidación · ${nombreGrupo} · corte ${corte.fecha_liq}`;
     const html = armarDetalleClienteHTML({ nombreGrupo, corte, calGrupo, logoSrc: 'cid:polipay-logo' });
