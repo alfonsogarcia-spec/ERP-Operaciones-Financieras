@@ -367,29 +367,33 @@ const NAV=[
 function navSecKey(name){ return 'cl_nav_'+String(name).toLowerCase().replace(/[^a-z0-9]+/g,'-'); }
 function renderNav(){
   const nav=$('#nav');nav.innerHTML='';
-  // Agrupar items por sección
-  let sec=null, secBody=null, secDiv=null, hidden=false;
+  // Agrupar items por sección. IIFE por sección para capturar secDiv/secKey por closure.
+  let curBody=null, hidden=false;
   for(const item of NAV){
     if(item.sec){
       hidden = item.cap && !can(item.cap);
-      if(hidden){sec=null;continue;}
+      if(hidden){ curBody=null; continue; }
       const key = navSecKey(item.sec);
       const isCollapsed = localStorage.getItem(key) === '1' || (item.col && localStorage.getItem(key) !== '0');
-      sec = item;
-      secDiv = el('div',{class:'grp'+(isCollapsed?' collapsed':'')});
-      const hdr = el('div',{class:'navlbl',onclick:()=>{
-        const cur = secDiv.classList.toggle('collapsed');
-        localStorage.setItem(key, cur ? '1' : '0');
-      }},el('span',{class:'caret'},'▾'),el('span',{},item.sec.toUpperCase()));
-      secBody = el('div',{class:'grp-body'});
-      secDiv.append(hdr, secBody);
-      nav.append(secDiv);
+      // Cada sección tiene su propio secDiv y su propio callback (closure independiente).
+      const built = (function(secKey, secTitle, collapsed){
+        const div = el('div',{class:'grp'+(collapsed?' collapsed':'')});
+        const hdr = el('div',{class:'navlbl',onclick:()=>{
+          const cur = div.classList.toggle('collapsed');
+          localStorage.setItem(secKey, cur ? '1' : '0');
+        }},el('span',{class:'caret'},'▾'),el('span',{},secTitle.toUpperCase()));
+        const body = el('div',{class:'grp-body'});
+        div.append(hdr, body);
+        return { div, body };
+      })(key, item.sec, isCollapsed);
+      nav.append(built.div);
+      curBody = built.body;
       continue;
     }
     if(hidden) continue;
     if(item.cap && !can(item.cap)) continue;
     const link = el('a',{class:VIEW===item.id?'active':'',onclick:()=>go(item.id)},el('img',{src:`/public/brand-icons/${item.ic}.png`,alt:''}),el('span',{},item.t));
-    (secBody || nav).append(link);
+    (curBody || nav).append(link);
   }
 }
 const TITLES={dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],destinatarios:['Destinatarios','Correos que reciben el aviso automático de corte'],usuarios:['Usuarios','Quién tiene acceso a la plataforma y con qué rol'],bitacora:['Bitácora','Trazabilidad de acciones'],
@@ -437,14 +441,17 @@ function setView(v,node){v.innerHTML='';v.append(node);}
 async function vDashboard(v){
   const hoy = new Date();
   const y = hoy.getFullYear(), mo = hoy.getMonth()+1;
-  const [cortes,tx,cbs,refs,dashDisp,contab]=await Promise.all([
+  const [cortes,tx,cbsResp,refsResp,dashDisp,contab]=await Promise.all([
     api('GET','/api/cortes').catch(()=>[]),
     api('GET','/api/transacciones').catch(()=>({total:0,aprobadas:0,montoAprobado:0,items:[]})),
-    api('GET','/api/disputa/chargebacks').catch(()=>[]),
+    api('GET','/api/disputa/chargebacks').catch(()=>({rows:[]})),
     api('GET','/api/disputa/refunds').catch(()=>[]),
     api('GET','/api/disputa/dashboard').catch(()=>null),
     api('GET','/api/contabilidad/mes?y='+y+'&m='+mo).catch(()=>null),
   ]);
+  // Los endpoints devuelven formatos distintos: chargebacks → {total,rows}; refunds → array.
+  const cbs  = Array.isArray(cbsResp)  ? cbsResp  : (cbsResp?.rows  || []);
+  const refs = Array.isArray(refsResp) ? refsResp : (refsResp?.rows || []);
   v.innerHTML='';
   // KPIs
   const ultimoCorte = cortes[0];
