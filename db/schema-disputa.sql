@@ -277,6 +277,24 @@ create index if not exists idx_ref_status on disputa.refunds(status);
 create index if not exists idx_ref_merchant on disputa.refunds(merchant_id);
 create index if not exists idx_ref_limite on disputa.refunds(fecha_limite_respuesta) where status in ('NEW','NOTIFIED');
 
+-- Extensión del formulario (SS "Registrar devolución sospechosa"):
+alter table disputa.refunds add column if not exists merchant_name           text;
+alter table disputa.refunds add column if not exists merchant_affiliation    text;
+alter table disputa.refunds add column if not exists brand                   text;
+alter table disputa.refunds add column if not exists fecha_devolucion        date;
+alter table disputa.refunds add column if not exists venta_fecha             date;
+alter table disputa.refunds add column if not exists autorizacion_cifrada    text;
+alter table disputa.refunds add column if not exists autorizacion_hash       text;
+alter table disputa.refunds add column if not exists arn                     text;
+alter table disputa.refunds add column if not exists arn_hash                text;
+alter table disputa.refunds add column if not exists rrn                     text;
+alter table disputa.refunds add column if not exists rrn_hash                text;
+alter table disputa.refunds add column if not exists last4_cifrada           text;
+alter table disputa.refunds add column if not exists case_number             text;
+alter table disputa.refunds add column if not exists case_number_hash        text;
+alter table disputa.refunds add column if not exists motivo_adquirente       text;
+alter table disputa.refunds add column if not exists notas                   text;
+
 create table if not exists disputa.refund_events (
   id                serial primary key,
   refund_id         integer not null references disputa.refunds(id) on delete cascade,
@@ -321,6 +339,39 @@ create table if not exists disputa.duplicates (
 create index if not exists idx_dup_status on disputa.duplicates(status);
 create index if not exists idx_dup_merchant on disputa.duplicates(merchant_id);
 create index if not exists idx_dup_limite on disputa.duplicates(fecha_limite_respuesta) where status in ('NEW','NOTIFIED');
+
+-- Extensión del formulario (SS "Registrar transacción duplicada"):
+alter table disputa.duplicates add column if not exists merchant_name        text;
+alter table disputa.duplicates add column if not exists merchant_affiliation text;
+alter table disputa.duplicates add column if not exists provider_id          integer references disputa.providers(id) on delete set null;
+alter table disputa.duplicates add column if not exists brand                text;
+alter table disputa.duplicates add column if not exists currency_code        text default 'MXN';
+alter table disputa.duplicates add column if not exists case_number          text;
+alter table disputa.duplicates add column if not exists case_number_hash     text;
+alter table disputa.duplicates add column if not exists arn                  text;
+alter table disputa.duplicates add column if not exists arn_hash             text;
+-- Datos de la transacción A (payload cifrado + hashes para búsquedas)
+alter table disputa.duplicates add column if not exists tx_a_fecha           date;
+alter table disputa.duplicates add column if not exists tx_a_hora            text;
+alter table disputa.duplicates add column if not exists tx_a_monto_cifrado   text;
+alter table disputa.duplicates add column if not exists tx_a_last4_cifrada   text;
+alter table disputa.duplicates add column if not exists tx_a_autorizacion_cifrada text;
+alter table disputa.duplicates add column if not exists tx_a_autorizacion_hash    text;
+alter table disputa.duplicates add column if not exists tx_a_rrn             text;
+alter table disputa.duplicates add column if not exists tx_a_rrn_hash        text;
+alter table disputa.duplicates add column if not exists tx_a_ticket          text;
+-- Datos de la transacción B
+alter table disputa.duplicates add column if not exists tx_b_fecha           date;
+alter table disputa.duplicates add column if not exists tx_b_hora            text;
+alter table disputa.duplicates add column if not exists tx_b_monto_cifrado   text;
+alter table disputa.duplicates add column if not exists tx_b_last4_cifrada   text;
+alter table disputa.duplicates add column if not exists tx_b_autorizacion_cifrada text;
+alter table disputa.duplicates add column if not exists tx_b_autorizacion_hash    text;
+alter table disputa.duplicates add column if not exists tx_b_rrn             text;
+alter table disputa.duplicates add column if not exists tx_b_rrn_hash        text;
+alter table disputa.duplicates add column if not exists tx_b_ticket          text;
+alter table disputa.duplicates add column if not exists motivo               text;
+alter table disputa.duplicates add column if not exists notas                text;
 
 create table if not exists disputa.duplicate_events (
   id                serial primary key,

@@ -1289,20 +1289,88 @@ async function abrirRefundTransicion(r){
 }
 async function openRefundNuevo(){
   try{
-    const merchants=await api('GET','/api/disputa/merchants');
+    const [groups,providers]=await Promise.all([
+      api('GET','/api/disputa/client-groups').catch(()=>[]),
+      api('GET','/api/disputa/providers').catch(()=>[]),
+    ]);
     const body=el('div',{});
-    const merchantSel=el('select');merchantSel.append(el('option',{value:''},'—'));
-    merchants.forEach(m=>merchantSel.append(el('option',{value:m.id},m.nombre)));
+    // ---------- Sección 1: Datos de la devolución ----------
+    body.append(el('div',{style:'font:700 15px Montserrat,sans-serif;color:var(--brand,#051B3B);margin:0 0 10px'},'Datos de la devolución'));
+    const merchantNombre=el('input',{placeholder:'Nombre del comercio'});
+    const afil=el('input',{placeholder:'Afiliación del comercio'});
+    const grupoSel=el('select');grupoSel.append(el('option',{value:''},'— Sin grupo —'));groups.forEach(g=>grupoSel.append(el('option',{value:g.id},g.nombre)));
+    const provSel=el('select');provSel.append(el('option',{value:''},'— No especificado —'));providers.forEach(p=>provSel.append(el('option',{value:p.id},p.nombre)));
+    const brandSel=el('select');BRANDS.forEach(b=>brandSel.append(el('option',{},b)));brandSel.value='VISA';
     const monto=el('input',{type:'number',step:'0.01'});
-    const refOrig=el('input',{placeholder:'Referencia de venta original'});
-    const fRep=el('input',{type:'date',value:new Date().toISOString().slice(0,10)});
-    body.append(el('div',{class:'form-grid c3'},fld('Comercio',merchantSel),fld('Monto',monto),fld('Ref. original',refOrig),fld('Fecha reporte',fRep)));
-    const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
-      try{const r=await api('POST','/api/disputa/refunds',{merchant_id:merchantSel.value?Number(merchantSel.value):null,amount:monto.value?Number(monto.value):null,reference_original:refOrig.value,fecha_reporte:fRep.value});toast('Alta OK · '+r.folio,'ok');closeModal();go('disp_refunds');}
-      catch(e){toast(errMsg(e),'err');}
-    }},'Guardar'));
-    modal('Nueva devolución sospechosa',body,foot);
-  }catch(e){toast(errMsg(e),'err');}
+    const moneda=el('input',{value:'MXN'});
+    const fDev=el('input',{type:'date'});
+    body.append(el('div',{class:'form-grid c2'},
+      fld('Comercio (nombre)',merchantNombre),fld('Número de afiliación',afil),
+      fld('Grupo de cliente (a notificar)',grupoSel),fld('Proveedor / origen',provSel),
+      fld('Marca',brandSel),fld('Monto de la devolución',monto),
+      fld('Moneda',moneda),fld('Fecha de la devolución',fDev),
+    ));
+    // ---------- Sección 2: Venta previa ----------
+    body.append(el('div',{style:'font:700 15px Montserrat,sans-serif;color:var(--brand,#051B3B);margin:24px 0 10px'},'Venta previa (para conciliación)'));
+    const ventaFecha=el('input',{type:'date'});
+    const refOrig=el('input',{placeholder:'mismo Nº de ticket / referencia de la transacción'});
+    const aut=el('input',{});
+    const rrn=el('input',{});
+    const last4=el('input',{maxlength:4,inputmode:'numeric',pattern:'\\d{4}'});
+    const caso=el('input',{placeholder:''});
+    const arn=el('input',{});
+    const ext=el('input',{placeholder:'evita duplicados'});
+    body.append(el('div',{class:'form-grid c2'},
+      fld('Fecha de la venta previa',ventaFecha),fld('Referencia de la venta previa (se cruza con contracargos)',refOrig),
+      fld('Código de autorización',aut),fld('Referencia (RRN)',rrn),
+      fld('Últimos 4 dígitos',last4),fld('Nº de caso (Broxel)',caso),
+      fld('ARN',arn),fld('ID externo (evita duplicados)',ext),
+    ));
+    const motivo=el('textarea',{rows:2,placeholder:'Motivo de la sospecha'});
+    const notas=el('textarea',{rows:2});
+    body.append(fld('Motivo reportado por el adquirente',motivo));
+    body.append(fld('Notas internas',notas));
+    // Checkbox + botones
+    const chkNot=el('input',{type:'checkbox'});chkNot.checked=true;
+    const foot=el('div',{style:'display:flex;align-items:center;gap:12px;width:100%'});
+    foot.append(el('label',{style:'display:flex;align-items:center;gap:6px;font:600 13px Montserrat,sans-serif;color:var(--ink,#1A1A1A);margin-right:auto'},chkNot,el('span',{},'Notificar al comercio por email (requiere grupo)')));
+    foot.append(el('button',{class:'btn',onclick:async()=>{
+      if(!merchantNombre.value.trim())return toast('Falta el nombre del comercio','err');
+      try{
+        const payload={
+          merchant_name:merchantNombre.value.trim(),
+          merchant_affiliation:afil.value.trim(),
+          client_group_id:grupoSel.value?Number(grupoSel.value):null,
+          provider_id:provSel.value?Number(provSel.value):null,
+          brand:brandSel.value,
+          amount:monto.value?Number(monto.value):null,
+          currency_code:moneda.value||'MXN',
+          fecha_devolucion:fDev.value||undefined,
+          venta_fecha:ventaFecha.value||undefined,
+          reference_original:refOrig.value.trim(),
+          autorizacion:aut.value.trim(),
+          rrn:rrn.value.trim(),
+          last4:last4.value.trim(),
+          case_number:caso.value.trim(),
+          arn:arn.value.trim(),
+          external_id:ext.value.trim(),
+          motivo_adquirente:motivo.value.trim(),
+          notas:notas.value.trim(),
+          notificar:chkNot.checked,
+        };
+        const r=await api('POST','/api/disputa/refunds',payload);
+        let msg='Registrado · '+r.folio;
+        if(chkNot.checked && r.mail){
+          if(r.mail.ok) msg+=' · correo enviado a '+(r.mail.enviados||'—');
+          else if(r.mail.motivo==='sin_contactos') msg+=' · sin contactos para notificar';
+          else if(r.mail.motivo==='sin_grupo') msg+=' · asigna un grupo para poder notificar';
+          else if(r.mail.motivo==='ses_error') msg+=' · error SES';
+        }
+        toast(msg,'ok');closeModal();go('disp_refunds');
+      }catch(e){toast(errMsg(e),'err');}
+    }},'Registrar devolución'),el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'));
+    modal('Registrar devolución sospechosa',body,foot,true);
+  }catch(e){toast('No se pudo abrir el formulario: '+errMsg(e),'err');}
 }
 
 async function vDispDup(v){
@@ -1345,21 +1413,104 @@ async function abrirDupTransicion(r){
 }
 async function openDupNuevo(){
   try{
-    const merchants=await api('GET','/api/disputa/merchants');
+    const [groups,providers]=await Promise.all([
+      api('GET','/api/disputa/client-groups').catch(()=>[]),
+      api('GET','/api/disputa/providers').catch(()=>[]),
+    ]);
     const body=el('div',{});
-    const merchantSel=el('select');merchantSel.append(el('option',{value:''},'—'));
-    merchants.forEach(m=>merchantSel.append(el('option',{value:m.id},m.nombre)));
-    const dif=el('input',{type:'number',placeholder:'segundos entre las 2 transacciones'});
-    const campos=el('input',{placeholder:'amount, card_last4, authorization (separados por coma)'});
-    const fRep=el('input',{type:'date',value:new Date().toISOString().slice(0,10)});
-    body.append(el('div',{class:'form-grid c3'},fld('Comercio',merchantSel),fld('Diferencia (seg)',dif),fld('Fecha reporte',fRep)));
-    body.append(fld('Campos coincidentes',campos));
-    const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
-      try{const r=await api('POST','/api/disputa/duplicates',{merchant_id:merchantSel.value?Number(merchantSel.value):null,diferencia_segundos:dif.value?Number(dif.value):null,campos_coincidentes:campos.value.split(',').map(s=>s.trim()).filter(Boolean),fecha_reporte:fRep.value});toast('Alta OK · '+r.folio,'ok');closeModal();go('disp_duplicates');}
-      catch(e){toast(errMsg(e),'err');}
-    }},'Guardar'));
-    modal('Nuevo duplicado',body,foot);
-  }catch(e){toast(errMsg(e),'err');}
+    // ---------- Sección 1: Datos generales ----------
+    body.append(el('div',{style:'font:700 15px Montserrat,sans-serif;color:var(--brand,#051B3B);margin:0 0 10px'},'Datos generales'));
+    const merchantNombre=el('input',{placeholder:'Nombre del comercio'});
+    const afil=el('input',{placeholder:'Afiliación del comercio'});
+    const grupoSel=el('select');grupoSel.append(el('option',{value:''},'— Sin grupo —'));groups.forEach(g=>grupoSel.append(el('option',{value:g.id},g.nombre)));
+    const provSel=el('select');provSel.append(el('option',{value:''},'— No especificado —'));providers.forEach(p=>provSel.append(el('option',{value:p.id},p.nombre)));
+    const brandSel=el('select');BRANDS.forEach(b=>brandSel.append(el('option',{},b)));brandSel.value='VISA';
+    const moneda=el('input',{value:'MXN'});
+    const caso=el('input',{});
+    const arn=el('input',{});
+    body.append(el('div',{class:'form-grid c2'},
+      fld('Comercio (nombre)',merchantNombre),fld('Número de afiliación',afil),
+      fld('Grupo de cliente (a notificar)',grupoSel),fld('Proveedor / origen',provSel),
+      fld('Marca',brandSel),fld('Moneda',moneda),
+      fld('Nº de caso',caso),fld('ARN',arn),
+    ));
+    // ---------- Sección 2: Las dos transacciones a comparar ----------
+    body.append(el('div',{style:'font:700 15px Montserrat,sans-serif;color:var(--brand,#051B3B);margin:24px 0 6px'},'Las dos transacciones a comparar'));
+    body.append(el('div',{class:'muted',style:'font-size:12px;margin-bottom:12px',html:'Captura ambas transacciones. El sistema detecta automáticamente en qué campos coinciden. Coincidir en <b>tarjeta</b> y <b>código de autorización</b> (aunque cambien hora y referencia) es señal de doble cobro.'}));
+    function bloqueTx(titulo){
+      const cont=el('div',{style:'flex:1;min-width:280px'});
+      cont.append(el('div',{style:'font:700 13px Montserrat,sans-serif;color:var(--brand,#051B3B);margin:0 0 8px'},titulo));
+      const fecha=el('input',{type:'date'});
+      const hora=el('input',{type:'time',step:'1'});
+      const monto=el('input',{type:'number',step:'0.01'});
+      const last4=el('input',{maxlength:4,inputmode:'numeric',pattern:'\\d{4}'});
+      const aut=el('input',{});
+      const rrn=el('input',{});
+      const ticket=el('input',{});
+      cont.append(fld('Fecha',fecha),fld('Hora',hora),fld('Monto',monto),fld('Tarjeta (últimos 4)',last4),fld('Código de autorización',aut),fld('Referencia (RRN)',rrn),fld('Nº de ticket',ticket));
+      return { cont, fecha, hora, monto, last4, aut, rrn, ticket };
+    }
+    const A=bloqueTx('Transacción 1');
+    const B=bloqueTx('Transacción 2');
+    const cols=el('div',{style:'display:flex;gap:20px;flex-wrap:wrap'},A.cont,B.cont);
+    body.append(cols);
+    // Banner de coincidencias en vivo
+    const banner=el('div',{class:'banner',style:'margin:14px 0 6px'},'Aún no hay campos que coincidan entre las dos transacciones.');
+    body.append(banner);
+    const refreshBanner=()=>{
+      const m=[];
+      const eq=(k,a,b)=>{ if(a&&b&&String(a).trim()===String(b).trim()) m.push(k); };
+      eq('monto',A.monto.value,B.monto.value);
+      eq('tarjeta (últimos 4)',A.last4.value,B.last4.value);
+      eq('código de autorización',A.aut.value,B.aut.value);
+      eq('referencia',A.rrn.value,B.rrn.value);
+      eq('nº de ticket',A.ticket.value,B.ticket.value);
+      if(!m.length){ banner.className='banner'; banner.textContent='Aún no hay campos que coincidan entre las dos transacciones.'; return; }
+      const criticos = m.includes('tarjeta (últimos 4)') && m.includes('código de autorización');
+      banner.className = criticos ? 'banner err' : 'banner ok';
+      banner.textContent = (criticos?'⚠ Doble cobro probable · ':'Coincidencias detectadas: ')+m.join(', ');
+    };
+    [A,B].forEach(g=>['fecha','hora','monto','last4','aut','rrn','ticket'].forEach(k=>g[k].addEventListener('input',refreshBanner)));
+    const motivo=el('textarea',{rows:2,placeholder:'Ej. dos cargos a la misma tarjeta y autorización con minutos de diferencia'});
+    const notas=el('textarea',{rows:2});
+    body.append(fld('Motivo / detalle',motivo));
+    body.append(fld('Notas internas',notas));
+    // Checkbox + botones
+    const chkNot=el('input',{type:'checkbox'});chkNot.checked=true;
+    const foot=el('div',{style:'display:flex;align-items:center;gap:12px;width:100%'});
+    foot.append(el('label',{style:'display:flex;align-items:center;gap:6px;font:600 13px Montserrat,sans-serif;color:var(--ink,#1A1A1A);margin-right:auto'},chkNot,el('span',{},'Notificar al comercio por email (requiere grupo)')));
+    foot.append(el('button',{class:'btn',onclick:async()=>{
+      if(!merchantNombre.value.trim())return toast('Falta el nombre del comercio','err');
+      try{
+        const payload={
+          merchant_name:merchantNombre.value.trim(),
+          merchant_affiliation:afil.value.trim(),
+          client_group_id:grupoSel.value?Number(grupoSel.value):null,
+          provider_id:provSel.value?Number(provSel.value):null,
+          brand:brandSel.value,
+          currency_code:moneda.value||'MXN',
+          case_number:caso.value.trim(),
+          arn:arn.value.trim(),
+          tx_a:{fecha:A.fecha.value,hora:A.hora.value,monto:A.monto.value,last4:A.last4.value,autorizacion:A.aut.value,rrn:A.rrn.value,ticket:A.ticket.value},
+          tx_b:{fecha:B.fecha.value,hora:B.hora.value,monto:B.monto.value,last4:B.last4.value,autorizacion:B.aut.value,rrn:B.rrn.value,ticket:B.ticket.value},
+          motivo:motivo.value.trim(),
+          notas:notas.value.trim(),
+          notificar:chkNot.checked,
+        };
+        const r=await api('POST','/api/disputa/duplicates',payload);
+        let msg='Registrado · '+r.folio;
+        if(r.campos_coincidentes&&r.campos_coincidentes.length) msg+=' · coincidencias: '+r.campos_coincidentes.length;
+        if(chkNot.checked && r.mail){
+          if(r.mail.ok) msg+=' · correo enviado a '+(r.mail.enviados||'—');
+          else if(r.mail.motivo==='sin_contactos') msg+=' · sin contactos para notificar';
+          else if(r.mail.motivo==='sin_grupo') msg+=' · asigna un grupo para poder notificar';
+          else if(r.mail.motivo==='ses_error') msg+=' · error SES';
+        }
+        toast(msg,'ok');closeModal();go('disp_duplicates');
+      }catch(e){toast(errMsg(e),'err');}
+    }},'Registrar'),el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'));
+    modal('Registrar transacción duplicada',body,foot,true);
+  }catch(e){toast('No se pudo abrir el formulario: '+errMsg(e),'err');}
 }
 
 /* --------- MERCHANTS + REASON CODES --------- */
