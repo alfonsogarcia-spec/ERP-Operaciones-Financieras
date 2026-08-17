@@ -26,7 +26,11 @@
     .sidebar .brand-logo{height:26px;width:auto;max-width:140px;display:block;margin:4px 8px 2px;filter:brightness(0) invert(1)}
     .sidebar .sub{font-size:11px;color:rgba(255,255,255,.55);margin:0 8px 22px}
     .sidebar nav{flex:1;overflow-y:auto;min-height:0}
-    .sidebar .navlbl{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.42);margin:14px 12px 6px;font-weight:600}
+    .sidebar .navlbl{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.42);margin:14px 12px 6px;font-weight:600;display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;padding:2px 0}
+    .sidebar .navlbl:hover{color:rgba(255,255,255,.7)}
+    .sidebar .navlbl .caret{font-size:9px;transition:transform .15s;opacity:.65}
+    .sidebar .grp.collapsed .navlbl .caret{transform:rotate(-90deg)}
+    .sidebar .grp.collapsed .grp-body{display:none}
     .sidebar nav a{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:rgba(255,255,255,.78);margin-bottom:3px;font-weight:500;position:relative;cursor:pointer}
     .sidebar nav a img{width:18px;height:18px;object-fit:contain;opacity:.72;filter:brightness(0) invert(1);flex:none}
     .sidebar nav a:hover{background:rgba(255,255,255,.08);color:#fff}
@@ -331,38 +335,63 @@ function errMsg(e){const d=e&&e.data||{};if(e.status===403)return'No tienes perm
    ========================================================================= */
 let VIEW='dashboard';
 const NAV=[
-  {sec:'Operación'},
-  {id:'dashboard',t:'Panel',ic:'ic_01'},
+  {sec:'Inicio'},
+  {id:'dashboard',t:'Panel general',ic:'ic_01'},
+  {sec:'Liquidación'},
   {id:'ingesta',t:'Ingesta de transacciones',ic:'ic_04'},
   {id:'contracargos',t:'Contracargos',ic:'ic_05'},
   {id:'cortes',t:'Cortes y liquidación',ic:'ic_06'},
+  {id:'contable',t:'Registro contable',ic:'ic_15'},
   {sec:'Disputas',cap:'disputas_ver'},
-  {id:'disp_dashboard',t:'Panel de disputas',ic:'ic_01',cap:'disputas_ver'},
   {id:'disp_chargebacks',t:'Contracargos (disputas)',ic:'ic_05',cap:'disputas_ver'},
   {id:'disp_refunds',t:'Devoluciones sospechosas',ic:'ic_17',cap:'disputas_ver'},
   {id:'disp_duplicates',t:'Transacciones duplicadas',ic:'ic_04',cap:'disputas_ver'},
   {id:'disp_reasoncodes',t:'Catálogo reason codes',ic:'ic_13',cap:'disputas_ver'},
   {id:'disp_providers',t:'Proveedores / API',ic:'ic_12',cap:'disputas_ver'},
   {id:'disp_reports',t:'Reportes de disputas',ic:'ic_15',cap:'disputas_ver'},
-  {sec:'Contable'},
-  {id:'contable',t:'Registro contable',ic:'ic_15'},
-  {sec:'Catálogos'},
+  {sec:'Catálogos',col:true},
   {id:'grupos',t:'Grupos y afiliaciones',ic:'ic_09'},
   {id:'cuentas',t:'Cuentas de liquidación',ic:'ic_11'},
   {id:'bancos',t:'Bancos SPEI',ic:'ic_12'},
   {id:'feriados',t:'Días feriados',ic:'ic_13'},
   {sec:'Destinatarios'},
-  {id:'dest_liquidacion',t:'Liquidación',ic:'ic_17'},
+  {id:'dest_liquidacion',t:'Aviso de corte',ic:'ic_17'},
+  {id:'dest_liquidacion_cli',t:'Detalle por cliente',ic:'ic_17'},
+  {id:'dest_contabilidad',t:'Contabilidad',ic:'ic_17'},
   {id:'dest_disputas',t:'Disputas',ic:'ic_17',cap:'disputas_ver'},
-  {sec:'Sistema'},
+  {sec:'Sistema',col:true},
   {id:'parametros',t:'Parámetros',ic:'ic_16'},
   {id:'usuarios',t:'Usuarios',ic:'ic_20',cap:'usuarios'},
   {id:'bitacora',t:'Bitácora',ic:'ic_20'},
 ];
-function renderNav(){const nav=$('#nav');nav.innerHTML='';NAV.forEach(item=>{
-  if(item.sec){if(item.cap && !can(item.cap))return; nav.append(el('div',{class:'navlbl'},item.sec));return;}
-  if(item.cap && !can(item.cap)) return;
-  nav.append(el('a',{class:VIEW===item.id?'active':'',onclick:()=>go(item.id)},el('img',{src:`/public/brand-icons/${item.ic}.png`,alt:''}),el('span',{},item.t)));});}
+function navSecKey(name){ return 'cl_nav_'+String(name).toLowerCase().replace(/[^a-z0-9]+/g,'-'); }
+function renderNav(){
+  const nav=$('#nav');nav.innerHTML='';
+  // Agrupar items por sección
+  let sec=null, secBody=null, secDiv=null, hidden=false;
+  for(const item of NAV){
+    if(item.sec){
+      hidden = item.cap && !can(item.cap);
+      if(hidden){sec=null;continue;}
+      const key = navSecKey(item.sec);
+      const isCollapsed = localStorage.getItem(key) === '1' || (item.col && localStorage.getItem(key) !== '0');
+      sec = item;
+      secDiv = el('div',{class:'grp'+(isCollapsed?' collapsed':'')});
+      const hdr = el('div',{class:'navlbl',onclick:()=>{
+        const cur = secDiv.classList.toggle('collapsed');
+        localStorage.setItem(key, cur ? '1' : '0');
+      }},el('span',{class:'caret'},'▾'),el('span',{},item.sec.toUpperCase()));
+      secBody = el('div',{class:'grp-body'});
+      secDiv.append(hdr, secBody);
+      nav.append(secDiv);
+      continue;
+    }
+    if(hidden) continue;
+    if(item.cap && !can(item.cap)) continue;
+    const link = el('a',{class:VIEW===item.id?'active':'',onclick:()=>go(item.id)},el('img',{src:`/public/brand-icons/${item.ic}.png`,alt:''}),el('span',{},item.t));
+    (secBody || nav).append(link);
+  }
+}
 const TITLES={dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],destinatarios:['Destinatarios','Correos que reciben el aviso automático de corte'],usuarios:['Usuarios','Quién tiene acceso a la plataforma y con qué rol'],bitacora:['Bitácora','Trazabilidad de acciones'],
 disp_dashboard:['Panel de disputas','KPIs de contracargos, devoluciones y duplicados'],
 disp_chargebacks:['Contracargos (disputas)','Ciclo completo de disputa: 1er contracargo → representación → arbitraje'],
@@ -372,7 +401,9 @@ disp_merchants:['Comercios y contactos','Merchants, contactos por comercio y agr
 disp_reasoncodes:['Catálogo reason codes','Visa / Mastercard / AMEX / CID con plazos de representación editables'],
 disp_providers:['Proveedores / API','Conectores REST configurables y webhook para ingesta automática'],
 disp_reports:['Reportes de disputas','Exportables por rango, comercio, reason code, casos vencidos y ratio de ganancia'],
-dest_liquidacion:['Destinatarios · Liquidación','Correos que reciben el aviso automático de corte'],
+dest_liquidacion:['Destinatarios · Aviso de corte','Correos internos que reciben el informe del corte'],
+dest_liquidacion_cli:['Destinatarios · Detalle por cliente','Contactos por grupo cliente que reciben SU detalle transaccional'],
+dest_contabilidad:['Destinatarios · Contabilidad','Correos que reciben el registro contable semanal y el resumen mensual'],
 dest_disputas:['Destinatarios · Disputas','Grupos de cliente y sus contactos para notificar disputas']};
 function go(v){VIEW=v;render();}
 async function render(){renderNav();
@@ -384,11 +415,18 @@ async function render(){renderNav();
     catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
     return;
   }
+  const mRef = /^disp_ref_(\d+)$/.exec(VIEW);
+  if(mRef){ const[t,s]=['Devolución sospechosa','Detalle del caso'];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
+    const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
+    try{ await vDispRefundDetalle(v, parseInt(mRef[1],10)); }
+    catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
+    return;
+  }
   const[t,s]=TITLES[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
   const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
-  try{await ({dashboard:vDashboard,ingesta:vIngesta,contracargos:vContracargos,cortes:vCortes,contable:vContable,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,destinatarios:vDestinatarios,usuarios:vUsuarios,bitacora:vBitacora,
-    disp_dashboard:vDispDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC,disp_providers:vDispProviders,disp_reports:vDispReports,
-    dest_liquidacion:vDestinatarios,dest_disputas:vDestDisputas}[VIEW]||vDashboard)(v);}
+  try{await ({dashboard:vDashboard,ingesta:vIngesta,contracargos:vContracargos,cortes:vCortes,contable:vContabilidadCortes,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,destinatarios:vDestinatarios,usuarios:vUsuarios,bitacora:vBitacora,
+    disp_dashboard:vDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC,disp_providers:vDispProviders,disp_reports:vDispReports,
+    dest_liquidacion:vDestinatariosCorte,dest_liquidacion_cli:vDestinatariosCliente,dest_contabilidad:vDestinatariosContabilidad,dest_disputas:vDestDisputas}[VIEW]||vDashboard)(v);}
   catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
 }
 function setView(v,node){v.innerHTML='';v.append(node);}
@@ -397,23 +435,70 @@ function setView(v,node){v.innerHTML='';v.append(node);}
    VISTAS
    ========================================================================= */
 async function vDashboard(v){
-  const [cortes,tx]=await Promise.all([api('GET','/api/cortes'),api('GET','/api/transacciones')]);
+  const hoy = new Date();
+  const y = hoy.getFullYear(), mo = hoy.getMonth()+1;
+  const [cortes,tx,cbs,refs,dashDisp,contab]=await Promise.all([
+    api('GET','/api/cortes').catch(()=>[]),
+    api('GET','/api/transacciones').catch(()=>({total:0,aprobadas:0,montoAprobado:0,items:[]})),
+    api('GET','/api/disputa/chargebacks').catch(()=>[]),
+    api('GET','/api/disputa/refunds').catch(()=>[]),
+    api('GET','/api/disputa/dashboard').catch(()=>null),
+    api('GET','/api/contabilidad/mes?y='+y+'&m='+mo).catch(()=>null),
+  ]);
   v.innerHTML='';
-  v.append(cards([
-    ['Transacciones cargadas',tx.total],
-    ['Aprobadas',tx.aprobadas,mxn(tx.montoAprobado)],
-    ['Cortes generados',cortes.length,cortes.filter(c=>c.cuadra).length+' cuadran'],
-    ['Cancelaciones',tx.diagnostico?tx.diagnostico.cancelaciones:0,tx.diagnostico?mxn(tx.diagnostico.montoCancel):''],
-  ]));
-  const p=el('div',{class:'panel'});p.append(el('h3',{},'Guía de arranque'));
-  const [bancos,grupos,cuentas]=await Promise.all([api('GET','/api/catalogo/bancos'),api('GET','/api/catalogo/grupos'),api('GET','/api/catalogo/cuentas')]);
-  const pend=[];if(!bancos.length)pend.push('Cargar <b>Bancos SPEI</b>');if(!grupos.length)pend.push('Dar de alta <b>Grupos y afiliaciones</b>');if(!cuentas.length)pend.push('Registrar <b>Cuentas de liquidación</b>');if(!tx.total)pend.push('Hacer <b>ingesta de transacciones</b>');
-  if(pend.length)p.append(el('div',{class:'banner',html:'Para tu primer corte: <ol style="margin:8px 0 0 18px">'+pend.map(x=>`<li style="margin:3px 0">${x}</li>`).join('')+'</ol>'}));
-  else p.append(el('div',{class:'banner ok'},'Catálogos listos. Ve a “Cortes y liquidación”.'));
-  v.append(p);
-  if(cortes.length){const pc=el('div',{class:'panel'});pc.append(el('h3',{},'Últimos cortes'));
-    pc.append(tableWrap(['Corte','Fecha liq.','Estado',{t:'Trx'},{t:'A dispersar'},'Cuadre'],cortes.slice(0,8).map(c=>{const r=[`#${c.id_corte}`,c.fecha_liq,badgeEstado(c.estado),{num:c.n_trx},{num:mxn(c.total_disp)},c.cuadra?'<span class="flagok">✓</span>':'<span class="flagbad">✗</span>'];r._onclick=()=>abrirCorte(c.id_corte);return r;})));
-    v.append(pc);}
+  // KPIs
+  const ultimoCorte = cortes[0];
+  const cbAbiertos = dashDisp ? dashDisp.abiertos.chargebacks : cbs.filter(c=>['NEW','NOTIFIED','EVIDENCE_REQUESTED','UNDER_REVIEW','REPRESENTED','IN_DISPUTE'].includes(c.status)).length;
+  const cbVencidos = dashDisp ? dashDisp.vencidos : cbs.filter(c=>c.dias_para_vencer!=null && c.dias_para_vencer<0).length;
+  const cardsRow=el('div',{class:'cards'});
+  cardsRow.append(el('div',{class:'card'},el('div',{class:'label'},'Último corte'),el('div',{class:'value'},ultimoCorte?ultimoCorte.fecha_liq:'—'),el('div',{class:'hint'},ultimoCorte?(ultimoCorte.n_trx+' trx · '+mxn(ultimoCorte.total_monto)):'Sin cortes aún')));
+  cardsRow.append(el('div',{class:'card ok'},el('div',{class:'label'},'A dispersar'),el('div',{class:'value'},ultimoCorte?mxn(ultimoCorte.total_disp):'—'),el('div',{class:'hint'},ultimoCorte?ultimoCorte.estado:'—')));
+  cardsRow.append(el('div',{class:'card'},el('div',{class:'label'},'CB abiertos'),el('div',{class:'value'},String(cbAbiertos)),el('div',{class:'hint'},(dashDisp?dashDisp.por_vencer:0)+' por vencer en 3d')));
+  cardsRow.append(el('div',{class:'card'+(cbVencidos>0?' alert':'')},el('div',{class:'label'},'CB vencidos'),el('div',{class:'value'},String(cbVencidos)),el('div',{class:'hint'},cbVencidos?'Requieren intervención':'Al día')));
+  v.append(cardsRow);
+  // Cortes recientes + Disputas activas
+  const gr1 = el('div',{class:'grid2'});
+  const pc = el('div',{class:'panel'}); pc.append(el('h3',{},'Cortes recientes'));
+  if(!cortes.length) pc.append(el('div',{class:'muted'},'Sin cortes aún.'));
+  else pc.append(tableWrap(['Corte',{t:'A dispersar'},'Estado'],cortes.slice(0,5).map(c=>{
+    const r=[`<div class="tt">#${c.id_corte}<small>${esc(c.fecha_liq)}</small></div>`,{num:mxn(c.total_disp)},badgeEstado(c.estado)];
+    r._onclick=()=>{go('cortes');setTimeout(()=>abrirCorte(c.id_corte),100);};
+    return r;
+  })));
+  gr1.append(pc);
+  const pd = el('div',{class:'panel'}); pd.append(el('h3',{},'Disputas activas'));
+  const activasCB = cbs.filter(c=>!['WON','LOST','ACCEPTED','EXPIRED','CANCELLED'].includes(c.status)).slice(0,3);
+  const activasRef = refs.filter(r=>['NEW','NOTIFIED'].includes(r.status)).slice(0,2);
+  const items = [...activasCB.map(c=>({folio:c.folio,tipo:'cb',info:esc(c.merchant_nombre||'—'),estado:c.status,id:c.id})), ...activasRef.map(r=>({folio:r.folio,tipo:'ref',info:'Devolución sospechosa',estado:r.status,id:r.id}))];
+  if(!items.length) pd.append(el('div',{class:'muted'},'Ninguna disputa activa.'));
+  else pd.append(tableWrap(['Folio','Estado'],items.map(x=>{
+    const r=[`<div class="tt">${esc(x.folio)}<small>${x.info}</small></div>`,badgeEstadoDisp(x.estado)];
+    r._onclick=()=>go(x.tipo==='ref'?'disp_ref_'+x.id:'disp_cb_'+x.id);
+    return r;
+  })));
+  gr1.append(pd); v.append(gr1);
+  // Contabilidad + Guía / Alertas
+  const gr2 = el('div',{class:'grid2'});
+  const pcont = el('div',{class:'panel'}); pcont.append(el('h3',{},'Contabilidad · '+['','enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'][mo]+' '+y));
+  if(!contab) pcont.append(el('div',{class:'muted'},'Sin datos.'));
+  else pcont.append(tableWrap(['Semana',{t:'Total'},'Estado'],contab.semanas.map(s=>{
+    const r=[`<div class="tt">SEMANA ${s.semana}<small>${s.periodo}</small></div>`,{num: s.totales? mxn((s.totales.com_mceb||0)+(s.totales.iva_com_mceb||0)) : '—'},s.estado==='Enviado'?'<span class="badge ok">Enviado</span>':s.estado==='Aún no cierra'?'<span class="badge g">Aún no cierra</span>':'<span class="badge w">Pendiente</span>'];
+    r._onclick=()=>go('contable');
+    return r;
+  })));
+  gr2.append(pcont);
+  // Guía / alertas
+  const pAler = el('div',{class:'panel'}); pAler.append(el('h3',{},'Guía y alertas'));
+  const [bancos,grupos,cuentas]=await Promise.all([api('GET','/api/catalogo/bancos').catch(()=>[]),api('GET','/api/catalogo/grupos').catch(()=>[]),api('GET','/api/catalogo/cuentas').catch(()=>[])]);
+  const alertas=[];
+  if(!bancos.length)alertas.push({t:'Catálogos incompletos',s:'Cargar Bancos SPEI',b:'w'});
+  if(!grupos.length)alertas.push({t:'Catálogos incompletos',s:'Dar de alta Grupos y afiliaciones',b:'w'});
+  if(!cuentas.length)alertas.push({t:'Catálogos incompletos',s:'Registrar Cuentas de liquidación',b:'w'});
+  if(!tx.total)alertas.push({t:'Ingesta pendiente',s:'Aún no cargaste transacciones',b:'w'});
+  if(cbVencidos>0)alertas.push({t:'CB vencidos',s:cbVencidos+' contracargo(s) sin resolver',b:'d'});
+  if(!alertas.length) pAler.append(el('div',{class:'banner ok'},'Todo en orden. No hay alertas activas.'));
+  else pAler.append(tableWrap(['Alerta','Estado'],alertas.map(a=>[`<div class="tt">${esc(a.t)}<small>${esc(a.s)}</small></div>`,`<span class="badge ${a.b}">${a.b==='d'?'Prioridad':'Atención'}</span>`])));
+  gr2.append(pAler); v.append(gr2);
 }
 
 /* ---------- INGESTA ---------- */
@@ -829,6 +914,156 @@ async function vParametros(v){
 
 /* ---------- BITÁCORA ---------- */
 /* ---------- DESTINATARIOS ---------- */
+const tipoBadgeDest = t => t==='cc' ? '<span class="badge b">CC</span>' : t==='bcc' ? '<span class="badge v">CCO</span>' : '<span class="badge ok">Para</span>';
+async function vDestinatariosCorte(v){
+  if(can('params'))$('#pageAction').append(el('button',{class:'btn',onclick:()=>editDestinatario()},'+ Destinatario'));
+  const dest=await api('GET','/api/destinatarios');
+  v.innerHTML='';
+  const p=el('div',{class:'panel'});
+  p.append(el('h3',{},'Aviso general del corte',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},dest.filter(d=>d.activo).length+' activo(s) de '+dest.length))));
+  p.append(el('div',{class:'banner',html:'Correos <b>internos</b> que reciben el informe general del corte (con layout SPEI, reporte por cliente y reporte de contracargos) al presionar <b>Notificar</b> en un corte.'}));
+  const rows=dest.map(d=>{
+    const st = d.activo ? '<span class="badge ok">Activo</span>' : '<span class="badge g">Inactivo</span>';
+    const r=[esc(d.email),esc(d.nombre||''),tipoBadgeDest(d.tipo||'to'),st];
+    if(can('params')) r.push(el('button',{class:'btn ghost sm',onclick:(e)=>{e.stopPropagation();editDestinatario(d);}},'Editar'));
+    return r;
+  });
+  const head=['Correo','Nombre','Tipo','Estado']; if(can('params'))head.push('');
+  p.append(tableWrap(head,rows,{empty:'Sin destinatarios. Agrega uno con "+ Destinatario".'}));
+  v.append(p);
+}
+async function vDestinatariosCliente(v){
+  if(can('params'))$('#pageAction').append(el('button',{class:'btn',onclick:()=>editDestinatarioCliente()},'+ Contacto por cliente'));
+  const porCliente=await api('GET','/api/destinatarios-cliente');
+  v.innerHTML='';
+  const pc=el('div',{class:'panel'});
+  const totalC=porCliente.reduce((s,g)=>s+g.contactos.filter(c=>c.activo).length,0);
+  pc.append(el('h3',{},'Detalle transaccional por cliente',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},totalC+' contacto(s) activo(s) en '+porCliente.length+' grupo(s)'))));
+  pc.append(el('div',{class:'banner',html:'Cada grupo de cliente puede tener sus propios contactos. Al presionar <b>Enviar a clientes</b> en un corte, el sistema envía a cada grupo el <b>detalle transaccional</b> filtrado a SU liquidación.'}));
+  const cont=el('div',{style:'display:flex;flex-direction:column;gap:16px'});
+  for(const g of porCliente){
+    const bloque=el('div',{style:'border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:#fff'});
+    const activos=g.contactos.filter(c=>c.activo).length;
+    bloque.append(el('div',{style:'display:flex;align-items:center;gap:12px;margin-bottom:10px'},
+      el('b',{style:'font-size:14px'},g.nombre),
+      el('span',{class:'muted',style:'font-size:12px'},`Grupo #${g.id_grupo} · ${activos}/${g.contactos.length} activo(s)`),
+      el('div',{style:'flex:1'}),
+      can('params')?el('button',{class:'btn ghost sm',onclick:()=>editDestinatarioCliente(null,g.id_grupo,g.nombre)},'+ Contacto'):el('span')
+    ));
+    if(!g.contactos.length){bloque.append(el('div',{class:'muted',style:'font-size:12px;padding:4px 0'},'Sin contactos configurados. Este grupo no recibirá el detalle.'));}
+    else {
+      const rc=g.contactos.map(c=>{
+        const st=c.activo?'<span class="badge ok">Activo</span>':'<span class="badge g">Inactivo</span>';
+        const r=[esc(c.email),esc(c.nombre||''),tipoBadgeDest(c.tipo||'to'),st];
+        if(can('params'))r.push(el('button',{class:'btn ghost sm',onclick:()=>editDestinatarioCliente(c,g.id_grupo,g.nombre)},'Editar'));
+        return r;
+      });
+      const hc=['Correo','Nombre','Tipo','Estado']; if(can('params'))hc.push('');
+      bloque.append(tableWrap(hc,rc,{empty:'—'}));
+    }
+    cont.append(bloque);
+  }
+  if(!porCliente.length) cont.append(el('div',{class:'muted'},'No hay grupos de cliente activos. Ve a Catálogos → Grupos.'));
+  pc.append(cont); v.append(pc);
+}
+async function vDestinatariosContabilidad(v){
+  if(can('params'))$('#pageAction').append(el('button',{class:'btn',onclick:()=>editDestinatarioContab()},'+ Destinatario'));
+  const dest=await api('GET','/api/destinatarios-contabilidad');
+  v.innerHTML='';
+  const p=el('div',{class:'panel'});
+  p.append(el('h3',{},'Registro contable',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},dest.filter(d=>d.activo).length+' activo(s) de '+dest.length))));
+  p.append(el('div',{class:'banner',html:'Correos que reciben <b>automáticamente</b> el registro contable: uno por semana al cierre (1-10, 11-17, 18-24, 25-fin) + un resumen mensual el día 1.'}));
+  const rows=dest.map(d=>{
+    const st = d.activo ? '<span class="badge ok">Activo</span>' : '<span class="badge g">Inactivo</span>';
+    const r=[esc(d.email),esc(d.nombre||''),tipoBadgeDest(d.tipo||'to'),st];
+    if(can('params')) r.push(el('button',{class:'btn ghost sm',onclick:(e)=>{e.stopPropagation();editDestinatarioContab(d);}},'Editar'));
+    return r;
+  });
+  const head=['Correo','Nombre','Tipo','Estado']; if(can('params'))head.push('');
+  p.append(tableWrap(head,rows,{empty:'Sin destinatarios de contabilidad. Agrega uno.'}));
+  v.append(p);
+}
+function editDestinatarioContab(d){
+  const isNew=!d; d=d||{};
+  const body=el('div',{});
+  const email=el('input',{type:'email',value:d.email||'',placeholder:'contabilidad@empresa.com'});
+  const nombre=el('input',{value:d.nombre||'',placeholder:'Nombre (opcional)'});
+  const tipo=el('select');
+  tipo.append(el('option',{value:'to'},'Para (To)'),el('option',{value:'cc'},'Copia (CC)'),el('option',{value:'bcc'},'Copia oculta (CCO)'));
+  tipo.value=d.tipo||'to';
+  const activo=el('input',{type:'checkbox'}); activo.checked=d.activo!==false;
+  body.append(fld('Correo',email),fld('Nombre',nombre),fld('Tipo',tipo),el('label',{class:'field',style:'flex-direction:row;align-items:center;gap:8px'},activo,el('span',{},'Activo (recibe correos)')));
+  const foot=el('div',{});
+  if(!isNew) foot.append(el('button',{class:'btn danger',onclick:async()=>{if(confirm('¿Eliminar '+d.email+'?')){await api('DELETE','/api/destinatarios-contabilidad/'+d.id);closeModal();render();}}},'Eliminar'),el('div',{style:'flex:1'}));
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    try{ await api('POST','/api/destinatarios-contabilidad',{id:d.id,email:email.value,nombre:nombre.value,tipo:tipo.value,activo:activo.checked}); closeModal(); toast('Guardado','ok'); render(); }
+    catch(e){toast(e.data&&e.data.error==='email_invalido'?'Correo inválido':errMsg(e),'err');}
+  }},'Guardar'));
+  modal(isNew?'Nuevo destinatario de contabilidad':'Editar destinatario',body,foot);
+}
+
+/* ---------- Registro contable: cortes semanales ---------- */
+async function vContabilidadCortes(v){
+  const hoy=new Date();
+  if(!vContabilidadCortes._m) vContabilidadCortes._m={y:hoy.getFullYear(),m:hoy.getMonth()+1};
+  const {y,m}=vContabilidadCortes._m;
+  const data=await api('GET','/api/contabilidad/mes?y='+y+'&m='+m);
+  v.innerHTML='';
+  // Selector mes + botones cabecera
+  const bar=el('div',{style:'display:flex;gap:8px;align-items:center;margin-bottom:16px;flex-wrap:wrap'});
+  bar.append(el('span',{class:'muted',style:'font-size:12px'},'Mes:'));
+  const selY=el('select'); for(let yy=hoy.getFullYear()-2;yy<=hoy.getFullYear()+1;yy++) selY.append(el('option',{value:yy,selected:yy===y?'':null},yy));
+  const selM=el('select'); ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'].forEach((n,i)=>selM.append(el('option',{value:i+1,selected:(i+1)===m?'':null},n)));
+  selY.value=y; selM.value=m;
+  selY.addEventListener('change',()=>{vContabilidadCortes._m.y=Number(selY.value);render();});
+  selM.addEventListener('change',()=>{vContabilidadCortes._m.m=Number(selM.value);render();});
+  bar.append(selY,selM);
+  bar.append(el('span',{style:'flex:1'}));
+  if(can('notificar')) bar.append(el('button',{class:'btn',onclick:async()=>{
+    if(!confirm('¿Enviar resumen mensual de este mes a los destinatarios de contabilidad?')) return;
+    try{ const r=await withBusy('Enviando resumen mensual…',()=>api('POST','/api/contabilidad/enviar-mensual',{anio:y,mes:m})); toast('Enviado a '+r.enviados+' destinatario(s)','ok'); render(); }
+    catch(e){const d=e.data||{}; toast(d.error==='sin_destinatarios'?'Sin destinatarios de contabilidad':d.error==='sin_to'?'Necesitas al menos un "Para"':d.error==='ses_no_configurado'?'SES no configurado':errMsg(e),'err');}
+  }},'📧 Enviar resumen mensual'));
+  v.append(bar);
+
+  // KPIs
+  const tot=data.total_mes;
+  const cards=el('div',{class:'cards'});
+  cards.append(el('div',{class:'card'},el('div',{class:'label'},'Comisión del mes'),el('div',{class:'value'},mxn(tot.com_mceb)),el('div',{class:'hint'},'MCEB · pactada')));
+  cards.append(el('div',{class:'card'},el('div',{class:'label'},'IVA'),el('div',{class:'value'},mxn(tot.iva_com_mceb)),el('div',{class:'hint'},'16 % s/ comisión')));
+  cards.append(el('div',{class:'card'},el('div',{class:'label'},'Dispersión'),el('div',{class:'value'},mxn(tot.disp_total)),el('div',{class:'hint'},'Suma de las 4 semanas')));
+  cards.append(el('div',{class:'card'},el('div',{class:'label'},'A facturar'),el('div',{class:'value'},mxn(tot.total_facturar)),el('div',{class:'hint'},'Comisión + IVA + banca')));
+  v.append(cards);
+
+  // Tabla semanas
+  const p=el('div',{class:'panel'});
+  p.append(el('h3',{},'Cortes semanales · '+selM.options[selM.selectedIndex].text+' '+y));
+  const cabeza=['Semana','Periodo',{t:'Comisión'},{t:'IVA'},{t:'Dispersión'},'Estado',''];
+  const rows=data.semanas.map(s=>{
+    const badge = s.estado==='Enviado' ? '<span class="badge ok">Enviado</span>' : s.estado==='Aún no cierra' ? '<span class="badge g">Aún no cierra</span>' : '<span class="badge w">Pendiente</span>';
+    const btn = s.estado==='Enviado' ? el('button',{class:'btn ghost sm',onclick:()=>enviarSemana(y,m,s.semana,true)},'Re-enviar') :
+                s.estado==='Aún no cierra' ? '' :
+                el('button',{class:'btn sm',onclick:()=>enviarSemana(y,m,s.semana,false)},'📧 Notificar corte');
+    return [
+      `<div class="tt">SEMANA ${s.semana}<small>${s.enviado_at?('Enviado '+new Date(s.enviado_at).toLocaleString('es-MX')):('Cierre '+fmtISO(s.hasta))}</small></div>`,
+      s.periodo,
+      {num: s.totales ? mxn(s.totales.com_mceb) : '—'},
+      {num: s.totales ? mxn(s.totales.iva_com_mceb) : '—'},
+      {num: s.totales ? mxn(s.totales.disp_total) : '—'},
+      badge, btn
+    ];
+  });
+  p.append(tableWrap(cabeza,rows));
+  v.append(p);
+
+  v.append(el('div',{class:'banner',html:'<b>Automatización:</b> el sistema envía un correo el día hábil siguiente al cierre de cada semana. El día 1 de cada mes se envía además un resumen consolidado. Configura destinatarios en <b>Destinatarios · Contabilidad</b>.'}));
+}
+async function enviarSemana(anio,mes,semana,esReenvio){
+  if(!confirm((esReenvio?'¿Re-enviar':'¿Enviar')+' SEMANA '+semana+' de '+mes+'/'+anio+' a los destinatarios de contabilidad?')) return;
+  try{ const r=await withBusy('Enviando…',()=>api('POST','/api/contabilidad/enviar',{anio,mes,semana})); toast('Enviado a '+r.enviados+' destinatario(s) · id '+(r.messageId||''),'ok'); render(); }
+  catch(e){const d=e.data||{}; toast(d.error==='sin_destinatarios'?'Sin destinatarios de contabilidad':d.error==='sin_to'?'Necesitas al menos un "Para"':d.error==='ses_no_configurado'?'SES no configurado':errMsg(e),'err');}
+}
+
 async function vDestinatarios(v){
   if(can('params'))$('#pageAction').append(el('button',{class:'btn',onclick:()=>editDestinatario()},'+ Destinatario general'),el('button',{class:'btn ghost',onclick:()=>editDestinatarioCliente()},'+ Destinatario por cliente'));
   const [dest,porCliente]=await Promise.all([api('GET','/api/destinatarios'),api('GET','/api/destinatarios-cliente')]);
@@ -1460,11 +1695,122 @@ async function vDispRefunds(v){
     if(!rows.length)p.append(el('div',{class:'empty'},'Sin devoluciones registradas.'));
     else p.append(tableWrap(['Folio','Fecha reporte','Monto','Ref. original','Estado','Vence','Días','Decisión'],rows.map(x=>{
       const row=[esc(x.folio),esc(x.fecha_reporte||'—'),{num:x.amount!=null?mxn(x.amount):'—'},esc(x.reference_original||'—'),badgeEstadoDisp(x.status),esc(x.fecha_limite_respuesta||'—'),semDias(x.dias_para_vencer),x.decision?badgeEstadoDisp(x.decision):'—'];
-      row._onclick=()=>abrirRefundTransicion(x);
+      row._onclick=()=>go('disp_ref_'+x.id);
       return row;
     })));
     v.append(p);
   }catch(e){v.append(el('div',{class:'banner err'},'No se pudo cargar refunds: '+errMsg(e)));}
+}
+/* ---------- DETALLE DE DEVOLUCIÓN SOSPECHOSA — pantalla completa (SS) ---------- */
+async function vDispRefundDetalle(v, id){
+  const [d, notifs, groups] = await Promise.all([
+    api('GET','/api/disputa/refunds/'+id),
+    api('GET','/api/disputa/refunds/'+id+'/notifications').catch(()=>[]),
+    api('GET','/api/disputa/client-groups').catch(()=>[]),
+  ]);
+  const grupoNombre = (groups||[]).find(g=>g.id===d.client_group_id)?.nombre || '—';
+  const fmt = iso => { if(!iso) return '—'; const [y,m,dd]=String(iso).slice(0,10).split('-'); return `${Number(dd)}/${Number(m)}/${y}`; };
+  const estadoBadge = { NEW:['b','Nueva'], NOTIFIED:['b','Notificada'], ANSWERED:['ok','Respondida'], EXPIRED:['d','Vencida'], CANCELLED:['g','Cancelada'] };
+  const bSpec = estadoBadge[d.status] || ['g',d.status];
+  const finales = ['ANSWERED','EXPIRED','CANCELLED'].includes(d.status);
+  const diasFmt = () => {
+    if(d.dias_para_vencer==null) return '—';
+    const n = d.dias_para_vencer;
+    if(n<0) return fmt(d.fecha_limite_respuesta)+' <span style="color:var(--danger);font-weight:600">(vencida '+Math.abs(n)+'d)</span>';
+    if(n===0) return fmt(d.fecha_limite_respuesta)+' <span class="badge w">Vence hoy</span>';
+    return fmt(d.fecha_limite_respuesta)+' <span class="muted">('+n+' d restantes)</span>';
+  };
+
+  v.innerHTML='';
+  // Header
+  const head = el('div',{style:'display:flex;align-items:center;gap:14px;margin-bottom:16px'});
+  head.append(el('div',{style:'font:800 24px Montserrat,sans-serif;color:var(--brand)'},esc(d.folio)));
+  head.append(el('span',{class:'badge '+bSpec[0]},bSpec[1]));
+  if(d.decision) head.append(el('span',{class:'badge '+(d.decision==='PROCEDE'?'ok':'d')},d.decision));
+  head.append(el('div',{style:'flex:1'}));
+  head.append(el('button',{class:'btn ghost sm',onclick:()=>go('disp_refunds')},'← Volver'));
+  v.append(head);
+
+  // 3 tarjetas
+  const cards = el('div',{class:'cards'});
+  const c1 = el('div',{class:'card'+(d.amount<0||true?' alert':'')});
+  c1.append(el('div',{class:'label'},'Monto'),el('div',{class:'value'},d.amount!=null?mxn(-Math.abs(d.amount)):'—'),el('div',{class:'hint'},'Devolución en '+(d.currency_code||'MXN')));
+  cards.append(c1);
+  const c2 = el('div',{class:'card'+(d.dias_para_vencer!=null&&d.dias_para_vencer<0?' alert':'')});
+  c2.append(el('div',{class:'label'},'Fecha límite (3 días hábiles)'),el('div',{class:'value',style:'font-size:18px',html:diasFmt()}));
+  cards.append(c2);
+  const c3 = el('div',{class:'card'});
+  c3.append(el('div',{class:'label'},'Grupo de cliente'),el('div',{class:'value',style:'font-size:20px'},esc(grupoNombre)),el('div',{class:'hint'},'Afiliación '+(d.merchant_affiliation||'—')));
+  cards.append(c3);
+  v.append(cards);
+
+  // Acciones
+  if(can('disputas') && !finales){
+    const acc = el('div',{class:'panel'}); acc.append(el('h3',{},'Acciones'));
+    const btns = el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'});
+    btns.append(el('button',{class:'btn',onclick:async()=>{
+      if(!confirm('¿Enviar / reenviar el correo al comercio?')) return;
+      try{ const r=await withBusy('Enviando…',()=>api('POST','/api/disputa/refunds/'+id+'/notify',{mensaje:''})); toast('Correo enviado a '+r.enviados+' contacto(s)','ok'); go('disp_ref_'+id); }
+      catch(e){const d2=e.data||{};toast(d2.error==='sin_contactos'?'Sin contactos con email':d2.error==='ses_no_configurado'?'SES no configurado':errMsg(e),'err');}
+    }},'📧 Notificar / reenviar al comercio'));
+    btns.append(el('button',{class:'btn ok',onclick:async()=>{
+      if(!confirm('¿Marcar como PROCEDE?')) return;
+      try{ await api('POST','/api/disputa/refunds/'+id+'/decision',{decision:'PROCEDE'}); toast('Marcada PROCEDE','ok'); go('disp_ref_'+id); }
+      catch(e){toast(errMsg(e),'err');}
+    }},'✓ Marcar PROCEDE'));
+    btns.append(el('button',{class:'btn danger',onclick:async()=>{
+      if(!confirm('¿Marcar como NO PROCEDE?')) return;
+      try{ await api('POST','/api/disputa/refunds/'+id+'/decision',{decision:'NO_PROCEDE'}); toast('Marcada NO PROCEDE','ok'); go('disp_ref_'+id); }
+      catch(e){toast(errMsg(e),'err');}
+    }},'✗ Marcar NO PROCEDE'));
+    btns.append(el('button',{class:'btn ghost',onclick:async()=>{
+      if(!confirm('¿Cancelar esta devolución?')) return;
+      try{ await api('POST','/api/disputa/refunds/'+id+'/cancel'); toast('Cancelada','ok'); go('disp_ref_'+id); }
+      catch(e){toast(errMsg(e),'err');}
+    }},'Cancelar devolución'));
+    acc.append(btns);
+    acc.append(el('div',{class:'muted',style:'font-size:12px;margin-top:10px'},'El comercio responde directo al correo con "PROCEDE" o "NO PROCEDE" y el folio en el asunto. También puedes registrar la decisión manualmente.'));
+    v.append(acc);
+  }
+
+  // Datos + Bitácora
+  const grid = el('div',{class:'grid2'});
+  const pDatos = el('div',{class:'panel'}); pDatos.append(el('h3',{},'Datos'));
+  const tbl = el('table');
+  const fila = (k,v) => { const tr=el('tr'); tr.append(el('td',{style:'color:var(--muted);width:45%'},k),el('td',{style:'font-weight:700',html:v||'—'})); return tr; };
+  tbl.append(fila('Comercio',esc(d.merchant_name||'—')));
+  tbl.append(fila('Afiliación',esc(d.merchant_affiliation||'—')));
+  tbl.append(fila('Marca',esc(d.brand||'—')));
+  tbl.append(fila('Fecha de la devolución',fmt(d.fecha_devolucion)));
+  tbl.append(fila('Venta previa (fecha)',fmt(d.venta_fecha)));
+  tbl.append(fila('Venta previa (referencia)',esc(d.reference_original||'—')));
+  tbl.append(fila('Autorización',esc(d.autorizacion||'—')));
+  tbl.append(fila('Tarjeta (últimos 4)',d.last4?'**** '+esc(d.last4):'—'));
+  tbl.append(fila('Nº de caso',esc(d.case_number||'—')));
+  tbl.append(fila('Recepción',fmt(d.fecha_reporte)));
+  pDatos.append(tbl); grid.append(pDatos);
+
+  const pBit = el('div',{class:'panel'}); pBit.append(el('h3',{},'Bitácora'));
+  (d.eventos||[]).slice().reverse().forEach(ev=>{
+    const it = el('div',{style:'padding:12px 0;border-bottom:1px solid var(--line)'});
+    it.append(el('div',{style:'font-size:12px;color:var(--muted)'},new Date(ev.ts).toLocaleString('es-MX')+' · '+esc(ev.actor||'—')));
+    it.append(el('div',{style:'margin-top:4px;font-weight:600'},esc(ev.detalle||(ev.tipo+(ev.estado_nuevo?' · '+ev.estado_nuevo:'')))));
+  });
+  if(!(d.eventos||[]).length) pBit.append(el('div',{class:'muted'},'Sin eventos.'));
+  grid.append(pBit); v.append(grid);
+
+  // Notificaciones
+  if((notifs||[]).length){
+    const pN = el('div',{class:'panel'}); pN.append(el('h3',{},'Notificaciones'));
+    notifs.forEach(n=>{
+      const wrap = el('div',{style:'padding:10px 0;border-bottom:1px solid var(--line)'});
+      wrap.append(el('div',{style:'font-weight:600;color:var(--brand);word-break:break-all'},esc(n.destinatario||'—')));
+      const st = n.status==='SENT'?'✅ Enviado':(n.status==='FAILED'?'⚠ Falló':n.status);
+      wrap.append(el('div',{class:'muted',style:'font-size:12px;margin-top:2px'},st+' · '+new Date(n.enviado_at).toLocaleString('es-MX')));
+      pN.append(wrap);
+    });
+    v.append(pN);
+  }
 }
 async function abrirRefundTransicion(r){
   if(!can('disputas'))return;

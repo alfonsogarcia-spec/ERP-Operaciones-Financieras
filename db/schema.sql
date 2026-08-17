@@ -207,6 +207,44 @@ create table if not exists destinatarios (
 );
 alter table destinatarios add column if not exists tipo text not null default 'to';
 
+-- Cortes contables semanales (contabilidad).
+-- Se generan 4 por mes: 1-10, 11-17, 18-24, 25-fin.
+create table if not exists cortes_contables (
+  id                serial primary key,
+  anio              integer not null,
+  mes               integer not null,
+  semana            integer not null,          -- 1..4
+  periodo_desde     date not null,
+  periodo_hasta     date not null,
+  com_mceb          numeric not null default 0,
+  iva_com_mceb      numeric not null default 0,
+  banca_telematic   numeric not null default 0,
+  iva_banca         numeric not null default 0,
+  disp_total        numeric not null default 0,
+  total_facturar    numeric not null default 0,
+  estado            text    not null default 'Pendiente',  -- Pendiente | Enviado
+  enviado_at        timestamptz,
+  enviado_por       text,
+  message_id        text,
+  creado_at         timestamptz default now(),
+  unique(anio, mes, semana)
+);
+
+-- Destinatarios que reciben el registro contable (semanal + mensual).
+create table if not exists destinatarios_contabilidad (
+  id             serial primary key,
+  email          text,
+  email_cifrado  text,
+  email_hash     text,
+  nombre         text,
+  nombre_cifrado text,
+  tipo           text not null default 'to',   -- 'to' | 'cc' | 'bcc'
+  activo         boolean not null default true,
+  creado_at      timestamptz default now(),
+  creado_por     text,
+  unique(email_hash)
+);
+
 -- Destinatarios por grupo de cliente: reciben el detalle transaccional de SU
 -- grupo cuando se dispara "Notificar clientes" en un corte. Independientes de
 -- los destinatarios generales del corte (la tabla anterior).

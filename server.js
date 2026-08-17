@@ -1276,6 +1276,234 @@ app.get('/api/contable.xlsx', auth, async (req, res) => {
 });
 
 /* ============================================================================
+   CONTABILIDAD — Cortes semanales del mes (SEMANA 1..4 = 1-10, 11-17, 18-24, 25-fin)
+   Envío automático semanal + resumen mensual el día 1.
+   ========================================================================= */
+function semanasDelMes(anio, mes) {
+  // mes: 1..12. Devuelve [{semana, desde:'YYYY-MM-DD', hasta:'YYYY-MM-DD'}]
+  const pad = n => String(n).padStart(2, '0');
+  const ultDia = new Date(Date.UTC(anio, mes, 0)).getUTCDate();
+  return [
+    { semana: 1, desde: `${anio}-${pad(mes)}-01`, hasta: `${anio}-${pad(mes)}-10` },
+    { semana: 2, desde: `${anio}-${pad(mes)}-11`, hasta: `${anio}-${pad(mes)}-17` },
+    { semana: 3, desde: `${anio}-${pad(mes)}-18`, hasta: `${anio}-${pad(mes)}-24` },
+    { semana: 4, desde: `${anio}-${pad(mes)}-25`, hasta: `${anio}-${pad(mes)}-${pad(ultDia)}` },
+  ];
+}
+function nombreMes(m) { return ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'][m - 1] || ''; }
+async function computeSemanaContable(desde, hasta) {
+  const rows = await computeContable(desde, hasta);
+  const S = k => E.round2(rows.reduce((a, r) => a + (r[k] || 0), 0));
+  const com_mceb   = S('com_tdd') + S('com_tdc') + S('com_amex') + S('com_int');
+  const iva_com    = S('iva_tdd') + S('iva_tdc') + S('iva_amex') + S('iva_int');
+  const banca      = S('banca');
+  const iva_banca  = S('iva_banca');
+  const disp       = S('disp');
+  const total_fact = E.round2(com_mceb + iva_com + banca + iva_banca);
+  return { com_mceb: E.round2(com_mceb), iva_com_mceb: E.round2(iva_com), banca_telematic: E.round2(banca), iva_banca: E.round2(iva_banca), disp_total: E.round2(disp), total_facturar: total_fact, n_rows: rows.length };
+}
+function hoyISOmx() {
+  const N = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const g = t => (N.find(x => x.type === t) || {}).value;
+  return `${g('year')}-${g('month')}-${g('day')}`;
+}
+app.get('/api/contabilidad/mes', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const y = parseInt(req.query.y, 10), m = parseInt(req.query.m, 10);
+  if (!y || !m || m < 1 || m > 12) return res.status(400).json({ error: 'y_m' });
+  const semanas = semanasDelMes(y, m);
+  const hoy = hoyISOmx();
+  const guardadas = (await db.query('select * from cortes_contables where anio=$1 and mes=$2', [y, m])).rows;
+  const out = [];
+  for (const s of semanas) {
+    const g = guardadas.find(r => r.semana === s.semana);
+    const yaCerro = s.hasta < hoy;
+    let totales;
+    if (g) {
+      totales = { com_mceb: Number(g.com_mceb), iva_com_mceb: Number(g.iva_com_mceb), banca_telematic: Number(g.banca_telematic), iva_banca: Number(g.iva_banca), disp_total: Number(g.disp_total), total_facturar: Number(g.total_facturar), n_rows: null };
+    } else if (yaCerro || s.desde <= hoy) {
+      totales = await computeSemanaContable(s.desde, s.hasta);
+    } else {
+      totales = null;
+    }
+    out.push({
+      semana: s.semana, desde: s.desde, hasta: s.hasta,
+      periodo: `${Number(s.desde.slice(8,10))} – ${Number(s.hasta.slice(8,10))} ${nombreMes(m).toUpperCase()} ${y}`,
+      totales,
+      estado: g ? g.estado : (yaCerro ? 'Pendiente' : 'Aún no cierra'),
+      enviado_at: g ? g.enviado_at : null,
+      enviado_por: g ? g.enviado_por : null,
+    });
+  }
+  const total_mes = out.reduce((s, x) => ({
+    com_mceb: s.com_mceb + (x.totales?.com_mceb || 0),
+    iva_com_mceb: s.iva_com_mceb + (x.totales?.iva_com_mceb || 0),
+    disp_total: s.disp_total + (x.totales?.disp_total || 0),
+    total_facturar: s.total_facturar + (x.totales?.total_facturar || 0),
+  }), { com_mceb: 0, iva_com_mceb: 0, disp_total: 0, total_facturar: 0 });
+  res.json({ anio: y, mes: m, semanas: out, total_mes });
+});
+
+function armarInformeContableHTML({ anio, mes, semanas, esMensual }) {
+  const brand = '#04003A', accent = '#157BF6', muted = '#707070', line = '#E4E6E7', ink = '#04003A';
+  const N = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const g = t => (N.find(x => x.type === t) || {}).value;
+  const hoy = `${g('day')}/${g('month')}/${g('year')}`;
+  const fmt = v => (v || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const subject = esMensual
+    ? `Resumen contable · ${nombreMes(mes)} de ${anio}`
+    : `Registro contable · Semana ${semanas[0].semana} · ${nombreMes(mes)} ${anio}`;
+  let filas;
+  if (esMensual) {
+    filas = [
+      ['Facturación de ' + nombreMes(mes) + ' ' + anio, '$ ' + fmt(semanas.reduce((s, x) => s + (x.totales?.com_mceb || 0) + (x.totales?.iva_com_mceb || 0), 0)) + ' MXN'],
+      ...semanas.map(x => ['SEMANA ' + x.semana, x.periodo + ' · $' + fmt((x.totales?.com_mceb || 0) + (x.totales?.iva_com_mceb || 0))]),
+      ['Dispersión del mes', '$ ' + fmt(semanas.reduce((s, x) => s + (x.totales?.disp_total || 0), 0)) + ' MXN'],
+    ];
+  } else {
+    const s = semanas[0];
+    filas = [
+      ['Semana', `SEMANA ${s.semana} · ${s.periodo}`],
+      ['Comisión MCEB', '$ ' + fmt(s.totales.com_mceb) + ' MXN'],
+      ['IVA comisión', '$ ' + fmt(s.totales.iva_com_mceb) + ' MXN'],
+      ['Ingreso Telematic (banca)', '$ ' + fmt(s.totales.banca_telematic) + ' MXN'],
+      ['IVA banca', '$ ' + fmt(s.totales.iva_banca) + ' MXN'],
+      ['Dispersión total', '$ ' + fmt(s.totales.disp_total) + ' MXN'],
+      ['TOTAL A FACTURAR', '$ ' + fmt(s.totales.total_facturar) + ' MXN'],
+    ];
+  }
+  const filasHtml = filas.map(([k, v]) => `<tr><td width="45%" style="padding:11px 14px;border-top:1px solid ${line};font:400 13px/1.4 Montserrat,Arial,sans-serif;color:${muted}">${escapeHtml(k)}</td><td style="padding:11px 14px;border-top:1px solid ${line};font:700 13px/1.4 Montserrat,Arial,sans-serif;color:${ink}">${escapeHtml(v)}</td></tr>`).join('');
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${escapeHtml(subject)}</title></head>
+<body style="margin:0;padding:0;background:#EFF2F5;font-family:Montserrat,Arial,sans-serif;color:${ink}">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#EFF2F5;padding:24px 0"><tr><td align="center">
+<table role="presentation" width="640" cellspacing="0" cellpadding="0" style="max-width:640px;background:#fff;border:1px solid ${line};border-radius:14px;overflow:hidden">
+<tr><td style="padding:28px 36px 0"><img src="cid:polipay-logo" alt="Polipay" height="26" style="display:block;height:26px;border:0"></td></tr>
+<tr><td style="padding:14px 36px 0"><div style="height:4px;background:${accent};border-radius:2px;width:64px"></div></td></tr>
+<tr><td style="padding:20px 36px 0;font:400 14px/1.5 Montserrat,Arial,sans-serif;color:${muted}">${escapeHtml(esMensual ? 'Resumen contable · ' + nombreMes(mes) + ' ' + anio : 'Registro contable · Semana ' + semanas[0].semana + ' · ' + nombreMes(mes) + ' ' + anio)}</td></tr>
+<tr><td style="padding:28px 36px 0;font:400 14px/1.6 Montserrat,Arial,sans-serif;color:${ink}">Estimados,</td></tr>
+<tr><td style="padding:16px 36px 8px;font:400 14px/1.6 Montserrat,Arial,sans-serif;color:${ink}">${esMensual
+    ? 'Cierre del mes de <b>' + nombreMes(mes) + ' de ' + anio + '</b>. Adjuntamos el consolidado con las 4 semanas del mes.'
+    : 'Les compartimos el <b>registro contable semanal</b> con los ingresos por comisión, IVA y dispersión del periodo. Adjuntamos el detalle por afiliación.'}</td></tr>
+<tr><td style="padding:20px 36px 0"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">${filasHtml}</table></td></tr>
+<tr><td style="padding:20px 36px 0"><div style="background:#EDEEF7;border:1px solid #ABCAE9;color:#0F56AC;padding:12px 16px;border-radius:12px;font:400 13px/1.55 Montserrat,Arial,sans-serif">Adjunto: <b>${esMensual ? 'registro_contable_' + nombreMes(mes) + '_' + anio + '.xlsx' : 'registro_contable_' + semanas[0].desde + '_a_' + semanas[0].hasta + '.xlsx'}</b> con el detalle por afiliación.</div></td></tr>
+<tr><td style="padding:24px 36px 32px;font:400 12px/1.55 Montserrat,Arial,sans-serif;color:${muted}">Este correo se generó automáticamente por la plataforma de conciliación. Generado ${hoy}.</td></tr>
+</table>
+<div style="max-width:640px;margin:12px auto 0;padding:0 8px;font:400 11px/1.4 Montserrat,Arial,sans-serif;color:${muted};text-align:center">Polipay POS Settlement · MCEB · ops.agregador@polipay.io</div>
+</td></tr></table></body></html>`;
+  return { subject, html };
+}
+
+async function armarAdjuntoContable(desde, hasta) {
+  const rows = await computeContable(desde, hasta);
+  // Reuso la tabla del /api/contable.xlsx (encabezados de 2 filas + merges)
+  const ddmmyyyy = iso => { const f = E.parseFecha(iso); return f ? `${String(f.getDate()).padStart(2, '0')} ${String(f.getMonth() + 1).padStart(2, '0')} ${f.getFullYear()}` : iso; };
+  const h1 = ['FECHA', 'AFILIACIÓN', 'RAZON SOCIAL', 'INGRESOS POR COMISION MCEB', '', '', '', '', '', '', '', 'DISPERSION DE MCEB', 'INGRESO POR COMISION TELEMATIC', ''];
+  const h2 = ['', '', '', 'TDD', 'IVA', 'TDC', 'IVA', 'AMEX', 'IVA', 'INTERNACIONAL', 'IVA', '', 'BANCA', 'IVA'];
+  const merges = [{ s: { r: 0, c: 0 }, e: { r: 1, c: 0 } }, { s: { r: 0, c: 1 }, e: { r: 1, c: 1 } }, { s: { r: 0, c: 2 }, e: { r: 1, c: 2 } }, { s: { r: 0, c: 3 }, e: { r: 0, c: 10 } }, { s: { r: 0, c: 11 }, e: { r: 1, c: 11 } }, { s: { r: 0, c: 12 }, e: { r: 0, c: 13 } }];
+  const cols = [{ wch: 14 }, { wch: 14 }, { wch: 30 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 15 }, { wch: 13 }, { wch: 18 }, { wch: 14 }, { wch: 13 }];
+  const data = rows.map(r => [ddmmyyyy(r.fl), String(r.afil), r.razon, E.round2(r.com_tdd), E.round2(r.iva_tdd), E.round2(r.com_tdc), E.round2(r.iva_tdc), E.round2(r.com_amex), E.round2(r.iva_amex), E.round2(r.com_int), E.round2(r.iva_int), E.round2(r.disp), E.round2(r.banca), E.round2(r.iva_banca)]);
+  const fmt = { z: '#,##0.00', cols: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], rowFrom: 2 };
+  return X.buildXLSX([{ name: 'REGISTROS CONTABLES', aoa: [h1, h2, ...data], merges, cols, fmt }]);
+}
+
+async function enviarContabilidad({ req, anio, mes, semanas, esMensual, semanaN }) {
+  if (!sesEnabled()) throw new Error('ses_no_configurado');
+  const destRaw = (await db.query("select email,email_cifrado,nombre,nombre_cifrado,tipo from destinatarios_contabilidad where activo=true")).rows;
+  const dest = destRaw.map(d => ({ email: descifraTexto(d.email_cifrado, d.email), nombre: descifraTexto(d.nombre_cifrado, d.nombre), tipo: d.tipo }));
+  if (!dest.length) throw new Error('sin_destinatarios');
+  const fmt = d => d.nombre ? `"${d.nombre}" <${d.email}>` : d.email;
+  const to  = dest.filter(d => (d.tipo || 'to') === 'to').map(fmt);
+  const cc  = dest.filter(d => (d.tipo || 'to') === 'cc').map(fmt);
+  const bcc = dest.filter(d => (d.tipo || 'to') === 'bcc').map(fmt);
+  if (!to.length) throw new Error('sin_to');
+  const { subject, html } = armarInformeContableHTML({ anio, mes, semanas, esMensual });
+  const logoBuf = require('fs').readFileSync(path.join(__dirname, 'public', 'logo.png'));
+  const inlineImages = [{ cid: 'polipay-logo', filename: 'polipay-logo.png', contentType: 'image/png', content: logoBuf }];
+  let attachments;
+  if (esMensual) {
+    // 4 hojas — una por semana
+    attachments = [];
+    for (const s of semanas) {
+      const buf = await armarAdjuntoContable(s.desde, s.hasta);
+      attachments.push({ filename: `registro_contable_semana_${s.semana}_${s.desde}_a_${s.hasta}.xlsx`, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: buf });
+    }
+  } else {
+    const s = semanas[0];
+    const buf = await armarAdjuntoContable(s.desde, s.hasta);
+    attachments = [{ filename: `registro_contable_${s.desde}_a_${s.hasta}.xlsx`, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: buf }];
+  }
+  const messageId = await sendSES({ to, cc, bcc, subject, html, attachments, inlineImages });
+  // Persistir estado
+  if (!esMensual) {
+    const s = semanas[0];
+    await db.query(`insert into cortes_contables(anio, mes, semana, periodo_desde, periodo_hasta, com_mceb, iva_com_mceb, banca_telematic, iva_banca, disp_total, total_facturar, estado, enviado_at, enviado_por, message_id)
+      values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'Enviado',now(),$12,$13)
+      on conflict(anio,mes,semana) do update set com_mceb=excluded.com_mceb, iva_com_mceb=excluded.iva_com_mceb, banca_telematic=excluded.banca_telematic, iva_banca=excluded.iva_banca, disp_total=excluded.disp_total, total_facturar=excluded.total_facturar, estado='Enviado', enviado_at=now(), enviado_por=excluded.enviado_por, message_id=excluded.message_id`,
+      [anio, mes, semanaN, s.desde, s.hasta, s.totales.com_mceb, s.totales.iva_com_mceb, s.totales.banca_telematic, s.totales.iva_banca, s.totales.disp_total, s.totales.total_facturar, req.user.nombre, messageId]);
+  }
+  return { ok: true, enviados: dest.length, messageId };
+}
+
+app.post('/api/contabilidad/enviar', auth, requiereRol('admin', 'tesoreria', 'bancos'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const { anio, mes, semana } = req.body || {};
+  if (!anio || !mes || !semana) return res.status(400).json({ error: 'anio_mes_semana' });
+  const s = semanasDelMes(anio, mes).find(x => x.semana === Number(semana));
+  if (!s) return res.status(400).json({ error: 'semana_invalida' });
+  try {
+    const totales = await computeSemanaContable(s.desde, s.hasta);
+    const r = await enviarContabilidad({ req, anio, mes, semanas: [{ ...s, totales, periodo: `${Number(s.desde.slice(8,10))} – ${Number(s.hasta.slice(8,10))} ${nombreMes(mes).toUpperCase()} ${anio}` }], esMensual: false, semanaN: s.semana });
+    await bit(req, 'contabilidad_enviar', `SEMANA ${s.semana} ${anio}-${mes}`, { resource_type: 'contable', resource_id: `${anio}-${mes}-${s.semana}` });
+    res.json(r);
+  } catch (e) { res.status(500).json({ error: e.message, mensaje: e.message }); }
+});
+app.post('/api/contabilidad/enviar-mensual', auth, requiereRol('admin', 'tesoreria', 'bancos'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const { anio, mes } = req.body || {};
+  if (!anio || !mes) return res.status(400).json({ error: 'anio_mes' });
+  try {
+    const arr = [];
+    for (const s of semanasDelMes(anio, mes)) {
+      const totales = await computeSemanaContable(s.desde, s.hasta);
+      arr.push({ ...s, totales, periodo: `${Number(s.desde.slice(8,10))} – ${Number(s.hasta.slice(8,10))} ${nombreMes(mes).toUpperCase()} ${anio}` });
+    }
+    const r = await enviarContabilidad({ req, anio, mes, semanas: arr, esMensual: true });
+    await bit(req, 'contabilidad_enviar_mensual', `${anio}-${mes}`, { resource_type: 'contable', resource_id: `${anio}-${mes}` });
+    res.json(r);
+  } catch (e) { res.status(500).json({ error: e.message, mensaje: e.message }); }
+});
+
+/* --- Destinatarios de contabilidad --- */
+app.get('/api/destinatarios-contabilidad', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const rows = (await db.query('select * from destinatarios_contabilidad order by activo desc, email')).rows;
+  res.json(rows.map(d => ({ ...d, email: descifraTexto(d.email_cifrado, d.email), nombre: descifraTexto(d.nombre_cifrado, d.nombre) })));
+});
+app.post('/api/destinatarios-contabilidad', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const b = req.body || {};
+  const email = String(b.email || '').trim().toLowerCase();
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'email_invalido' });
+  const tipo = ['to', 'cc', 'bcc'].includes(String(b.tipo || '').toLowerCase()) ? String(b.tipo).toLowerCase() : 'to';
+  const nombreD = String(b.nombre || '').trim();
+  const eHash = C.hmacEmail(email), eCif = C.encrypt(email), nCif = C.encrypt(nombreD);
+  if (b.id) {
+    await db.query('update destinatarios_contabilidad set email=$1,nombre=$2,tipo=$3,activo=$4,email_hash=$5,email_cifrado=$6,nombre_cifrado=$7 where id=$8', [email, nombreD, tipo, !!b.activo, eHash, eCif, nCif, b.id]);
+  } else {
+    await db.query('insert into destinatarios_contabilidad(email,nombre,tipo,activo,creado_por,email_hash,email_cifrado,nombre_cifrado) values($1,$2,$3,$4,$5,$6,$7,$8) on conflict(email_hash) do update set nombre=excluded.nombre, tipo=excluded.tipo, activo=excluded.activo, email_cifrado=excluded.email_cifrado, nombre_cifrado=excluded.nombre_cifrado',
+      [email, nombreD, tipo, b.activo !== false, req.user.nombre, eHash, eCif, nCif]);
+  }
+  await bit(req, b.id ? 'destinatario_contab_editar' : 'destinatario_contab_alta', `${email} (${tipo})`, { resource_type: 'destinatario_contab', resource_id: b.id });
+  res.json({ ok: true });
+});
+app.delete('/api/destinatarios-contabilidad/:id', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  await db.query('delete from destinatarios_contabilidad where id=$1', [parseInt(req.params.id, 10)]);
+  await bit(req, 'destinatario_contab_baja', '', { resource_type: 'destinatario_contab', resource_id: req.params.id });
+  res.json({ ok: true });
+});
+
+/* ============================================================================
    CONTRACARGOS — Sección Operación → Contracargos.
    Se suben los reportes de "contracargos a retener" que ya genera el sistema
    externo. Cada reporte se guarda con su cargado_en_fecha (default: hoy MX,
@@ -2013,12 +2241,28 @@ function armarNotifDisputaHTML(n, opts) {
         <div style="font:700 14px/1.4 Arial,Helvetica,sans-serif;color:${ink};margin:0 0 8px">Documentos requeridos (según el código de razón):</div>
         <ul style="margin:0;padding:0 0 0 20px;font:400 13px/1.7 Arial,Helvetica,sans-serif;color:${ink}">${docs.map(d => `<li>${escapeHtml(d)}</li>`).join('')}</ul>
       </td></tr>` : ''}
+      ${n.tipo === 'refund' ? `
+      <!-- CTA para responder por correo (devoluciones sospechosas) -->
+      <tr><td style="padding:24px 36px 0">
+        <div style="background:#EDEEF7;border:1px solid #ABCAE9;color:#0F56AC;padding:12px 16px;border-radius:12px;font:400 13px/1.55 Arial,Helvetica,sans-serif">
+          Cuenta con <b>3 días hábiles</b> (hasta el <b>${escapeHtml(n.fecha_limite_respuesta || '—')}</b>) para atender este requerimiento. Por favor valide que la devolución tenga una <b>venta previa</b> y considérela en sus conciliaciones.
+        </div>
+      </td></tr>
+      <tr><td style="padding:22px 36px 0">
+        <div style="font:700 13px/1.4 Arial,Helvetica,sans-serif;color:${ink};margin-bottom:10px">Responda a este correo con:</div>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+          <td style="padding-right:5px" width="50%"><a href="mailto:${SES_FROM}?subject=PROCEDE%20${encodeURIComponent(n.folio || '')}&body=La%20devoluci%C3%B3n%20procede." style="display:block;text-align:center;padding:12px 14px;border-radius:12px;text-decoration:none;font-weight:700;font-size:13px;background:#4BB543;color:#fff">✓ PROCEDE</a></td>
+          <td style="padding-left:5px" width="50%"><a href="mailto:${SES_FROM}?subject=NO%20PROCEDE%20${encodeURIComponent(n.folio || '')}&body=La%20devoluci%C3%B3n%20NO%20procede%20porque..." style="display:block;text-align:center;padding:12px 14px;border-radius:12px;text-decoration:none;font-weight:700;font-size:13px;background:#ffffff;color:#CC0000;border:1px solid #CC0000">✗ NO PROCEDE</a></td>
+        </tr></table>
+        <div style="font:400 11px/1.5 Arial,Helvetica,sans-serif;color:${muted};margin-top:8px">Al presionar un botón se abre su correo con el asunto ya escrito. También puede responder este mismo hilo con <b>PROCEDE</b> o <b>NO PROCEDE</b> y el folio <b>${escapeHtml(n.folio || '')}</b> en el asunto.</div>
+      </td></tr>
+      ` : `
       <!-- Advertencia de retención -->
       <tr><td style="padding:24px 36px 0">
         <div style="background:${warnBg};border:1px solid ${warnBorder};border-radius:10px;padding:14px 16px;font:400 13px/1.55 Arial,Helvetica,sans-serif;color:${warnInk}">
-          <span style="color:${warnInk}">⚠</span> El monto de este ${n.tipo === 'refund' ? 'caso' : n.tipo === 'duplicate' ? 'cobro' : 'contracargo'} <b>será retenido de su siguiente liquidación, el día hábil siguiente a esta notificación</b>. Si no recibimos su evidencia antes del <b>${escapeHtml(n.fecha_limite_respuesta || 'la fecha indicada')}</b>, se tomará como <b>aceptado</b>: el débito será definitivo y el caso <b>no podrá disputarse posteriormente</b>.
+          <span style="color:${warnInk}">⚠</span> El monto de este ${n.tipo === 'duplicate' ? 'cobro' : 'contracargo'} <b>será retenido de su siguiente liquidación, el día hábil siguiente a esta notificación</b>. Si no recibimos su evidencia antes del <b>${escapeHtml(n.fecha_limite_respuesta || 'la fecha indicada')}</b>, se tomará como <b>aceptado</b>: el débito será definitivo y el caso <b>no podrá disputarse posteriormente</b>.
         </div>
-      </td></tr>
+      </td></tr>`}
       <!-- Footer -->
       <tr><td style="padding:24px 36px 32px;font:400 12px/1.55 Arial,Helvetica,sans-serif;color:${muted}">
         Este mensaje fue generado automáticamente por la plataforma de gestión de contracargos. Para responder, conserve el folio <b style="color:${ink}">${escapeHtml(n.folio || '')}</b> en el asunto.
@@ -2567,6 +2811,47 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+/* ---------- Cron interno de contabilidad ---------- */
+function agendaContabilidad() {
+  const evaluar = async () => {
+    if (!sesEnabled()) return;
+    try {
+      const hoy = hoyISOmx();
+      const [ay, am, ad] = hoy.split('-').map(Number);
+      // Día 1: resumen mensual del mes anterior (si no se ha enviado).
+      if (ad === 1) {
+        const anteriorMes = am === 1 ? 12 : am - 1;
+        const anteriorAnio = am === 1 ? ay - 1 : ay;
+        const yaEnviado = (await db.query("select 1 from bitacora where accion='contabilidad_enviar_mensual' and resource_id=$1 and ts::date=current_date", [`${anteriorAnio}-${anteriorMes}`])).rows.length;
+        if (!yaEnviado) {
+          const arr = [];
+          for (const s of semanasDelMes(anteriorAnio, anteriorMes)) {
+            const totales = await computeSemanaContable(s.desde, s.hasta);
+            arr.push({ ...s, totales, periodo: `${Number(s.desde.slice(8,10))} – ${Number(s.hasta.slice(8,10))} ${nombreMes(anteriorMes).toUpperCase()} ${anteriorAnio}` });
+          }
+          try { await enviarContabilidad({ req: { user: { nombre: 'sistema (cron)' } }, anio: anteriorAnio, mes: anteriorMes, semanas: arr, esMensual: true }); await db.query("insert into bitacora(usuario, accion, detalle, resource_type, resource_id) values('sistema','contabilidad_enviar_mensual','auto',$1,$2)", ['contable', `${anteriorAnio}-${anteriorMes}`]); console.log('[contabilidad] mensual enviado', anteriorAnio, anteriorMes); }
+          catch (e) { console.warn('[contabilidad] mensual falló:', e.message); }
+        }
+      }
+      // Semanales: enviar el día hábil siguiente al cierre (11, 18, 25 y día 1 del mes siguiente).
+      // Aquí, para simplicidad y siendo cron horario, verificamos si toca alguna semana cerrada sin enviar.
+      const semanas = semanasDelMes(ay, am);
+      for (const s of semanas) {
+        if (s.hasta >= hoy) continue;                     // aún no cierra o cierra hoy
+        const g = (await db.query('select id, estado from cortes_contables where anio=$1 and mes=$2 and semana=$3', [ay, am, s.semana])).rows[0];
+        if (g && g.estado === 'Enviado') continue;
+        const totales = await computeSemanaContable(s.desde, s.hasta);
+        const periodo = `${Number(s.desde.slice(8,10))} – ${Number(s.hasta.slice(8,10))} ${nombreMes(am).toUpperCase()} ${ay}`;
+        try { await enviarContabilidad({ req: { user: { nombre: 'sistema (cron)' } }, anio: ay, mes: am, semanas: [{ ...s, totales, periodo }], esMensual: false, semanaN: s.semana }); console.log('[contabilidad] semanal enviado', ay, am, 'S' + s.semana); }
+        catch (e) { console.warn('[contabilidad] semanal falló:', e.message); }
+      }
+    } catch (e) { console.warn('[contabilidad] cron error:', e.message); }
+  };
+  // Corre 1 vez al arranque (5 min después) y luego cada hora.
+  setTimeout(evaluar, 5 * 60 * 1000);
+  setInterval(evaluar, 60 * 60 * 1000);
+}
+
 /* ---------- arranque ---------- */
 (async () => {
   try { const kind = await db.initDB(); console.log('Base de datos:', kind); }
@@ -2574,4 +2859,8 @@ app.get('*', (req, res) => {
   app.listen(PORT, () => console.log(`Polipay POS Settlement en http://localhost:${PORT}`));
   // Agenda el snapshot WORM diario (best-effort; si SES no está o falla, se reintenta).
   if (sesEnabled()) WORM.agendar(wormDeps());
+  // Envío automático de contabilidad: al día hábil siguiente al cierre de
+  // cada semana (1-10, 11-17, 18-24, 25-fin) sale un correo con el detalle;
+  // el día 1 de cada mes sale también el resumen mensual del mes anterior.
+  agendaContabilidad();
 })();
