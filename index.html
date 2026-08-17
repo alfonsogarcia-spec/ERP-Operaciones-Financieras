@@ -1027,6 +1027,13 @@ async function vContabilidadCortes(v){
   selM.addEventListener('change',()=>{vContabilidadCortes._m.m=Number(selM.value);render();});
   bar.append(selY,selM);
   bar.append(el('span',{style:'flex:1'}));
+  // Descarga manual: mes completo (desde el 01 hasta fin de mes)
+  bar.append(el('button',{class:'btn ghost',onclick:()=>{
+    const pad=n=>String(n).padStart(2,'0');
+    const ultDia=new Date(y,m,0).getDate();
+    descargar('/api/contable.xlsx?desde='+y+'-'+pad(m)+'-01&hasta='+y+'-'+pad(m)+'-'+pad(ultDia),`registro_contable_${y}-${pad(m)}.xlsx`)
+      .catch(e=>toast(errMsg(e),'err'));
+  }},'⬇ Descargar mes completo'));
   if(can('notificar')) bar.append(el('button',{class:'btn',onclick:async()=>{
     if(!confirm('¿Enviar resumen mensual de este mes a los destinatarios de contabilidad?')) return;
     try{ const r=await withBusy('Enviando resumen mensual…',()=>api('POST','/api/contabilidad/enviar-mensual',{anio:y,mes:m})); toast('Enviado a '+r.enviados+' destinatario(s)','ok'); render(); }
@@ -1049,16 +1056,17 @@ async function vContabilidadCortes(v){
   const cabeza=['Semana','Periodo',{t:'Comisión'},{t:'IVA'},{t:'Dispersión'},'Estado',''];
   const rows=data.semanas.map(s=>{
     const badge = s.estado==='Enviado' ? '<span class="badge ok">Enviado</span>' : s.estado==='Aún no cierra' ? '<span class="badge g">Aún no cierra</span>' : '<span class="badge w">Pendiente</span>';
-    const btn = s.estado==='Enviado' ? el('button',{class:'btn ghost sm',onclick:()=>enviarSemana(y,m,s.semana,true)},'Re-enviar') :
-                s.estado==='Aún no cierra' ? '' :
-                el('button',{class:'btn sm',onclick:()=>enviarSemana(y,m,s.semana,false)},'📧 Notificar corte');
+    const acciones = el('div',{style:'display:flex;gap:6px;justify-content:flex-end'});
+    if(s.totales) acciones.append(el('button',{class:'btn ghost sm',onclick:(e)=>{e.stopPropagation();descargar('/api/contable.xlsx?desde='+s.desde+'&hasta='+s.hasta,`registro_contable_semana_${s.semana}_${s.desde}_a_${s.hasta}.xlsx`).catch(er=>toast(errMsg(er),'err'));}},'⬇'));
+    if(s.estado==='Enviado') acciones.append(el('button',{class:'btn ghost sm',onclick:(e)=>{e.stopPropagation();enviarSemana(y,m,s.semana,true);}},'Re-enviar'));
+    else if(s.estado!=='Aún no cierra') acciones.append(el('button',{class:'btn sm',onclick:(e)=>{e.stopPropagation();enviarSemana(y,m,s.semana,false);}},'📧 Notificar'));
     return [
       `<div class="tt">SEMANA ${s.semana}<small>${s.enviado_at?('Enviado '+new Date(s.enviado_at).toLocaleString('es-MX')):('Cierre '+fmtISO(s.hasta))}</small></div>`,
       s.periodo,
       {num: s.totales ? mxn(s.totales.com_mceb) : '—'},
       {num: s.totales ? mxn(s.totales.iva_com_mceb) : '—'},
       {num: s.totales ? mxn(s.totales.disp_total) : '—'},
-      badge, btn
+      badge, acciones
     ];
   });
   p.append(tableWrap(cabeza,rows));

@@ -1252,27 +1252,9 @@ app.get('/api/contable/resumen', auth, async (req, res) => {
 app.get('/api/contable.xlsx', auth, async (req, res) => {
   if (!dbReady(res)) return;
   const { desde, hasta } = req.query; if (!desde || !hasta) return res.status(400).json({ error: 'rango' });
-  const rows = await computeContable(desde, hasta);
-  const ddmmyyyy = iso => { const f = E.parseFecha(iso); return f ? `${String(f.getDate()).padStart(2, '0')} ${String(f.getMonth() + 1).padStart(2, '0')} ${f.getFullYear()}` : iso; };
-  // Encabezado de 2 filas con celdas combinadas (como la plantilla de referencia)
-  const h1 = ['FECHA', 'AFILIACIÓN', 'RAZON SOCIAL', 'INGRESOS POR COMISION MCEB', '', '', '', '', '', '', '', 'DISPERSION DE MCEB', 'INGRESO POR COMISION TELEMATIC', ''];
-  const h2 = ['', '', '', 'TDD', 'IVA', 'TDC', 'IVA', 'AMEX', 'IVA', 'INTERNACIONAL', 'IVA', '', 'BANCA', 'IVA'];
-  // Valores en precisión contable completa. Se limpia solo el ruido de punto flotante
-  // (redondeo a 10 decimales) sin perder precisión: 175.00000000000003 -> 175.
-  const r10 = v => Math.round((Number(v) || 0) * 1e10) / 1e10;
-  const data = rows.map(r => [ddmmyyyy(r.fl), String(r.afil), r.razon,
-    r10(r.com_tdd), r10(r.iva_tdd), r10(r.com_tdc), r10(r.iva_tdc), r10(r.com_amex), r10(r.iva_amex), r10(r.com_int), r10(r.iva_int),
-    r10(r.disp), r10(r.banca), r10(r.iva_banca)]);
-  const merges = [
-    { s: { r: 0, c: 0 }, e: { r: 1, c: 0 } }, { s: { r: 0, c: 1 }, e: { r: 1, c: 1 } }, { s: { r: 0, c: 2 }, e: { r: 1, c: 2 } },
-    { s: { r: 0, c: 3 }, e: { r: 0, c: 10 } }, { s: { r: 0, c: 11 }, e: { r: 1, c: 11 } }, { s: { r: 0, c: 12 }, e: { r: 0, c: 13 } },
-  ];
-  const cols = [{ wch: 12 }, { wch: 12 }, { wch: 28 }].concat(Array(11).fill({ wch: 13 }));
-  await bit(req, 'contable', `registro contable ${desde}..${hasta} (${rows.length} filas)`);
-  // Formato de contabilidad (signo de pesos) en las columnas de importes (D..N = índices 3..13),
-  // desde la fila de datos (índice 2). El valor guardado conserva su precisión completa.
-  const fmt = { z: '"$"#,##0.00######', cols: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], rowFrom: 2 };
-  enviarXLSX(res, `registro_contable_${desde}_a_${hasta}.xlsx`, X.buildXLSX([{ name: 'REGISTROS CONTABLES', aoa: [h1, h2, ...data], merges, cols, fmt }]));
+  await bit(req, 'contable', `registro contable ${desde}..${hasta}`);
+  const buf = await armarAdjuntoContable(desde, hasta);
+  enviarXLSX(res, `registro_contable_${desde}_a_${hasta}.xlsx`, buf);
 });
 
 /* ============================================================================
@@ -1394,16 +1376,60 @@ function armarInformeContableHTML({ anio, mes, semanas, esMensual }) {
 }
 
 async function armarAdjuntoContable(desde, hasta) {
-  const rows = await computeContable(desde, hasta);
-  // Reuso la tabla del /api/contable.xlsx (encabezados de 2 filas + merges)
-  const ddmmyyyy = iso => { const f = E.parseFecha(iso); return f ? `${String(f.getDate()).padStart(2, '0')} ${String(f.getMonth() + 1).padStart(2, '0')} ${f.getFullYear()}` : iso; };
-  const h1 = ['FECHA', 'AFILIACIÓN', 'RAZON SOCIAL', 'INGRESOS POR COMISION MCEB', '', '', '', '', '', '', '', 'DISPERSION DE MCEB', 'INGRESO POR COMISION TELEMATIC', ''];
-  const h2 = ['', '', '', 'TDD', 'IVA', 'TDC', 'IVA', 'AMEX', 'IVA', 'INTERNACIONAL', 'IVA', '', 'BANCA', 'IVA'];
-  const merges = [{ s: { r: 0, c: 0 }, e: { r: 1, c: 0 } }, { s: { r: 0, c: 1 }, e: { r: 1, c: 1 } }, { s: { r: 0, c: 2 }, e: { r: 1, c: 2 } }, { s: { r: 0, c: 3 }, e: { r: 0, c: 10 } }, { s: { r: 0, c: 11 }, e: { r: 1, c: 11 } }, { s: { r: 0, c: 12 }, e: { r: 0, c: 13 } }];
-  const cols = [{ wch: 14 }, { wch: 14 }, { wch: 30 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 15 }, { wch: 13 }, { wch: 18 }, { wch: 14 }, { wch: 13 }];
-  const data = rows.map(r => [ddmmyyyy(r.fl), String(r.afil), r.razon, E.round2(r.com_tdd), E.round2(r.iva_tdd), E.round2(r.com_tdc), E.round2(r.iva_tdc), E.round2(r.com_amex), E.round2(r.iva_amex), E.round2(r.com_int), E.round2(r.iva_int), E.round2(r.disp), E.round2(r.banca), E.round2(r.iva_banca)]);
-  const fmt = { z: '#,##0.00', cols: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], rowFrom: 2 };
-  return X.buildXLSX([{ name: 'REGISTROS CONTABLES', aoa: [h1, h2, ...data], merges, cols, fmt }]);
+  const rowsDia = await computeContable(desde, hasta);
+  // Agrupar por AFILIACIÓN (sumar todos los días del rango).
+  const map = new Map();
+  for (const r of rowsDia) {
+    const k = String(r.afil);
+    const cur = map.get(k) || { afil: r.afil, razon: r.razon, com_tdd: 0, iva_tdd: 0, com_tdc: 0, iva_tdc: 0, com_amex: 0, iva_amex: 0, com_int: 0, iva_int: 0, disp: 0, banca: 0, iva_banca: 0 };
+    cur.com_tdd += r.com_tdd; cur.iva_tdd += r.iva_tdd;
+    cur.com_tdc += r.com_tdc; cur.iva_tdc += r.iva_tdc;
+    cur.com_amex += r.com_amex; cur.iva_amex += r.iva_amex;
+    cur.com_int += r.com_int; cur.iva_int += r.iva_int;
+    cur.disp += r.disp; cur.banca += r.banca; cur.iva_banca += r.iva_banca;
+    map.set(k, cur);
+  }
+  const agrupadas = [...map.values()].sort((a, b) => String(a.afil).localeCompare(String(b.afil)));
+  const rows = agrupadas.map(r => [String(r.afil), r.razon, E.round2(r.com_tdd), E.round2(r.iva_tdd), E.round2(r.com_tdc), E.round2(r.iva_tdc), E.round2(r.com_amex), E.round2(r.iva_amex), E.round2(r.com_int), E.round2(r.iva_int), E.round2(r.disp), E.round2(r.banca), E.round2(r.iva_banca)]);
+  const tot = agrupadas.reduce((s, r) => ({
+    com_tdd: s.com_tdd + r.com_tdd, iva_tdd: s.iva_tdd + r.iva_tdd,
+    com_tdc: s.com_tdc + r.com_tdc, iva_tdc: s.iva_tdc + r.iva_tdc,
+    com_amex: s.com_amex + r.com_amex, iva_amex: s.iva_amex + r.iva_amex,
+    com_int: s.com_int + r.com_int, iva_int: s.iva_int + r.iva_int,
+    disp: s.disp + r.disp, banca: s.banca + r.banca, iva_banca: s.iva_banca + r.iva_banca,
+  }), { com_tdd:0,iva_tdd:0,com_tdc:0,iva_tdc:0,com_amex:0,iva_amex:0,com_int:0,iva_int:0,disp:0,banca:0,iva_banca:0 });
+  const total = ['TOTAL', '', E.round2(tot.com_tdd), E.round2(tot.iva_tdd), E.round2(tot.com_tdc), E.round2(tot.iva_tdc), E.round2(tot.com_amex), E.round2(tot.iva_amex), E.round2(tot.com_int), E.round2(tot.iva_int), E.round2(tot.disp), E.round2(tot.banca), E.round2(tot.iva_banca)];
+  // Meta: rango de fechas en español.
+  const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  const fmtFechaLarga = iso => { const [y,m,d] = String(iso).split('-'); return `${Number(d)} de ${MESES[Number(m)-1]} de ${y}`; };
+  const N = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const g = t => (N.find(x => x.type === t) || {}).value;
+  const hoy = `${g('day')}/${g('month')}/${g('year')}`;
+  return X.buildPolipayXLSX({
+    title: 'Registro contable · Ingresos por comisión y dispersión',
+    meta: `Rango: ${fmtFechaLarga(desde)}   →   ${fmtFechaLarga(hasta)}   ·   ${agrupadas.length} afiliación(es)   ·   Generado ${hoy}`,
+    footer: `Polipay POS Settlement · Todas las cifras en MXN   ·   Agrupado por afiliación (suma del rango)`,
+    sheets: [{
+      name: 'REGISTRO CONTABLE',
+      columns: [
+        { header: 'Afiliación', width: 14, align: 'left' },
+        { header: 'Razón social', width: 32, align: 'left' },
+        { header: 'Com. TDD', width: 13, numFmt: 'mxn' },
+        { header: 'IVA TDD', width: 13, numFmt: 'mxn' },
+        { header: 'Com. TDC', width: 13, numFmt: 'mxn' },
+        { header: 'IVA TDC', width: 13, numFmt: 'mxn' },
+        { header: 'Com. AMEX', width: 13, numFmt: 'mxn' },
+        { header: 'IVA AMEX', width: 13, numFmt: 'mxn' },
+        { header: 'Com. Internacional', width: 15, numFmt: 'mxn' },
+        { header: 'IVA Internacional', width: 15, numFmt: 'mxn' },
+        { header: 'Dispersión MCEB', width: 18, numFmt: 'mxn' },
+        { header: 'Banca Telematic', width: 15, numFmt: 'mxn' },
+        { header: 'IVA banca', width: 13, numFmt: 'mxn' },
+      ],
+      rows,
+      total,
+    }],
+  });
 }
 
 async function enviarContabilidad({ req, anio, mes, semanas, esMensual, semanaN }) {
