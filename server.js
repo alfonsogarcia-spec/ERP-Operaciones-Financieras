@@ -736,12 +736,37 @@ async function computeCorte(fechaLiqIso) {
   const txs = (await db.query("select cliente,numero_afiliacion,producto,monto from transacciones where fecha_liq=$1 and upper(estatus)='APROBADO'", [fechaLiqIso])).rows;
   // Contracargos pendientes para esta fecha: se aplican al bloque correspondiente.
   const ccRows = (await db.query("select * from contracargos where cargado_en_fecha=$1 and estatus='Pendiente'", [fechaLiqIso])).rows;
-  const ccMap = new Map();  // key = grupo||afil||bloque -> {monto, ids:[]}
+  const ccMap = new Map();  // key = grupo||afil||bloque -> {monto, ids:[], disputas_ids:[]}
   for (const c of ccRows) {
     const k = `${nrm(c.grupo_cliente)}||${String(c.numero_afiliacion)}||${c.bloque}`;
-    const cur = ccMap.get(k) || { monto: 0, ids: [] };
+    const cur = ccMap.get(k) || { monto: 0, ids: [], disputas_ids: [] };
     cur.monto += Number(c.monto) || 0; cur.ids.push(c.id); ccMap.set(k, cur);
   }
+  // Contracargos del módulo Disputas cuya fecha_retencion cae hoy y aún no se
+  // han retenido en ningún corte. Se descuentan del bloque DOM (o AMEX si
+  // brand=AMEX) del comercio propietario.
+  try {
+    const cbRows = (await db.query(
+      `select cb.id, cb.merchant_affiliation, cb.brand, cb.disputed_amount_cifrado,
+              cb.client_group_id, cg.nombre as grupo_nombre, cb.merchant_name, cb.merchant_name_cifrado
+         from disputa.chargebacks cb
+         left join disputa.client_groups cg on cg.id = cb.client_group_id
+        where cb.fecha_retencion = $1
+          and cb.retenido_en_corte_id is null
+          and cb.archivado = false
+          and cb.status not in ('CANCELLED','EXPIRED','WON')`,
+      [fechaLiqIso]
+    )).rows;
+    for (const cb of cbRows) {
+      const monto = Number(C.decryptString(cb.disputed_amount_cifrado) || 0);
+      if (!monto || !cb.merchant_affiliation) continue;
+      const bloque = String(cb.brand || '').toUpperCase() === 'AMEX' ? 'AMEX' : 'DOM';
+      const grupoNombre = cb.grupo_nombre || C.decryptString(cb.merchant_name_cifrado) || cb.merchant_name || '';
+      const k = `${nrm(grupoNombre)}||${String(cb.merchant_affiliation)}||${bloque}`;
+      const cur = ccMap.get(k) || { monto: 0, ids: [], disputas_ids: [] };
+      cur.monto += monto; cur.disputas_ids.push(cb.id); ccMap.set(k, cur);
+    }
+  } catch (_e) { /* schema disputa no listo → ignorar en dev */ }
   const [params, grupos, afilGrupo, costos, cuentas, bancos] = [await getParams(), await getGrupos(), await getAfilGrupo(), await getCostos(), await getCuentas(), await getBancos()];
   const grupoPorNombre = nombre => grupos.find(g => nrm(g.nombre_cliente) === nrm(nombre));
   const tasasDe = (idg, afil) => afilGrupo.find(a => String(a.id_grupo) === String(idg) && String(a.numero_afiliacion) === String(afil));
@@ -764,8 +789,8 @@ async function computeCorte(fechaLiqIso) {
     };
     // Buscar contracargos pendientes para esta afiliación (usando el nombre del grupo del catálogo).
     const nomGrupo = g ? g.nombre_cliente : cliente;
-    const cDom = ccMap.get(`${nrm(nomGrupo)}||${afil}||DOM`) || { monto: 0, ids: [] };
-    const cAmex = ccMap.get(`${nrm(nomGrupo)}||${afil}||AMEX`) || { monto: 0, ids: [] };
+    const cDom = ccMap.get(`${nrm(nomGrupo)}||${afil}||DOM`) || { monto: 0, ids: [], disputas_ids: [] };
+    const cAmex = ccMap.get(`${nrm(nomGrupo)}||${afil}||AMEX`) || { monto: 0, ids: [], disputas_ids: [] };
     const ajustes = { financiamientos: 0, contracargos_dom: E.round2(cDom.monto), contracargos_amex: E.round2(cAmex.monto) };
     const r = E.calcularCompensacion(arr, cat, params, ajustes);
     const faltantes = []; if (!g) faltantes.push('grupo'); if (!tasas) faltantes.push('tasas'); if (!co) faltantes.push('costos'); if (!cuenta && Math.abs(r.disp_total) > 0.005) faltantes.push('cuenta');
@@ -773,6 +798,7 @@ async function computeCorte(fechaLiqIso) {
       cliente, afil, id_grupo: idGrupo, razon: g ? g.nombre_cliente : cliente, concepto: idGrupo ? E.concepto(afil, idGrupo) : '',
       clabe: cuenta ? cuenta.clabe : '', codigo_banco: cuenta ? (cuenta.codigo_banco || bancoCod(cuenta.banco)) : null, banco: cuenta ? cuenta.banco : '', beneficiario: cuenta ? (cuenta.razon_social_beneficiario || cuenta.nombre_comercial) : '',
       calc: r, faltantes, ajustes, contracargos_ids: [...cDom.ids, ...cAmex.ids],
+      disputas_cb_ids: [...(cDom.disputas_ids || []), ...(cAmex.disputas_ids || [])],
     });
     // Marcar ids "usados" para descontarlos de los huérfanos y del ccMap.
     ccMap.delete(`${nrm(nomGrupo)}||${afil}||DOM`); ccMap.delete(`${nrm(nomGrupo)}||${afil}||AMEX`);
@@ -805,8 +831,16 @@ app.post('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res)
   const idCorte = ins.id_corte;
   await insertMany('calculos', ['corte_id', 'cliente', 'afil', 'id_grupo', 'razon', 'concepto', 'clabe', 'codigo_banco', 'banco', 'beneficiario', 'calc', 'faltantes', 'ajustes', 'contracargos_ids'],
     c.calculos.map(cc => ({ corte_id: idCorte, cliente: cc.cliente, afil: cc.afil, id_grupo: cc.id_grupo, razon: cc.razon, concepto: cc.concepto, clabe: cc.clabe, codigo_banco: cc.codigo_banco, banco: cc.banco, beneficiario: cc.beneficiario, calc: JSON.stringify(cc.calc), faltantes: JSON.stringify(cc.faltantes), ajustes: JSON.stringify(cc.ajustes), contracargos_ids: JSON.stringify(cc.contracargos_ids || []) })));
-  await bit(req, 'corte_generar', `${E.fmtFecha(E.parseFecha(iso))}, ${c.calculos.length} grupos, contracargos cargados=${rep.n_contracargos||0}`, { resource_type: 'corte', resource_id: idCorte });
-  res.json({ id_corte: idCorte, contracargos_no_aplicados: c.cc_no_aplicados });
+  // Marcar los CB del módulo Disputas que quedaron efectivamente retenidos en
+  // este corte, para no volver a aplicarlos en cortes futuros.
+  const disputasCbIds = c.calculos.flatMap(cc => cc.disputas_cb_ids || []);
+  if (disputasCbIds.length) {
+    try {
+      await db.query('update disputa.chargebacks set retenido_en_corte_id=$1 where id = any($2::int[])', [idCorte, disputasCbIds]);
+    } catch (_e) { /* schema disputa no listo → ignorar */ }
+  }
+  await bit(req, 'corte_generar', `${E.fmtFecha(E.parseFecha(iso))}, ${c.calculos.length} grupos, contracargos cargados=${rep.n_contracargos||0}${disputasCbIds.length?`, disputas cb=${disputasCbIds.length}`:''}`, { resource_type: 'corte', resource_id: idCorte });
+  res.json({ id_corte: idCorte, contracargos_no_aplicados: c.cc_no_aplicados, disputas_cb_aplicadas: disputasCbIds.length });
 });
 
 app.get('/api/cortes', auth, async (req, res) => {
@@ -862,6 +896,8 @@ app.delete('/api/cortes/:id', auth, requiereRol('admin', 'operador'), async (req
   if (!c) return res.status(404).json({ error: 'no_existe' });
   // Devolver a Pendiente los contracargos que este corte había marcado Aplicado
   await db.query("update contracargos set estatus='Pendiente', aplicado_en_corte_id=null where aplicado_en_corte_id=$1", [id]);
+  // Liberar CB del módulo Disputas que quedaron marcados por este corte.
+  try { await db.query('update disputa.chargebacks set retenido_en_corte_id=null where retenido_en_corte_id=$1', [id]); } catch (_e) {}
   await db.query('delete from cortes where id_corte=$1', [id]);
   await bit(req, 'corte_baja', `estado ${c.estado}`, { resource_type: 'corte', resource_id: id });
   res.json({ ok: true });

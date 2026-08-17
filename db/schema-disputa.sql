@@ -225,6 +225,12 @@ alter table disputa.chargebacks add column if not exists tx_last4_cifrada       
 alter table disputa.chargebacks add column if not exists tx_monto_cifrado          text;
 alter table disputa.chargebacks add column if not exists tx_tipo_tarjeta           text;
 alter table disputa.chargebacks add column if not exists tx_banco_emisor           text;
+-- Integración con Cortes (Polipay POS Settlement):
+-- fecha_retencion = día hábil siguiente al alta. retenido_en_corte_id se marca
+-- cuando el corte de esa fecha_liq consume el CB.
+alter table disputa.chargebacks add column if not exists fecha_retencion       date;
+alter table disputa.chargebacks add column if not exists retenido_en_corte_id  integer;
+create index if not exists idx_cb_retencion on disputa.chargebacks(fecha_retencion) where retenido_en_corte_id is null;
 
 -- Bitácora de eventos del ciclo de vida del chargeback.
 create table if not exists disputa.chargeback_events (

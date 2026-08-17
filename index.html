@@ -375,7 +375,16 @@ disp_reports:['Reportes de disputas','Exportables por rango, comercio, reason co
 dest_liquidacion:['Destinatarios · Liquidación','Correos que reciben el aviso automático de corte'],
 dest_disputas:['Destinatarios · Disputas','Grupos de cliente y sus contactos para notificar disputas']};
 function go(v){VIEW=v;render();}
-async function render(){renderNav();const[t,s]=TITLES[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
+async function render(){renderNav();
+  // Sub-vistas parametrizadas: "disp_cb_<id>" → vista detalle CB pantalla completa.
+  const mCB = /^disp_cb_(\d+)$/.exec(VIEW);
+  if(mCB){ const[t,s]=['Contracargo','Detalle del caso'];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
+    const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
+    try{ await vDispCBDetalle(v, parseInt(mCB[1],10)); }
+    catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
+    return;
+  }
+  const[t,s]=TITLES[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
   const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
   try{await ({dashboard:vDashboard,ingesta:vIngesta,contracargos:vContracargos,cortes:vCortes,contable:vContable,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,destinatarios:vDestinatarios,usuarios:vUsuarios,bitacora:vBitacora,
     disp_dashboard:vDispDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC,disp_providers:vDispProviders,disp_reports:vDispReports,
@@ -1053,7 +1062,8 @@ async function vDispCB(v){
   }catch(e){v.append(el('div',{class:'banner err'},'No se pudieron cargar los contracargos: '+errMsg(e)));}
 }
 
-async function abrirDispCB(id){
+function abrirDispCB(id){ go('disp_cb_'+id); }
+async function _abrirDispCB_legacy(id){
   try{
     const d=await api('GET','/api/disputa/chargebacks/'+id);
     const body=el('div',{});
@@ -1125,6 +1135,197 @@ async function abrirDispCB(id){
     foot.append(el('div',{style:'flex:1'}),el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'));
     modal('Detalle · '+d.folio,body,foot,true);
   }catch(e){toast('No se pudo abrir el CB: '+errMsg(e),'err');}
+}
+
+/* ============================================================================
+   DETALLE CB — pantalla completa (layout del SS)
+   ========================================================================= */
+async function vDispCBDetalle(v, id){
+  const [d, notifs, groups, rcs] = await Promise.all([
+    api('GET','/api/disputa/chargebacks/'+id),
+    api('GET','/api/disputa/chargebacks/'+id+'/notifications').catch(()=>[]),
+    api('GET','/api/disputa/client-groups').catch(()=>[]),
+    api('GET','/api/disputa/reason-codes').catch(()=>[]),
+  ]);
+  const rc = (rcs||[]).find(r=>r.id===d.reason_code_id) || null;
+  const grupoNombre = (groups||[]).find(g=>g.id===d.client_group_id)?.nombre || null;
+  const fmtFechaMX = iso => { if(!iso) return null; const [y,m,dd]=String(iso).slice(0,10).split('-'); return `${Number(dd)}/${Number(m)}/${y}`; };
+  const diasSince = iso => { if(!iso) return null; const t0=new Date(String(iso).slice(0,10)+'T00:00:00Z').getTime(); const tHoy=new Date(new Date().toISOString().slice(0,10)+'T00:00:00Z').getTime(); return Math.round((tHoy-t0)/86400000); };
+  const canalMap = { POS:'Terminal (POS)', ECOMMERCE:'E-commerce', MOTO:'MOTO / Link de pago', RECURRING:'Cargo recurrente', OTHER:'Otro' };
+  const cicloMap = { RETRIEVAL:'Solicitud de información', FIRST_CHARGEBACK:'1er contracargo', REPRESENTMENT:'Representación', PRE_ARBITRATION:'Pre-arbitraje', ARBITRATION:'Arbitraje' };
+  const estadoBadge = { NEW:['b','Nuevo'], NOTIFIED:['w','En espera de evidencia'], EVIDENCE_REQUESTED:['w','Evidencia solicitada'], UNDER_REVIEW:['b','En revisión'], REPRESENTED:['ok','Representado'], IN_DISPUTE:['v','En disputa'], WON:['ok','Ganado'], LOST:['err','Perdido'], ACCEPTED:['g','Aceptado'], EXPIRED:['err','Vencido'], CANCELLED:['g','Cancelado'] };
+  const modalidad = d.card_presence==='CARD_PRESENT' ? 'Tarjeta presente' : 'Tarjeta no presente';
+
+  v.innerHTML='';
+  // ---------- Header ----------
+  const head = el('div',{style:'display:flex;align-items:center;gap:14px;margin-bottom:16px'});
+  head.append(el('div',{style:'font:800 26px Montserrat,sans-serif;color:var(--brand,#051B3B)'},esc(d.folio)));
+  const badgeSpec = estadoBadge[d.status] || ['g',d.status];
+  head.append(el('span',{class:'badge '+badgeSpec[0],style:'font:600 13px Montserrat,sans-serif;padding:6px 12px;border-radius:999px'},badgeSpec[1]));
+  head.append(el('div',{style:'flex:1'}));
+  if(can('disputas') && !d.archivado) head.append(el('button',{class:'btn ghost sm',onclick:async()=>{ if(!confirm('¿Archivar este contracargo?')) return; try{ await api('POST','/api/disputa/chargebacks/'+id+'/archive'); toast('Archivado','ok'); go('disp_chargebacks'); }catch(e){toast(errMsg(e),'err');}}},'Archivar'));
+  head.append(el('button',{class:'btn ghost sm',onclick:()=>go('disp_chargebacks')},'← Volver'));
+  v.append(head);
+
+  const grid = el('div',{style:'display:grid;grid-template-columns:1fr 320px;gap:20px;align-items:start'});
+
+  // ---------- Columna izquierda ----------
+  const izq = el('div',{style:'display:flex;flex-direction:column;gap:16px'});
+  const vlist = (rows) => {
+    const tbl = el('table',{style:'width:100%;border-collapse:collapse'});
+    rows.filter(Boolean).forEach(([k,v,extra])=>{
+      const tr=el('tr');
+      tr.append(el('td',{style:'padding:10px 14px 10px 0;color:var(--muted,#6b7280);font:400 13px/1.4 Montserrat,sans-serif;white-space:nowrap;vertical-align:top;width:40%'},k));
+      tr.append(el('td',{style:'padding:10px 0;font:600 13px/1.4 Montserrat,sans-serif;color:var(--ink,#1A1A1A)',html: (v||'—') + (extra?` <span style="color:#3083F4">${extra}</span>`:'')}));
+      tbl.append(tr);
+    });
+    return tbl;
+  };
+  // Panel 1: Datos del contracargo
+  const p1 = el('div',{class:'panel'}); p1.append(el('h3',{},'Datos del contracargo'));
+  const codRazonTxt = d.reason_code_raw ? d.reason_code_raw + (rc && rc.titulo ? ' — ' + esc(rc.titulo) : '') : (rc ? esc(rc.codigo + ' — ' + (rc.titulo||'')) : '—');
+  const marcarFraude = rc && /fraude/i.test(rc.categoria||'');
+  p1.append(vlist([
+    ['Comercio', esc(d.merchant_name_out || d.merchant_name || '—')],
+    ['Afiliación', esc(d.merchant_affiliation || '—')],
+    ['Grupo de cliente', esc(grupoNombre || '—')],
+    ['Marca / Modalidad', esc(d.brand||'—') + ' · ' + esc(modalidad)],
+    ['Canal', esc(canalMap[d.channel] || d.channel || '—')],
+    ['Ciclo', esc(cicloMap[d.cycle] || d.cycle || '—')],
+    ['Código de razón', codRazonTxt, marcarFraude ? '★' : null],
+    ['Monto en disputa', d.disputed_amount!=null ? '<b>' + mxn(d.disputed_amount) + '</b>' : '—'],
+    ['Fecha del contracargo', fmtFechaMX(d.fecha_evento) || '—'],
+    ['Límite evidencia (sub afiliado)', d.fecha_limite_comercio ? fmtFechaMX(d.fecha_limite_comercio) + ' (' + (d.dias_para_vencer!=null?d.dias_para_vencer+'d':'—') + ')' : '—'],
+    ['Límite representment (30 cal)', d.fecha_limite_representacion ? fmtFechaMX(d.fecha_limite_representacion) + ' (' + (d.dias_representacion!=null?d.dias_representacion+'d':'—') + ')' : '—'],
+    ['Retención preventiva', d.retenido_en_corte_id ? '<span class="badge b">Retenido en corte #'+d.retenido_en_corte_id+'</span>' : (d.fecha_retencion ? 'Programada '+fmtFechaMX(d.fecha_retencion) : 'No aplicada')],
+    ['Resolución', d.status==='WON' ? 'Ganado' : d.status==='LOST' ? 'Perdido' : d.status==='ACCEPTED' ? 'Aceptado' : 'Pendiente'],
+    ['Caso / ARN', esc(d.case_number || d.arn || '—')],
+    ['Origen', '<span class="badge g" style="padding:4px 12px;border-radius:999px">'+esc(d.origen||'manual')+'</span>'],
+  ]));
+  izq.append(p1);
+
+  // Panel 2: Transacción original
+  const p2 = el('div',{class:'panel'}); p2.append(el('h3',{},'Transacción original'));
+  p2.append(vlist([
+    ['Fecha de la transacción', fmtFechaMX(d.tx_fecha) || '—'],
+    ['Ticket', esc(d.tx_referencia || '—')],
+    ['Autorización', esc(d.tx_autorizacion || '—')],
+    ['Tarjeta', d.tx_last4 ? '**** ' + esc(d.tx_last4) + (d.tx_tipo_tarjeta ? ' · ' + esc(d.tx_tipo_tarjeta) : '') : '—'],
+    ['Monto', d.tx_monto!=null ? mxn(d.tx_monto) : '—'],
+    ['Banco emisor', esc(d.tx_banco_emisor || '—')],
+  ]));
+  izq.append(p2);
+
+  // Panel 3: Acción y evidencia (según reason_code)
+  if (rc && (rc.accion_politica || rc.evidencia_sugerida)) {
+    const p3 = el('div',{class:'panel'}); p3.append(el('h3',{html:'Acción y evidencia <span class="muted" style="font-size:12px;font-weight:400">(POL-PO-002 §5.3 / §5.6)</span>'}));
+    if (rc.accion_politica) p3.append(el('div',{class:'banner',style:'background:#EEF3FA'},esc(rc.accion_politica)));
+    if (rc.evidencia_sugerida) {
+      p3.append(el('div',{style:'font:700 12px Montserrat,sans-serif;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.06em;margin:14px 0 6px'},'Evidencia requerida para la defensa'));
+      const ul = el('ul',{style:'margin:0;padding:0 0 0 20px;font:400 13px/1.7 Montserrat,sans-serif;color:var(--ink,#1A1A1A)'});
+      String(rc.evidencia_sugerida).split(/[;\n]/).map(s=>s.trim()).filter(Boolean).forEach(s=>ul.append(el('li',{},esc(s))));
+      p3.append(ul);
+    }
+    izq.append(p3);
+  }
+
+  // Panel 4: Documentos de evidencia
+  const p4 = el('div',{class:'panel'}); const atts = d.attachments||[];
+  p4.append(el('h3',{},'Documentos de evidencia ('+atts.length+')'));
+  if (can('disputas')) {
+    const upWrap = el('div',{style:'display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px'});
+    const inp = el('input',{type:'file',accept:'.pdf,.jpg,.jpeg,.png,.gif,.webp,.xlsx,.xls,.docx,.doc,.txt,.csv,.zip'});
+    const etq = el('select'); etq.append(el('option',{value:''},'— Etiqueta (opcional) —'));
+    ['Voucher','Comprobante de entrega','Comunicación TH','Bitácora gateway','Otro'].forEach(o=>etq.append(el('option',{},o)));
+    const btnSubir = el('button',{class:'btn sm',onclick:async()=>{ if(!inp.files||!inp.files[0]) return toast('Selecciona un archivo','err'); const fd=new FormData(); fd.append('archivo',inp.files[0]); fd.append('descripcion',etq.value||''); try{ await api('POST','/api/disputa/chargebacks/'+id+'/attachments',fd); toast('Adjunto subido','ok'); go('disp_cb_'+id); }catch(e){ const dat=e.data||{}; toast(dat.error==='mime_no_permitido'?'Tipo no aceptado':dat.error==='archivo_muy_grande'?'Máx 15 MB':errMsg(e),'err'); } }},'Subir documento');
+    upWrap.append(inp,etq,btnSubir); p4.append(upWrap);
+  }
+  if (!atts.length) p4.append(el('div',{class:'muted',style:'font-size:13px;padding:6px 0'},'Aún no hay documentos cargados. Adjunta la evidencia según el checklist.'));
+  else p4.append(tableWrap(['Archivo','Descripción','Tamaño','Subido por','Cuándo',''],atts.map(a=>[esc(a.filename||'—'),esc(a.descripcion||'—'),{num:(a.bytes_size||0)+' B'},esc(a.subido_por||'—'),esc(new Date(a.subido_at).toLocaleString('es-MX')),el('div',{style:'display:flex;gap:6px'},el('button',{class:'btn ghost sm',onclick:()=>{ const url='/api/disputa/attachments/'+a.id+'/download?token='+encodeURIComponent(TOKEN()); window.open(url,'_blank'); }},'⬇'),can('disputas')?el('button',{class:'btn ghost sm',style:'color:#B45309',onclick:async e=>{ e.stopPropagation(); if(confirm('¿Eliminar este adjunto?')){ try{ await api('DELETE','/api/disputa/attachments/'+a.id); toast('Borrado','ok'); go('disp_cb_'+id); }catch(ex){ toast(errMsg(ex),'err'); } } }},'Borrar'):'')])));
+  izq.append(p4);
+
+  // Panel 5: Bitácora
+  const p5 = el('div',{class:'panel'}); p5.append(el('h3',{},'Bitácora'));
+  (d.eventos||[]).slice().reverse().forEach(ev=>{
+    const it = el('div',{style:'padding:12px 0;border-bottom:1px solid var(--line,#e5e7eb)'});
+    it.append(el('div',{style:'font:700 13px Montserrat,sans-serif;color:var(--ink,#1A1A1A)'},esc(ev.tipo)+(ev.estado_anterior?' · '+esc(ev.estado_anterior)+' → '+esc(ev.estado_nuevo||''):(ev.estado_nuevo?' · '+esc(ev.estado_nuevo):''))));
+    if (ev.detalle) it.append(el('div',{style:'font:400 13px/1.5 Montserrat,sans-serif;color:var(--ink,#1A1A1A);margin-top:4px'},esc(ev.detalle)));
+    it.append(el('div',{class:'muted',style:'font-size:12px;margin-top:4px'},new Date(ev.ts).toLocaleString('es-MX')+' · '+esc(ev.actor||'—')));
+    p5.append(it);
+  });
+  if (!(d.eventos||[]).length) p5.append(el('div',{class:'muted'},'Sin eventos registrados.'));
+  izq.append(p5);
+
+  grid.append(izq);
+
+  // ---------- Columna derecha (Acciones + Notificaciones) ----------
+  const der = el('div',{style:'display:flex;flex-direction:column;gap:16px;position:sticky;top:20px'});
+
+  // Acciones
+  const acc = el('div',{class:'panel'}); acc.append(el('h3',{},'Acciones'));
+  const finales = ['WON','LOST','ACCEPTED','EXPIRED','CANCELLED'].includes(d.status);
+  if (can('disputas') && !finales) {
+    // Asignar grupo
+    acc.append(el('div',{style:'font:700 11px Montserrat,sans-serif;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.06em;margin:0 0 6px'},'Asignar a grupo de cliente'));
+    const gSel = el('select'); gSel.append(el('option',{value:''},'— Selecciona grupo —')); groups.forEach(g=>gSel.append(el('option',{value:g.id},esc(g.nombre)))); gSel.value = d.client_group_id || '';
+    acc.append(gSel);
+    acc.append(el('button',{class:'btn',style:'width:100%;margin:8px 0 4px;background:var(--violet,#6E4BE0);color:#fff',onclick:async()=>{
+      if (!gSel.value) return toast('Selecciona un grupo','err');
+      try{
+        await api('PATCH','/api/disputa/chargebacks/'+id,{client_group_id:Number(gSel.value)});
+        try{ const r=await api('POST','/api/disputa/chargebacks/'+id+'/notify',{mensaje:''}); toast('Grupo asignado y notificación enviada a '+r.enviados+' contacto(s)','ok'); }
+        catch(e){ const dat=e.data||{}; toast('Grupo asignado. '+ (dat.error==='sin_contactos'?'Sin contactos para notificar.':dat.error==='ses_no_configurado'?'SES no configurado.':errMsg(e)), 'ok'); }
+        go('disp_cb_'+id);
+      }catch(e){ toast(errMsg(e),'err'); }
+    }},'Asignar y notificar'));
+    acc.append(el('div',{class:'muted',style:'font-size:11px;margin:0 0 14px'},'Notifica al contacto preregistrado del grupo.'));
+
+    // Reenviar notificación / aplicar retención
+    const bt = el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'});
+    bt.append(el('button',{class:'btn ghost sm',onclick:async()=>{
+      try{ const r=await api('POST','/api/disputa/chargebacks/'+id+'/notify',{mensaje:''}); toast('Notificación enviada a '+r.enviados,'ok'); go('disp_cb_'+id); }
+      catch(e){ const dat=e.data||{}; toast(dat.error==='sin_contactos'?'Sin contactos':dat.error==='ses_no_configurado'?'SES no configurado':errMsg(e),'err'); }
+    }},'Reenviar notificación'));
+    bt.append(el('button',{class:'btn ghost sm',onclick:async()=>{
+      if (d.retenido_en_corte_id) return toast('Ya retenido en el corte #'+d.retenido_en_corte_id,'err');
+      if (!confirm('¿Adelantar la retención al próximo día hábil?')) return;
+      try{ const r=await api('POST','/api/disputa/chargebacks/'+id+'/aplicar-retencion'); toast('Se retendrá el '+r.fecha_retencion,'ok'); go('disp_cb_'+id); }
+      catch(e){ const dat=e.data||{}; toast(dat.mensaje||errMsg(e),'err'); }
+    }},'Aplicar retención'));
+    acc.append(bt);
+
+    // Cambiar estado (SS: 3 botones rápidos)
+    acc.append(el('div',{style:'font:700 11px Montserrat,sans-serif;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.06em;margin:16px 0 6px'},'Cambiar estado'));
+    const validos = ({NEW:['EVIDENCE_REQUESTED','ACCEPTED','CANCELLED'],NOTIFIED:['EVIDENCE_REQUESTED','ACCEPTED','EXPIRED'],EVIDENCE_REQUESTED:['UNDER_REVIEW','ACCEPTED','EXPIRED'],UNDER_REVIEW:['REPRESENTED','ACCEPTED','CANCELLED'],REPRESENTED:['IN_DISPUTE','WON','LOST'],IN_DISPUTE:['WON','LOST','CANCELLED']})[d.status]||[];
+    const est = el('div',{style:'display:flex;gap:6px;flex-wrap:wrap'});
+    const cambiar = (target,label,color) => est.append(el('button',{class:'btn sm',style:'background:'+color+';color:#fff;font-size:12px',onclick:async()=>{
+      if (!validos.includes(target)) return toast('Transición inválida desde '+d.status,'err');
+      try{ await api('POST','/api/disputa/chargebacks/'+id+'/status',{status:target}); toast('Estado '+label,'ok'); go('disp_cb_'+id); }
+      catch(e){ toast(errMsg(e),'err'); }
+    }},label));
+    cambiar('EVIDENCE_REQUESTED','Evidencia recibida','#0F56AC');
+    cambiar('ACCEPTED','Contracargo aceptado','#4B5563');
+    cambiar('EXPIRED','No envió evidencia','#B45309');
+    acc.append(est);
+  } else if (finales) {
+    acc.append(el('div',{class:'muted'},'El caso está en estado final ('+esc(d.status)+'). Solo lectura.'));
+  }
+  der.append(acc);
+
+  // Notificaciones
+  const noti = el('div',{class:'panel'}); noti.append(el('h3',{},'Notificaciones'));
+  if (!(notifs||[]).length) noti.append(el('div',{class:'muted'},'Aún no se han enviado notificaciones.'));
+  else notifs.forEach(n=>{
+    const wrap = el('div',{style:'padding:10px 0;border-bottom:1px solid var(--line,#e5e7eb)'});
+    wrap.append(el('div',{style:'font:600 13px Montserrat,sans-serif;color:var(--brand,#051B3B);word-break:break-all'},esc(n.destinatario||'—')));
+    const st = n.status==='SENT' ? '✅ Enviado' : (n.status==='FAILED'?'⚠ Falló':n.status||'—');
+    wrap.append(el('div',{class:'muted',style:'font-size:12px;margin-top:4px'},st+' · '+ new Date(n.enviado_at).toLocaleString('es-MX')));
+    noti.append(wrap);
+  });
+  der.append(noti);
+
+  grid.append(der);
+  v.append(grid);
 }
 
 async function openCBNuevo(){
