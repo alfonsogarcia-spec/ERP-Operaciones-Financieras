@@ -920,6 +920,127 @@ app.get('/api/cortes/:id/reporte.xlsx', auth, async (req, res) => {
   enviarXLSX(res, `reporte_cliente_corte_${c.id_corte}_${c.fli}.xlsx`, buf);
 });
 
+// Detalle transaccional: una pestaña por grupo cliente listando cada transacción
+// que compone el corte, con Monto · Comisión pactada · IVA · Monto a dispersar.
+app.get('/api/cortes/:id/detalle-transaccional.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const c = (await db.query('select *, fecha_liq_iso::text as fli from cortes where id_corte=$1', [parseInt(req.params.id, 10)])).rows[0];
+  if (!c) return res.status(404).json({ error: 'no_existe' });
+  const cal = (await db.query('select * from calculos where corte_id=$1 order by razon, afil', [c.id_corte])).rows
+    .map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc }));
+  const txs = (await db.query(
+    "select fecha,hora,cliente,comercio,numero_afiliacion as afil,producto,monto,folio,referencia,autorizacion,terminal from transacciones where fecha_liq=$1 and upper(estatus)='APROBADO' order by fecha,hora,id",
+    [c.fli]
+  )).rows;
+  const [params, grupos, afilGrupo, costos] = [await getParams(), await getGrupos(), await getAfilGrupo(), await getCostos()];
+  await bit(req, 'reporte', `exportó detalle transaccional corte #${c.id_corte}`);
+  const buf = buildDetalleTransaccionalXLSX(c, cal, txs, { params, grupos, afilGrupo, costos });
+  enviarXLSX(res, `detalle_transaccional_corte_${c.id_corte}_${c.fli}.xlsx`, buf);
+});
+
+// Construye el .xlsx con "Resumen" + una hoja por grupo cliente (agrupado por
+// cliente/afiliación tal como lo agrupa el motor). Muestra sólo la información
+// que un cliente debe ver: monto, comisión pactada, IVA y monto a dispersar.
+function buildDetalleTransaccionalXLSX(corte, calculos, txs, cat) {
+  const { params, grupos, afilGrupo } = cat;
+  const IVA = Number(params.iva) || 0.16;
+  const grupoPorNombre = nombre => grupos.find(g => nrm(g.nombre_cliente) === nrm(nombre));
+  const tasasDe = (idg, afil) => afilGrupo.find(a => String(a.id_grupo) === String(idg) && String(a.numero_afiliacion) === String(afil));
+  const tasaPACPorProducto = (idg, afil, producto) => {
+    const t = idg ? tasasDe(idg, afil) : null; if (!t) return 0;
+    const k = E.prodKey(producto);
+    if (k === 'tdd') return Number(t.tasa_pac_tdd) || 0;
+    if (k === 'tdc') return Number(t.tasa_pac_tdc) || 0;
+    if (k === 'amex') return Number(t.tasa_pac_amex) || 0;
+    if (k === 'int') return Number(t.tasa_pac_int) || 0;
+    return 0;
+  };
+  // Agrupar tx por (cliente, afil) — misma llave que usa computeCorte()
+  const grupTx = new Map();
+  for (const t of txs) {
+    const g = grupoPorNombre(t.cliente); const razon = g ? g.nombre_cliente : t.cliente;
+    const k = razon;
+    if (!grupTx.has(k)) grupTx.set(k, []);
+    grupTx.get(k).push(t);
+  }
+  const usadoName = new Set();
+  const uniqueSheetName = (base) => {
+    let n = String(base || 'Grupo').replace(/[\\/?*[\]:]/g, ' ').slice(0, 31) || 'Grupo';
+    let s = n, i = 2;
+    while (usadoName.has(s.toLowerCase())) { const suf = ` (${i++})`; s = (n.slice(0, 31 - suf.length) + suf); }
+    usadoName.add(s.toLowerCase()); return s;
+  };
+  // --- Hoja Resumen ---
+  const resAoa = [
+    [`Detalle de corte de liquidación`],
+    [`Corte #${corte.id_corte} · Fecha de liquidación: ${corte.fecha_liq || corte.fli}`],
+    [],
+    ['Grupo cliente', 'Transacciones', 'Monto operado', 'Comisión pactada', 'IVA', 'Monto a dispersar'],
+  ];
+  const resSheetLinks = [];  // { row, name }
+  let totOp = 0, totCom = 0, totIVA = 0, totDisp = 0, totTx = 0;
+  // --- Hojas por grupo ---
+  const hojasGrupo = [];
+  for (const cc of calculos) {
+    const nombreGrupo = cc.razon || cc.cliente || 'Sin grupo';
+    // Todas las tx de este grupo (todas las afiliaciones cuyo cliente cae en este razón)
+    const rawTx = (grupTx.get(nombreGrupo) || []).filter(t => String(t.afil) === String(cc.afil));
+    const aoa = [
+      [nombreGrupo],
+      [`Afiliación ${cc.afil} · Corte #${corte.id_corte} · Fecha de liquidación: ${corte.fecha_liq || corte.fli}`],
+      [],
+      ['Fecha', 'Hora', 'Afiliación', 'Producto', 'Referencia', 'Autorización', 'Comercio', 'Monto', 'Comisión pactada', 'IVA', 'Monto a dispersar'],
+    ];
+    let sMonto = 0, sCom = 0, sIVA = 0, sDisp = 0;
+    for (const t of rawTx) {
+      const monto = Number(t.monto) || 0;
+      const tasa = tasaPACPorProducto(cc.id_grupo, cc.afil, t.producto);
+      const com = E.round2(monto * tasa);
+      const iva = E.round2(com * IVA);
+      const disp = E.round2(monto - com - iva);
+      aoa.push([t.fecha || '', t.hora || '', t.afil || '', t.producto || '', t.referencia || '', t.autorizacion || '', t.comercio || '', monto, com, iva, disp]);
+      sMonto += monto; sCom += com; sIVA += iva; sDisp += disp;
+    }
+    aoa.push([]);
+    aoa.push(['', '', '', '', '', '', 'TOTAL', E.round2(sMonto), E.round2(sCom), E.round2(sIVA), E.round2(sDisp)]);
+    // Estilos: título grande + encabezados de tabla
+    const styles = [
+      { cell: 'A1', style: { font: { name: 'Montserrat', sz: 16, bold: true, color: { rgb: '051B3B' } } } },
+      { cell: 'A2', style: { font: { name: 'Montserrat', sz: 10, color: { rgb: '6b7280' } } } },
+      { range: 'A4:K4', style: { fill: { fgColor: { rgb: '051B3B' } }, font: { name: 'Montserrat', sz: 11, bold: true, color: { rgb: 'FFFFFF' } }, align: { horizontal: 'center', vertical: 'center' } } },
+      { range: `A${aoa.length}:K${aoa.length}`, style: { fill: { fgColor: { rgb: 'EEF2F7' } }, font: { name: 'Montserrat', sz: 11, bold: true, color: { rgb: '051B3B' } } } },
+    ];
+    hojasGrupo.push({
+      name: uniqueSheetName(nombreGrupo + (calculos.filter(x => x.razon === cc.razon).length > 1 ? ' ' + cc.afil : '')),
+      aoa,
+      cols: [{ wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 14 }, { wch: 26 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 18 }],
+      freeze: { xSplit: 0, ySplit: 4, topLeftCell: 'A5' },
+      fmt: { z: '#,##0.00', cols: [7, 8, 9, 10], rowFrom: 4 },
+      styles,
+    });
+    // Fila del resumen
+    resAoa.push([nombreGrupo + (calculos.filter(x => x.razon === cc.razon).length > 1 ? ' · afil ' + cc.afil : ''), rawTx.length, E.round2(sMonto), E.round2(sCom), E.round2(sIVA), E.round2(sDisp)]);
+    resSheetLinks.push({ row: resAoa.length, name: hojasGrupo[hojasGrupo.length - 1].name });
+    totOp += sMonto; totCom += sCom; totIVA += sIVA; totDisp += sDisp; totTx += rawTx.length;
+  }
+  resAoa.push([]);
+  resAoa.push(['TOTAL', totTx, E.round2(totOp), E.round2(totCom), E.round2(totIVA), E.round2(totDisp)]);
+  const resSheet = {
+    name: 'Resumen',
+    aoa: resAoa,
+    cols: [{ wch: 34 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 18 }],
+    freeze: { xSplit: 0, ySplit: 4, topLeftCell: 'A5' },
+    fmt: { z: '#,##0.00', cols: [2, 3, 4, 5], rowFrom: 4 },
+    styles: [
+      { cell: 'A1', style: { font: { name: 'Montserrat', sz: 18, bold: true, color: { rgb: '051B3B' } } } },
+      { cell: 'A2', style: { font: { name: 'Montserrat', sz: 10, color: { rgb: '6b7280' } } } },
+      { range: 'A4:F4', style: { fill: { fgColor: { rgb: '051B3B' } }, font: { name: 'Montserrat', sz: 11, bold: true, color: { rgb: 'FFFFFF' } }, align: { horizontal: 'center', vertical: 'center' } } },
+      { range: `A${resAoa.length}:F${resAoa.length}`, style: { fill: { fgColor: { rgb: 'EEF2F7' } }, font: { name: 'Montserrat', sz: 12, bold: true, color: { rgb: '051B3B' } } } },
+    ],
+  };
+  return X.buildXLSX([resSheet, ...hojasGrupo]);
+}
+
 // Reporte por cliente con el formato+estilo de PLANTILLA REPORTE.xlsx.
 // Se usa exceljs (soporta estilos: fill/font/align/border/numFmt/freeze).
 async function buildReporteXLSX(c, cal) {
@@ -1814,56 +1935,65 @@ app.get('/api/worm/status', auth, requiereRol('admin'), async (_req, res) => {
    ========================================================================= */
 function armarNotifDisputaHTML(n, opts) {
   opts = opts || {};
-  const brand = '#051B3B', accent = '#3083F4', muted = '#667085', line = '#e5e7eb', ink = '#1A1A1A';
+  const brand = '#051B3B', accent = '#3083F4', muted = '#6b7280', line = '#e5e7eb', ink = '#111827', warnBg = '#FFF7ED', warnBorder = '#FDBA74', warnInk = '#7C2D12';
   const logo = opts.logoSrc || 'cid:polipay-logo';
-  const tipoTxt = n.tipo === 'refund' ? 'Devolución sospechosa' : n.tipo === 'duplicate' ? 'Posible transacción duplicada' : 'Contracargo (chargeback)';
-  const subject = `[${n.folio}] ${tipoTxt} en tu comercio · Polipay`;
-  const filas = (n.campos || []).map(([k, v]) => `<tr><td width="180" style="color:${muted};padding:6px 0">${escapeHtml(k)}</td><td style="padding:6px 0"><b>${escapeHtml(String(v == null ? '—' : v))}</b></td></tr>`).join('');
-  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${escapeHtml(subject)}</title></head>
-<body style="margin:0;padding:0;background:#f4f6fb;font-family:Montserrat,Arial,sans-serif;color:${ink}">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f6fb;padding:24px 0"><tr><td align="center">
-    <table role="presentation" width="640" cellspacing="0" cellpadding="0" style="max-width:640px;background:#fff;border:1px solid ${line};border-radius:12px;overflow:hidden">
-      <tr><td style="background:#ffffff;padding:26px 32px;border-bottom:1px solid ${line}">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
-          <td><img src="${logo}" alt="Polipay" height="34" style="display:block;height:34px;border:0"></td>
-          <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:${brand};letter-spacing:.12em;text-transform:uppercase">Polipay POS Settlement</td>
-        </tr></table>
+  const tipoTxt = n.tipo === 'refund' ? 'Notificación de devolución sospechosa' : n.tipo === 'duplicate' ? 'Notificación de posible duplicado' : 'Notificación de contracargo';
+  const subject = `[${n.folio}] ${tipoTxt}`;
+  // Filas fijas de la plantilla (17 filas si es CB, subset para refund/dup). Etiquetas + valor.
+  const rowsInput = Array.isArray(n.filas) ? n.filas : (n.campos || []);
+  const filasHtml = rowsInput.filter(f => f && f.length >= 2).map(([k, v, extra]) => {
+    const val = v == null || v === '' ? '—' : String(v);
+    const suffix = extra ? ` <span style="color:${accent}">${escapeHtml(extra)}</span>` : '';
+    return `<tr><td width="45%" style="padding:12px 16px;border-top:1px solid ${line};font:400 13px/1.4 Arial,Helvetica,sans-serif;color:${muted}">${escapeHtml(k)}</td><td style="padding:12px 16px;border-top:1px solid ${line};font:700 13px/1.4 Arial,Helvetica,sans-serif;color:${ink}">${escapeHtml(val)}${suffix}</td></tr>`;
+  }).join('');
+  const docs = Array.isArray(n.documentos) && n.documentos.length ? n.documentos : null;
+  const grupoNombre = n.grupo_nombre || n.destinatario_nombre || 'cliente';
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(subject)}</title>
+</head><body style="margin:0;padding:0;background:#f5f6f8;font-family:Arial,Helvetica,sans-serif;color:${ink}">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5f6f8;padding:24px 0"><tr><td align="center">
+    <table role="presentation" width="640" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border:1px solid ${line};border-radius:14px;overflow:hidden">
+      <!-- Header: logo + línea azul -->
+      <tr><td style="padding:28px 36px 0"><img src="${logo}" alt="Polipay" height="34" style="display:block;height:34px;border:0"></td></tr>
+      <tr><td style="padding:14px 36px 0"><div style="height:4px;background:${accent};border-radius:2px;width:64px"></div></td></tr>
+      <!-- Subtítulo y folio -->
+      <tr><td style="padding:20px 36px 0;font:400 14px/1.5 Arial,Helvetica,sans-serif;color:${muted}">${escapeHtml(tipoTxt)} · Folio <b style="color:${ink}">${escapeHtml(n.folio || '')}</b></td></tr>
+      <!-- Saludo -->
+      <tr><td style="padding:28px 36px 0;font:400 14px/1.6 Arial,Helvetica,sans-serif;color:${ink}">Estimado <b>${escapeHtml(grupoNombre)}</b>,</td></tr>
+      <!-- Descripción -->
+      <tr><td style="padding:16px 36px 8px;font:400 14px/1.6 Arial,Helvetica,sans-serif;color:${ink}">
+        ${n.tipo === 'refund'
+          ? 'Se ha registrado una <b>devolución sospechosa</b> sobre una de sus transacciones. Es necesario que revisen el caso y, de proceder, nos hagan llegar la evidencia <b>antes de la fecha límite</b>.'
+          : n.tipo === 'duplicate'
+            ? 'Hemos detectado una <b>posible transacción duplicada</b> en su comercio. Es necesario que revisen el caso y nos hagan llegar la evidencia <b>antes de la fecha límite</b> para dictaminar si es válida.'
+            : 'Se ha registrado un <b>contracargo</b> sobre una de sus transacciones. Es necesario que revisen el caso y, de proceder, nos hagan llegar la evidencia <b>antes de la fecha límite</b> para poder representar la disputa ante el adquirente.'}
       </td></tr>
-      <tr><td style="height:6px;background:${accent}"></td></tr>
-      <tr><td style="padding:34px 40px 8px">
-        <div style="font:700 12px/1 Montserrat,Arial,sans-serif;color:${accent};letter-spacing:.14em;text-transform:uppercase;margin:0 0 10px">${escapeHtml(tipoTxt)}</div>
-        <div style="font:700 22px/1.25 Montserrat,Arial,sans-serif;color:${brand};margin:0 0 8px">Estimado(a) ${escapeHtml(n.destinatario_nombre || 'contacto')},</div>
-        <div style="font:400 14px/1.6 Montserrat,Arial,sans-serif;color:${muted};margin:0 0 22px">
-          Te notificamos que se registró un caso en tu comercio <b style="color:${ink}">${escapeHtml(n.merchant || '—')}</b> que requiere tu atención. Los detalles están abajo.
-          ${n.fecha_limite_respuesta ? '<br><br><b style="color:'+ink+'">Fecha límite para tu respuesta: '+escapeHtml(n.fecha_limite_respuesta)+'</b>.' : ''}
-        </div>
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid ${line};border-radius:10px;overflow:hidden;margin:0 0 24px">
-          <tr><td style="padding:14px 18px;background:#f9fafb;border-bottom:1px solid ${line};font:700 11px/1 Montserrat,Arial,sans-serif;color:${muted};letter-spacing:.12em;text-transform:uppercase">Detalles del caso</td></tr>
-          <tr><td style="padding:14px 18px">
-            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font:400 13px/1.7 Montserrat,Arial,sans-serif;color:${ink}">${filas}</table>
-          </td></tr>
-        </table>
-        ${n.mensaje_extra ? `<div style="font:400 13px/1.6 Montserrat,Arial,sans-serif;color:${ink};margin:0 0 20px;padding:14px 16px;background:#f9fafb;border:1px solid ${line};border-radius:8px">${escapeHtml(n.mensaje_extra)}</div>` : ''}
-        <div style="font:400 13px/1.6 Montserrat,Arial,sans-serif;color:${ink};margin:0 0 22px">
-          Por favor responde a este correo con la <b>evidencia y documentación</b> que justifique la venta o autorice la devolución. Si no recibimos respuesta antes de la fecha límite, procederemos con la aceptación del caso.
-        </div>
-        <div style="font:400 12px/1.6 Montserrat,Arial,sans-serif;color:${muted};margin:20px 0 0;padding:14px 16px;background:#f9fafb;border:1px solid ${line};border-radius:8px">
-          Este mensaje fue enviado automáticamente por el sistema de Polipay POS Settlement. Cualquier duda escribe a <a href="mailto:ops.agregador@polipay.io" style="color:${accent}">ops.agregador@polipay.io</a>.
+      <!-- Tabla de datos -->
+      <tr><td style="padding:20px 36px 0">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">${filasHtml}</table>
+      </td></tr>
+      ${docs ? `
+      <!-- Documentos requeridos -->
+      <tr><td style="padding:28px 36px 0">
+        <div style="font:700 14px/1.4 Arial,Helvetica,sans-serif;color:${ink};margin:0 0 8px">Documentos requeridos (según el código de razón):</div>
+        <ul style="margin:0;padding:0 0 0 20px;font:400 13px/1.7 Arial,Helvetica,sans-serif;color:${ink}">${docs.map(d => `<li>${escapeHtml(d)}</li>`).join('')}</ul>
+      </td></tr>` : ''}
+      <!-- Advertencia de retención -->
+      <tr><td style="padding:24px 36px 0">
+        <div style="background:${warnBg};border:1px solid ${warnBorder};border-radius:10px;padding:14px 16px;font:400 13px/1.55 Arial,Helvetica,sans-serif;color:${warnInk}">
+          <span style="color:${warnInk}">⚠</span> El monto de este ${n.tipo === 'refund' ? 'caso' : n.tipo === 'duplicate' ? 'cobro' : 'contracargo'} <b>será retenido de su siguiente liquidación, el día hábil siguiente a esta notificación</b>. Si no recibimos su evidencia antes del <b>${escapeHtml(n.fecha_limite_respuesta || 'la fecha indicada')}</b>, se tomará como <b>aceptado</b>: el débito será definitivo y el caso <b>no podrá disputarse posteriormente</b>.
         </div>
       </td></tr>
-      <tr><td style="padding:22px 32px 26px;border-top:1px solid ${line};font:400 12px/1.6 Montserrat,Arial,sans-serif;color:${muted}">
-        Sistema: polipay-conciliacion-liquidacion.onrender.com · Polipay · MCEB
-      </td></tr>
-      <tr><td style="background:${brand};padding:14px 32px">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
-          <td style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">Polipay POS Settlement</td>
-          <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">ops.agregador@polipay.io</td>
-        </tr></table>
+      <!-- Footer -->
+      <tr><td style="padding:24px 36px 32px;font:400 12px/1.55 Arial,Helvetica,sans-serif;color:${muted}">
+        Este mensaje fue generado automáticamente por la plataforma de gestión de contracargos. Para responder, conserve el folio <b style="color:${ink}">${escapeHtml(n.folio || '')}</b> en el asunto.
       </td></tr>
     </table>
+    <div style="max-width:640px;margin:12px auto 0;padding:0 8px;font:400 11px/1.4 Arial,Helvetica,sans-serif;color:${muted};text-align:center">Polipay · MCEB · ops.agregador@polipay.io</div>
   </td></tr></table>
 </body></html>`;
-  const textFallback = `[${n.folio}] ${tipoTxt} · Comercio ${n.merchant} · Fecha límite ${n.fecha_limite_respuesta || 'no aplica'}. Responde con evidencia. Polipay POS Settlement.`;
+  const textFallback = `[${n.folio}] ${tipoTxt}. Fecha límite ${n.fecha_limite_respuesta || 'no aplica'}. Conserve el folio ${n.folio || ''} en el asunto para responder.`;
   return { subject, html, textFallback };
 }
 
@@ -1900,6 +2030,44 @@ app.delete('/api/destinatarios/:id', auth, requiereRol('admin'), async (req, res
   if (!dbReady(res)) return;
   await db.query('delete from destinatarios where id=$1', [parseInt(req.params.id, 10)]);
   await bit(req, 'destinatario_baja', '', { resource_type: 'destinatario', resource_id: req.params.id });
+  res.json({ ok: true });
+});
+
+/* ============================================================================
+   DESTINATARIOS POR GRUPO DE CLIENTE — reciben SU detalle transaccional
+   ========================================================================= */
+app.get('/api/destinatarios-cliente', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const grupos = (await db.query('select id_grupo, nombre_cliente from grupos where activo=true order by nombre_cliente')).rows;
+  const rows = (await db.query('select * from destinatarios_cliente order by id_grupo, activo desc, id')).rows
+    .map(d => ({ ...d, email: descifraTexto(d.email_cifrado, d.email), nombre: descifraTexto(d.nombre_cifrado, d.nombre) }));
+  const porGrupo = new Map(); rows.forEach(r => { if (!porGrupo.has(r.id_grupo)) porGrupo.set(r.id_grupo, []); porGrupo.get(r.id_grupo).push(r); });
+  res.json(grupos.map(g => ({ id_grupo: g.id_grupo, nombre: g.nombre_cliente, contactos: porGrupo.get(g.id_grupo) || [] })));
+});
+app.post('/api/destinatarios-cliente', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const b = req.body || {};
+  const idGrupo = parseInt(b.id_grupo, 10); if (!idGrupo) return res.status(400).json({ error: 'id_grupo' });
+  const email = String(b.email || '').trim().toLowerCase();
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'email_invalido' });
+  const tipo = ['to', 'cc', 'bcc'].includes(String(b.tipo || '').toLowerCase()) ? String(b.tipo).toLowerCase() : 'to';
+  const nombreD = String(b.nombre || '').trim();
+  const eHash = C.hmacEmail(email), eCif = C.encrypt(email), nCif = C.encrypt(nombreD);
+  if (b.id) {
+    await db.query('update destinatarios_cliente set id_grupo=$1,email=$2,nombre=$3,tipo=$4,activo=$5,email_hash=$6,email_cifrado=$7,nombre_cifrado=$8 where id=$9',
+      [idGrupo, email, nombreD, tipo, !!b.activo, eHash, eCif, nCif, b.id]);
+  } else {
+    await db.query(`insert into destinatarios_cliente(id_grupo,email,nombre,tipo,activo,creado_por,email_hash,email_cifrado,nombre_cifrado)
+       values($1,$2,$3,$4,$5,$6,$7,$8,$9) on conflict(id_grupo,email_hash) do update set nombre=excluded.nombre,tipo=excluded.tipo,activo=excluded.activo,email_cifrado=excluded.email_cifrado,nombre_cifrado=excluded.nombre_cifrado`,
+      [idGrupo, email, nombreD, tipo, b.activo !== false, req.user.nombre, eHash, eCif, nCif]);
+  }
+  await bit(req, b.id ? 'destinatario_cliente_editar' : 'destinatario_cliente_alta', `grupo=${idGrupo} email=${email} (${tipo})`, { resource_type: 'destinatario_cliente', resource_id: b.id });
+  res.json({ ok: true });
+});
+app.delete('/api/destinatarios-cliente/:id', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  await db.query('delete from destinatarios_cliente where id=$1', [parseInt(req.params.id, 10)]);
+  await bit(req, 'destinatario_cliente_baja', '', { resource_type: 'destinatario_cliente', resource_id: req.params.id });
   res.json({ ok: true });
 });
 
@@ -2071,6 +2239,88 @@ app.post('/api/cortes/:id/notificar', auth, requiereRol('admin', 'tesoreria', 'b
     res.status(500).json({ error: 'ses_error', mensaje: e.message });
   }
 });
+
+/* Envía el detalle transaccional del corte a cada cliente, filtrado a SU grupo. */
+app.post('/api/cortes/:id/notificar-clientes', auth, requiereRol('admin', 'tesoreria', 'bancos'), async (req, res) => {
+  if (!dbReady(res)) return;
+  if (!sesEnabled()) return res.status(503).json({ error: 'ses_no_configurado', mensaje: 'Configura AWS_ACCESS_KEY_ID/SECRET/REGION en el servidor.' });
+  const idCorte = parseInt(req.params.id, 10);
+  const corte = (await db.query('select *, fecha_liq_iso::text as fli from cortes where id_corte=$1', [idCorte])).rows[0];
+  if (!corte) return res.status(404).json({ error: 'no_existe' });
+  const cal = (await db.query('select * from calculos where corte_id=$1 order by razon, afil', [idCorte])).rows
+    .map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc }));
+  const txs = (await db.query(
+    "select fecha,hora,cliente,comercio,numero_afiliacion as afil,producto,monto,referencia,autorizacion from transacciones where fecha_liq=$1 and upper(estatus)='APROBADO' order by fecha,hora,id",
+    [corte.fli]
+  )).rows;
+  const [params, grupos, afilGrupo, costos] = [await getParams(), await getGrupos(), await getAfilGrupo(), await getCostos()];
+  const destPorGrupo = (await db.query('select id,id_grupo,email,email_cifrado,nombre,nombre_cifrado,tipo from destinatarios_cliente where activo=true')).rows
+    .map(d => ({ ...d, email: descifraTexto(d.email_cifrado, d.email), nombre: descifraTexto(d.nombre_cifrado, d.nombre) }));
+  const mapDest = new Map();
+  for (const d of destPorGrupo) { if (!mapDest.has(d.id_grupo)) mapDest.set(d.id_grupo, []); mapDest.get(d.id_grupo).push(d); }
+  const logoPath = path.join(__dirname, 'public', 'logo.png');
+  let inlineImages = [];
+  try { inlineImages = [{ cid: 'polipay-logo', filename: 'polipay-logo.png', contentType: 'image/png', content: require('fs').readFileSync(logoPath) }]; } catch (_e) {}
+  const enviados = [], omitidos = [];
+  // Un correo por grupo: adjunta el detalle transaccional filtrado a ESE grupo únicamente.
+  const gruposEnCorte = new Map();
+  cal.forEach(cc => { const id = cc.id_grupo; if (!gruposEnCorte.has(id)) gruposEnCorte.set(id, []); gruposEnCorte.get(id).push(cc); });
+  for (const [idGrupo, calGrupo] of gruposEnCorte.entries()) {
+    if (idGrupo == null) { omitidos.push({ grupo: calGrupo[0].razon, motivo: 'grupo_sin_id' }); continue; }
+    const dest = mapDest.get(idGrupo) || [];
+    if (!dest.length) { omitidos.push({ grupo: calGrupo[0].razon, motivo: 'sin_destinatarios' }); continue; }
+    const to  = dest.filter(d => (d.tipo || 'to') === 'to').map(d => d.nombre ? `"${d.nombre}" <${d.email}>` : d.email);
+    const cc2 = dest.filter(d => (d.tipo || 'to') === 'cc').map(d => d.nombre ? `"${d.nombre}" <${d.email}>` : d.email);
+    const bcc = dest.filter(d => (d.tipo || 'to') === 'bcc').map(d => d.nombre ? `"${d.nombre}" <${d.email}>` : d.email);
+    if (!to.length) { omitidos.push({ grupo: calGrupo[0].razon, motivo: 'sin_to' }); continue; }
+    // XLSX filtrado a las afiliaciones de este grupo
+    const afiles = new Set(calGrupo.map(c => String(c.afil)));
+    const txsGrupo = txs.filter(t => afiles.has(String(t.afil)));
+    const buf = buildDetalleTransaccionalXLSX(corte, calGrupo, txsGrupo, { params, grupos, afilGrupo, costos });
+    const nombreGrupo = calGrupo[0].razon;
+    const subject = `Detalle de liquidación · ${nombreGrupo} · corte ${corte.fecha_liq}`;
+    const html = armarDetalleClienteHTML({ nombreGrupo, corte, calGrupo, logoSrc: 'cid:polipay-logo' });
+    const attachments = [{ filename: `detalle_${nombreGrupo.replace(/[^\w\-]+/g, '_')}_${corte.fli}.xlsx`, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: buf }];
+    try {
+      const messageId = await sendSES({ to, cc: cc2, bcc, subject, html, attachments, inlineImages, textFallback: `Adjuntamos el detalle de liquidación del corte ${corte.fecha_liq} para ${nombreGrupo}.` });
+      enviados.push({ grupo: nombreGrupo, to: to.length, cc: cc2.length, bcc: bcc.length, messageId });
+    } catch (e) {
+      omitidos.push({ grupo: nombreGrupo, motivo: 'ses_error', error: e.message });
+    }
+  }
+  await bit(req, 'notificar_clientes', `corte #${idCorte}: enviados=${enviados.length}, omitidos=${omitidos.length}`, { resource_type: 'corte', resource_id: idCorte });
+  res.json({ ok: true, enviados, omitidos });
+});
+
+// HTML minimal para el correo al cliente (usa el logo y los colores Polipay).
+function armarDetalleClienteHTML(n) {
+  const brand = '#051B3B', accent = '#3083F4', muted = '#6b7280', line = '#e5e7eb', ink = '#111827';
+  const logo = n.logoSrc || 'cid:polipay-logo';
+  const cc = n.calGrupo;
+  const totMonto = cc.reduce((s, x) => s + ((x.calc.m_tdd || 0) + (x.calc.m_tdc || 0) + (x.calc.m_amex || 0) + (x.calc.m_int || 0)), 0);
+  const totDisp  = cc.reduce((s, x) => s + (x.calc.disp_total || 0), 0);
+  const nTrx     = cc.reduce((s, x) => s + (x.calc.num_trx || 0), 0);
+  const fmt = v => (v || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Detalle de liquidación</title></head>
+<body style="margin:0;padding:0;background:#f5f6f8;font-family:Arial,Helvetica,sans-serif;color:${ink}">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5f6f8;padding:24px 0"><tr><td align="center">
+<table role="presentation" width="640" cellspacing="0" cellpadding="0" style="max-width:640px;background:#fff;border:1px solid ${line};border-radius:14px;overflow:hidden">
+<tr><td style="padding:28px 36px 0"><img src="${logo}" alt="Polipay" height="34" style="display:block;height:34px;border:0"></td></tr>
+<tr><td style="padding:14px 36px 0"><div style="height:4px;background:${accent};border-radius:2px;width:64px"></div></td></tr>
+<tr><td style="padding:20px 36px 0;font:400 14px/1.5 Arial,Helvetica,sans-serif;color:${muted}">Detalle de liquidación · Corte <b style="color:${ink}">${escapeHtml(n.corte.fecha_liq || '')}</b></td></tr>
+<tr><td style="padding:28px 36px 0;font:400 14px/1.6 Arial,Helvetica,sans-serif;color:${ink}">Estimado <b>${escapeHtml(n.nombreGrupo)}</b>,</td></tr>
+<tr><td style="padding:16px 36px 8px;font:400 14px/1.6 Arial,Helvetica,sans-serif;color:${ink}">Le compartimos el <b>detalle transaccional</b> de la liquidación con fecha valor <b>${escapeHtml(n.corte.fecha_liq || '')}</b>. En el archivo adjunto encontrará una hoja por afiliación con el monto operado, la comisión pactada, el IVA y el monto a dispersar por cada transacción.</td></tr>
+<tr><td style="padding:20px 36px 0">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">
+<tr><td width="55%" style="padding:12px 16px;border-top:1px solid ${line};font:400 13px/1.4 Arial,Helvetica,sans-serif;color:${muted}">Transacciones</td><td style="padding:12px 16px;border-top:1px solid ${line};font:700 13px/1.4 Arial,Helvetica,sans-serif;color:${ink}">${nTrx.toLocaleString('es-MX')}</td></tr>
+<tr><td style="padding:12px 16px;border-top:1px solid ${line};font:400 13px/1.4 Arial,Helvetica,sans-serif;color:${muted}">Monto operado</td><td style="padding:12px 16px;border-top:1px solid ${line};font:700 13px/1.4 Arial,Helvetica,sans-serif;color:${ink}">$ ${fmt(totMonto)}</td></tr>
+<tr><td style="padding:12px 16px;border-top:1px solid ${line};font:400 13px/1.4 Arial,Helvetica,sans-serif;color:${muted}">Monto a dispersar</td><td style="padding:12px 16px;border-top:1px solid ${line};font:700 13px/1.4 Arial,Helvetica,sans-serif;color:${ink}">$ ${fmt(totDisp)}</td></tr>
+</table></td></tr>
+<tr><td style="padding:24px 36px 32px;font:400 12px/1.55 Arial,Helvetica,sans-serif;color:${muted}">Ante cualquier duda sobre el cálculo o el detalle transaccional, responda a este correo con el folio de la transacción.</td></tr>
+</table>
+<div style="max-width:640px;margin:12px auto 0;padding:0 8px;font:400 11px/1.4 Arial,Helvetica,sans-serif;color:${muted};text-align:center">Polipay · MCEB · ops.agregador@polipay.io</div>
+</td></tr></table></body></html>`;
+}
 
 // Plantillas (cualquiera autenticado)
 app.get('/api/plantilla/:tipo.xlsx', auth, (req, res) => {

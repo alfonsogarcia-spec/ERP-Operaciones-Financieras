@@ -341,7 +341,6 @@ const NAV=[
   {id:'disp_chargebacks',t:'Contracargos (disputas)',ic:'ic_05',cap:'disputas_ver'},
   {id:'disp_refunds',t:'Devoluciones sospechosas',ic:'ic_17',cap:'disputas_ver'},
   {id:'disp_duplicates',t:'Transacciones duplicadas',ic:'ic_04',cap:'disputas_ver'},
-  {id:'disp_merchants',t:'Comercios y contactos',ic:'ic_09',cap:'disputas_ver'},
   {id:'disp_reasoncodes',t:'Catálogo reason codes',ic:'ic_13',cap:'disputas_ver'},
   {id:'disp_providers',t:'Proveedores / API',ic:'ic_12',cap:'disputas_ver'},
   {id:'disp_reports',t:'Reportes de disputas',ic:'ic_15',cap:'disputas_ver'},
@@ -614,6 +613,7 @@ async function abrirCorte(id){
   const acc=el('div',{class:'kpi-row'});
   acc.append(el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/cortes/'+id+'/layout.xlsx','layout_corte_'+id+'.xlsx').catch(e=>toast(e.status===409?'Layout bloqueado: hay órdenes sin CLABE/banco':errMsg(e),'err'))},'⬇ Layout SPEI'));
   acc.append(el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/cortes/'+id+'/reporte.xlsx','reporte_corte_'+id+'.xlsx')},'⬇ Reporte por cliente'));
+  acc.append(el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/cortes/'+id+'/detalle-transaccional.xlsx','detalle_transaccional_corte_'+id+'.xlsx')},'⬇ Detalle transaccional'));
   const trans=async(a,label)=>{try{await api('POST','/api/cortes/'+id+'/'+a);toast(label,'ok');abrirCorte(id);}catch(e){toast(errMsg(e),'err');}};
   if(c.estado==='Borrador'&&can('validar'))acc.append(el('button',{class:'btn ok sm',disabled:(!c.cuadra||c.bloqueos)?true:null,onclick:()=>trans('validar','Corte validado')},'Validar corte'));
   // Botón Notificar (envía el informe por correo). Disponible a admin/tesorería/bancos en cualquier estado.
@@ -630,6 +630,19 @@ async function abrirCorte(id){
       else toast('Error: '+(d.mensaje||errMsg(e)),'err');
     }
   }},'📧 Notificar'));
+  if(can('notificar')) acc.append(el('button',{class:'btn sm',style:'background:#0F56AC;color:#fff',onclick:async()=>{
+    if(!confirm('¿Enviar el detalle transaccional a cada cliente configurado?')) return;
+    try{
+      const r=await withBusy('Enviando correos a clientes…',()=>api('POST','/api/cortes/'+id+'/notificar-clientes'));
+      const okN=r.enviados.length, omN=r.omitidos.length;
+      const detOm = omN ? ' · Omitidos: '+r.omitidos.map(o=>o.grupo+' ('+o.motivo+')').join(', ') : '';
+      toast('Enviado a '+okN+' cliente(s)'+(omN?', omitidos '+omN:'')+'.'+detOm,okN?'ok':'err');
+    }catch(e){
+      const d=e.data||{};
+      if(d.error==='ses_no_configurado') toast('SES no configurado en el servidor.','err');
+      else toast('Error: '+(d.mensaje||errMsg(e)),'err');
+    }
+  }},'📤 Enviar a clientes'));
   if(c.estado==='Validado'&&can('dispersar'))acc.append(el('button',{class:'btn sm',style:'background:var(--violet);color:#fff',onclick:()=>trans('dispersar','Marcado como dispersado')},'Marcar dispersado'));
   if(c.estado==='Dispersado'&&can('cerrar'))acc.append(el('button',{class:'btn sm',onclick:()=>trans('cerrar','Corte cerrado')},'Cerrar corte (inmutable)'));
   pa.append(acc);
@@ -806,24 +819,86 @@ async function vParametros(v){
 /* ---------- BITÁCORA ---------- */
 /* ---------- DESTINATARIOS ---------- */
 async function vDestinatarios(v){
-  if(can('params'))$('#pageAction').append(el('button',{class:'btn',onclick:()=>editDestinatario()},'+ Destinatario'));
-  const dest=await api('GET','/api/destinatarios');
+  if(can('params'))$('#pageAction').append(el('button',{class:'btn',onclick:()=>editDestinatario()},'+ Destinatario general'),el('button',{class:'btn ghost',onclick:()=>editDestinatarioCliente()},'+ Destinatario por cliente'));
+  const [dest,porCliente]=await Promise.all([api('GET','/api/destinatarios'),api('GET','/api/destinatarios-cliente')]);
   v.innerHTML='';
-  const p=el('div',{class:'panel'});
-  p.append(el('h3',{},'Correos que reciben el aviso automático de corte',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},dest.filter(d=>d.activo).length+' activo(s) de '+dest.length))));
-  p.append(el('div',{class:'banner',html:'Remitente: <b>ops.agregador@polipay.io</b>. Al presionar <b>Notificar</b> en un corte, el sistema envía el informe (con adjuntos) a todos los destinatarios activos.'}));
   const tipoBadge = t => t==='cc' ? '<span class="badge b">CC</span>' : t==='bcc' ? '<span class="badge v">CCO</span>' : '<span class="badge ok">Para</span>';
+  /* --- Panel 1: destinatarios generales del informe del corte --- */
+  const p=el('div',{class:'panel'});
+  p.append(el('h3',{},'Aviso general del corte',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},dest.filter(d=>d.activo).length+' activo(s) de '+dest.length))));
+  p.append(el('div',{class:'banner',html:'Correos <b>internos</b> que reciben el informe general del corte (con layout SPEI, reporte por cliente y reporte de contracargos) al presionar <b>Notificar</b> en un corte.'}));
   const rows=dest.map(d=>{
     const st = d.activo ? '<span class="badge ok">Activo</span>' : '<span class="badge g">Inactivo</span>';
     const r=[esc(d.email),esc(d.nombre||''),tipoBadge(d.tipo||'to'),st];
-    if(can('params')){
-      r.push(el('button',{class:'btn ghost sm',onclick:(e)=>{e.stopPropagation();editDestinatario(d);}},'Editar'));
-    }
+    if(can('params')) r.push(el('button',{class:'btn ghost sm',onclick:(e)=>{e.stopPropagation();editDestinatario(d);}},'Editar'));
     return r;
   });
   const head=['Correo','Nombre','Tipo','Estado']; if(can('params'))head.push('');
-  p.append(tableWrap(head,rows,{empty:'Sin destinatarios. Agrega uno con "+ Destinatario".'}));
+  p.append(tableWrap(head,rows,{empty:'Sin destinatarios generales. Agrega uno con "+ Destinatario general".'}));
   v.append(p);
+  /* --- Panel 2: destinatarios por grupo de cliente (detalle transaccional) --- */
+  const pc=el('div',{class:'panel'});
+  const totalC=porCliente.reduce((s,g)=>s+g.contactos.filter(c=>c.activo).length,0);
+  pc.append(el('h3',{},'Detalle transaccional por cliente',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},totalC+' contacto(s) activo(s) en '+porCliente.length+' grupo(s)'))));
+  pc.append(el('div',{class:'banner',html:'Cada grupo de cliente puede tener sus propios contactos. Al presionar <b>Enviar a clientes</b> en un corte, el sistema envía a cada grupo el <b>detalle transaccional</b> filtrado a SU liquidación (Monto · Comisión pactada · IVA · Monto a dispersar por transacción).'}));
+  const cont=el('div',{style:'display:flex;flex-direction:column;gap:16px'});
+  for(const g of porCliente){
+    const bloque=el('div',{style:'border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;background:#fff'});
+    const activos=g.contactos.filter(c=>c.activo).length;
+    bloque.append(el('div',{style:'display:flex;align-items:center;gap:12px;margin-bottom:10px'},
+      el('b',{style:'font-size:14px'},g.nombre),
+      el('span',{class:'muted',style:'font-size:12px'},`Grupo #${g.id_grupo} · ${activos}/${g.contactos.length} activo(s)`),
+      el('div',{style:'flex:1'}),
+      can('params')?el('button',{class:'btn ghost sm',onclick:()=>editDestinatarioCliente(null,g.id_grupo,g.nombre)},'+ Contacto'):el('span')
+    ));
+    if(!g.contactos.length){
+      bloque.append(el('div',{class:'muted',style:'font-size:12px;padding:4px 0'},'Sin contactos configurados. Este grupo no recibirá el detalle.'));
+    } else {
+      const rc=g.contactos.map(c=>{
+        const st = c.activo ? '<span class="badge ok">Activo</span>' : '<span class="badge g">Inactivo</span>';
+        const r=[esc(c.email),esc(c.nombre||''),tipoBadge(c.tipo||'to'),st];
+        if(can('params'))r.push(el('button',{class:'btn ghost sm',onclick:()=>editDestinatarioCliente(c,g.id_grupo,g.nombre)},'Editar'));
+        return r;
+      });
+      const hc=['Correo','Nombre','Tipo','Estado']; if(can('params'))hc.push('');
+      bloque.append(tableWrap(hc,rc,{empty:'—'}));
+    }
+    cont.append(bloque);
+  }
+  if(!porCliente.length) cont.append(el('div',{class:'muted'},'No hay grupos de cliente activos. Ve a Catálogos → Grupos.'));
+  pc.append(cont);
+  v.append(pc);
+}
+function editDestinatarioCliente(d,idGrupoPre,nombreGrupoPre){
+  const isNew=!d; d=d||{};
+  const body=el('div',{});
+  // Selector de grupo
+  const grupoSel=el('select');
+  api('GET','/api/catalogo/grupos').then(gs=>{
+    grupoSel.innerHTML='';
+    for(const g of gs.filter(x=>x.activo)) grupoSel.append(el('option',{value:g.id_grupo},`${g.nombre_cliente} (#${g.id_grupo})`));
+    grupoSel.value = d.id_grupo || idGrupoPre || (gs[0]&&gs[0].id_grupo) || '';
+  }).catch(()=>{});
+  if(idGrupoPre&&isNew){ grupoSel.append(el('option',{value:idGrupoPre},nombreGrupoPre||('Grupo #'+idGrupoPre))); grupoSel.value=idGrupoPre; }
+  const email=el('input',{type:'email',value:d.email||'',placeholder:'contacto@cliente.com'});
+  const nombre=el('input',{value:d.nombre||'',placeholder:'Nombre para el saludo (opcional)'});
+  const tipo=el('select');
+  tipo.append(el('option',{value:'to'},'Para (To) — destinatario principal'));
+  tipo.append(el('option',{value:'cc'},'Copia (CC) — visible para todos'));
+  tipo.append(el('option',{value:'bcc'},'Copia oculta (CCO / BCC) — no visible'));
+  tipo.value = d.tipo || 'to';
+  const activo=el('input',{type:'checkbox'}); activo.checked = d.activo !== false;
+  body.append(fld('Grupo de cliente',grupoSel),fld('Correo',email),fld('Nombre',nombre),fld('Tipo',tipo),el('label',{class:'field',style:'flex-direction:row;align-items:center;gap:8px'},activo,el('span',{},'Activo (recibe correos)')));
+  body.append(el('div',{class:'req-note'},'Al menos un contacto “Para” por grupo. Sin “Para”, el grupo se omite al notificar clientes.'));
+  const foot=el('div',{});
+  if(!isNew) foot.append(el('button',{class:'btn danger',onclick:async()=>{if(confirm('¿Eliminar '+d.email+'?')){await api('DELETE','/api/destinatarios-cliente/'+d.id);closeModal();render();}}},'Eliminar'),el('div',{style:'flex:1'}));
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    try{
+      await api('POST','/api/destinatarios-cliente',{id:d.id,id_grupo:parseInt(grupoSel.value,10),email:email.value,nombre:nombre.value,tipo:tipo.value,activo:activo.checked});
+      closeModal(); toast('Guardado','ok'); render();
+    }catch(e){toast(e.data&&e.data.error==='email_invalido'?'Correo inválido':errMsg(e),'err');}
+  }},'Guardar'));
+  modal(isNew?'Nuevo contacto de cliente':'Editar contacto de cliente',body,foot);
 }
 function editDestinatario(d){
   const isNew=!d; d=d||{};

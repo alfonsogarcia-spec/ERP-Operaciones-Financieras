@@ -207,6 +207,25 @@ create table if not exists destinatarios (
 );
 alter table destinatarios add column if not exists tipo text not null default 'to';
 
+-- Destinatarios por grupo de cliente: reciben el detalle transaccional de SU
+-- grupo cuando se dispara "Notificar clientes" en un corte. Independientes de
+-- los destinatarios generales del corte (la tabla anterior).
+create table if not exists destinatarios_cliente (
+  id           serial primary key,
+  id_grupo     integer not null references grupos(id_grupo) on delete cascade,
+  email        text,
+  email_cifrado text,
+  email_hash   text,
+  nombre       text,
+  nombre_cifrado text,
+  tipo         text not null default 'to',   -- 'to' | 'cc' | 'bcc'
+  activo       boolean not null default true,
+  creado_at    timestamptz default now(),
+  creado_por   text,
+  unique(id_grupo, email_hash)
+);
+create index if not exists idx_destcli_grupo on destinatarios_cliente(id_grupo);
+
 create table if not exists bitacora (
   id       serial primary key,
   ts       timestamptz default now(),
