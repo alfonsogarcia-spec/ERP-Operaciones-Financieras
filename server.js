@@ -2247,6 +2247,9 @@ app.post('/api/cortes/:id/notificar-clientes', auth, requiereRol('admin', 'tesor
   const idCorte = parseInt(req.params.id, 10);
   const corte = (await db.query('select *, fecha_liq_iso::text as fli from cortes where id_corte=$1', [idCorte])).rows[0];
   if (!corte) return res.status(404).json({ error: 'no_existe' });
+  if (corte.estado !== 'Dispersado' && corte.estado !== 'Cerrado') {
+    return res.status(409).json({ error: 'estado_no_valido', mensaje: 'El detalle se envía al cliente sólo cuando el corte está Dispersado o Cerrado. Estado actual: ' + corte.estado + '.' });
+  }
   const cal = (await db.query('select * from calculos where corte_id=$1 order by razon, afil', [idCorte])).rows
     .map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc }));
   const txs = (await db.query(

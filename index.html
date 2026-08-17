@@ -630,7 +630,9 @@ async function abrirCorte(id){
       else toast('Error: '+(d.mensaje||errMsg(e)),'err');
     }
   }},'📧 Notificar'));
-  if(can('notificar')) acc.append(el('button',{class:'btn sm',style:'background:#0F56AC;color:#fff',onclick:async()=>{
+  // "Enviar a clientes" sólo cuando el corte ya está dispersado o cerrado (inmutable):
+  // no compartimos el detalle al cliente antes de que el dinero esté fondeado.
+  if(can('notificar') && (c.estado==='Dispersado'||c.estado==='Cerrado')) acc.append(el('button',{class:'btn sm',style:'background:#0F56AC;color:#fff',onclick:async()=>{
     if(!confirm('¿Enviar el detalle transaccional a cada cliente configurado?')) return;
     try{
       const r=await withBusy('Enviando correos a clientes…',()=>api('POST','/api/cortes/'+id+'/notificar-clientes'));
