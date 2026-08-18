@@ -2583,7 +2583,7 @@ async function vRetenciones(v){
   filtros.append(estSel,tipoSel);
   v.append(filtros);
   const filtered = rows.filter(r => (!estSel.value || r.estatus===estSel.value) && (!tipoSel.value || r.tipo===tipoSel.value));
-  const refiltrar = ()=>{ v.innerHTML=''; vRetenciones(v); };
+  const refiltrar = ()=>render();   // usa el router — limpia #pageAction para no duplicar botones
   estSel.addEventListener('change',refiltrar); tipoSel.addEventListener('change',refiltrar);
   // Tabla
   const p=el('div',{class:'panel'});
