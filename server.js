@@ -2411,6 +2411,44 @@ app.delete('/api/destinatarios-cliente/:id', auth, requiereRol('admin'), async (
   await bit(req, 'destinatario_cliente_baja', '', { resource_type: 'destinatario_cliente', resource_id: req.params.id });
   res.json({ ok: true });
 });
+// Da de alta los 4 correos internos de Polipay como CC en TODOS los grupos
+// de cliente activos (idempotente: si ya existe con ese email en el grupo, lo
+// omite). Sirve para dejar traza interna de cada envío "Detalle por cliente".
+app.post('/api/destinatarios-cliente/sync-cc-polipay', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const CC = [
+    { email: 'alfonso.garcia@polipay.io',  nombre: 'Alfonso García' },
+    { email: 'laura.acosta@polipay.io',    nombre: 'Laura Acosta' },
+    { email: 'brandon.arroyo@polipay.io',  nombre: 'Brandon Arroyo' },
+    { email: 'lizette.trejo@polipay.io',   nombre: 'Lizette Trejo' },
+  ];
+  const grupos = (await db.query('select id_grupo from grupos where activo=true order by id_grupo')).rows;
+  let creados = 0, actualizados = 0;
+  for (const g of grupos) {
+    for (const c of CC) {
+      const eHash = C.hmacEmail(c.email);
+      const eCif = C.encrypt(c.email);
+      const nCif = C.encrypt(c.nombre);
+      const existe = (await db.query('select id, tipo, activo from destinatarios_cliente where id_grupo=$1 and email_hash=$2', [g.id_grupo, eHash])).rows[0];
+      if (existe) {
+        // Asegura que quede como CC activo aunque estuviera en otro tipo.
+        if (existe.tipo !== 'cc' || !existe.activo) {
+          await db.query('update destinatarios_cliente set tipo=$1, activo=true where id=$2', ['cc', existe.id]);
+          actualizados++;
+        }
+        continue;
+      }
+      await db.query(
+        `insert into destinatarios_cliente(id_grupo, email, email_cifrado, email_hash, nombre, nombre_cifrado, tipo, activo, creado_por)
+         values($1, $2, $3, $4, $5, $6, 'cc', true, $7)`,
+        [g.id_grupo, c.email, eCif, eHash, c.nombre, nCif, req.user.nombre]
+      );
+      creados++;
+    }
+  }
+  await bit(req, 'destinatario_cliente_sync_polipay', `grupos=${grupos.length} · creados=${creados} · actualizados=${actualizados}`);
+  res.json({ ok: true, grupos: grupos.length, creados, actualizados });
+});
 
 /* ============================================================================
    ENVÍO POR AMAZON SES (SendRawEmail con adjuntos)
@@ -2634,9 +2672,6 @@ app.post('/api/cortes/:id/notificar-clientes', auth, requiereRol('admin', 'tesor
     const to  = dest.filter(d => (d.tipo || 'to') === 'to').map(d => d.nombre ? `"${d.nombre}" <${d.email}>` : d.email);
     const cc2 = dest.filter(d => (d.tipo || 'to') === 'cc').map(d => d.nombre ? `"${d.nombre}" <${d.email}>` : d.email);
     const bcc = dest.filter(d => (d.tipo || 'to') === 'bcc').map(d => d.nombre ? `"${d.nombre}" <${d.email}>` : d.email);
-    // CC fijos internos de Polipay (dejan traza en todo envío a clientes).
-    const CC_FIJOS_POLIPAY = ['alfonso.garcia@polipay.io', 'laura.acosta@polipay.io', 'brandon.arroyo@polipay.io', 'lizette.trejo@polipay.io'];
-    for (const e of CC_FIJOS_POLIPAY) { if (!cc2.some(x => x.toLowerCase().includes(e))) cc2.push(e); }
     if (!to.length) { omitidos.push({ grupo: calGrupo[0].razon, motivo: 'sin_to' }); continue; }
     // XLSX filtrado a las afiliaciones de este grupo
     const afiles = new Set(calGrupo.map(c => String(c.afil)));

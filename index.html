@@ -941,7 +941,14 @@ async function vDestinatariosCorte(v){
   v.append(p);
 }
 async function vDestinatariosCliente(v){
-  if(can('params'))$('#pageAction').append(el('button',{class:'btn',onclick:()=>editDestinatarioCliente()},'+ Contacto por cliente'));
+  if(can('params')){
+    $('#pageAction').append(el('button',{class:'btn ghost',onclick:async()=>{
+      if(!confirm('¿Agregar los 4 correos internos de Polipay como CC en TODOS los grupos activos? Se omiten los que ya existan.')) return;
+      try{ const r=await withBusy('Sincronizando CC internos…',()=>api('POST','/api/destinatarios-cliente/sync-cc-polipay')); toast(`Listo · ${r.grupos} grupos · ${r.creados} creados · ${r.actualizados} actualizados`,'ok'); render(); }
+      catch(e){toast(errMsg(e),'err');}
+    }},'✚ Añadir CC internos'));
+    $('#pageAction').append(el('button',{class:'btn',onclick:()=>editDestinatarioCliente()},'+ Contacto por cliente'));
+  }
   const porCliente=await api('GET','/api/destinatarios-cliente');
   v.innerHTML='';
   const pc=el('div',{class:'panel'});
