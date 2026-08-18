@@ -1761,8 +1761,10 @@ app.get('/api/financiamientos', auth, async (req, res) => {
   if (f.tipo)    { vals.push(String(f.tipo));    conds.push(`tipo=$${vals.length}`); }
   if (f.corte_id){ vals.push(parseInt(f.corte_id, 10)); conds.push(`aplicado_en_corte_id=$${vals.length}`); }
   const where = conds.length ? ' where ' + conds.join(' and ') : '';
-  // cast a text en el SELECT para evitar que pglite devuelva Date como "Mon Aug 17".
-  const rows = (await db.query('select *, cargado_en_fecha::text as cargado_en_fecha from financiamientos' + where + ' order by cargado_en_fecha desc, id desc limit 2000', vals)).rows
+  // Columnas explícitas + cast a text para evitar que Postgres/pglite devuelvan
+  // Date como "Mon Aug 17". El "select *, x::text as x" da ambiguous en pg.
+  const cols = 'id, folio, cargado_en_fecha::text as cargado_en_fecha, numero_afiliacion, grupo_cliente, tipo, concepto, bloque, monto, moneda, estatus, aplicado_en_corte_id, archivo_origen, creado_at, creado_por';
+  const rows = (await db.query('select ' + cols + ' from financiamientos' + where + ' order by cargado_en_fecha desc, id desc limit 2000', vals)).rows
     .map(r => ({ ...r, monto: Number(r.monto) }));
   res.json(rows);
 });
