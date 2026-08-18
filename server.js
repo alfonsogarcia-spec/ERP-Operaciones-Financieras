@@ -2481,8 +2481,24 @@ app.get('/api/destinatarios-cliente/plantilla.xlsx', auth, async (req, res) => {
 app.post('/api/destinatarios-cliente/importar', auth, requiereRol('admin'), upload.single('archivo'), validaArchivo, async (req, res) => {
   if (!dbReady(res)) return;
   let rows;
-  try { rows = X.parseBuffer(req.file.buffer, req.file.originalname); }
-  catch (e) { return res.status(400).json({ error: 'archivo_ilegible', mensaje: e.message }); }
+  try {
+    // Parseo tolerante: la plantilla oficial trae 4 filas decorativas (POLIPAY /
+    // subtítulo / meta / separador) antes del encabezado real. Leemos como AOA,
+    // buscamos la fila que contenga "Grupo cliente" y de ahí armamos los objetos.
+    const XLSX = require('xlsx');
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    if (!ws) return res.status(400).json({ error: 'sin_hojas' });
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+    let headerIdx = -1;
+    for (let i = 0; i < Math.min(aoa.length, 15); i++) {
+      const line = (aoa[i] || []).map(v => String(v || '').toLowerCase());
+      if (line.some(c => c.includes('grupo')) && line.some(c => c.includes('correo') || c.includes('email'))) { headerIdx = i; break; }
+    }
+    if (headerIdx < 0) return res.status(400).json({ error: 'sin_encabezado', mensaje: 'No se encontró la fila con "Grupo cliente" y "Correo".' });
+    const headers = aoa[headerIdx].map(h => String(h || '').trim());
+    rows = aoa.slice(headerIdx + 1).map(r => { const o = {}; headers.forEach((h, i) => { o[h] = r[i]; }); return o; });
+  } catch (e) { return res.status(400).json({ error: 'archivo_ilegible', mensaje: e.message }); }
   if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'vacio' });
   const grupos = (await db.query('select id_grupo, nombre_cliente from grupos')).rows;
   const grupoPorNombre = n => grupos.find(g => nrm(g.nombre_cliente) === nrm(n));
