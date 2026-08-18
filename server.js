@@ -1020,6 +1020,7 @@ async function buildDetalleTransaccionalXLSX(corte, calculos, txs, cat) {
   const colsGrupo = [
     { header: 'Fecha', width: 12, align: 'center' },
     { header: 'Hora', width: 10, align: 'center' },
+    { header: 'Grupo cliente', width: 24, align: 'left' },
     { header: 'Afiliación', width: 14, align: 'left' },
     { header: 'Producto', width: 12, align: 'center' },
     { header: 'Referencia', width: 18, align: 'left' },
@@ -1031,7 +1032,8 @@ async function buildDetalleTransaccionalXLSX(corte, calculos, txs, cat) {
     { header: 'Monto a dispersar', width: 18, numFmt: 'mxn' },
   ];
   const colsResumen = [
-    { header: 'Grupo cliente', width: 34, align: 'left' },
+    { header: 'Grupo cliente', width: 30, align: 'left' },
+    { header: 'Afiliación', width: 14, align: 'left' },
     { header: 'Transacciones', width: 14, align: 'right' },
     { header: 'Monto operado', width: 18, numFmt: 'mxn' },
     { header: 'Comisión pactada', width: 18, numFmt: 'mxn' },
@@ -1051,26 +1053,61 @@ async function buildDetalleTransaccionalXLSX(corte, calculos, txs, cat) {
       const com = E.round2(monto * tasa);
       const iva = E.round2(com * IVA);
       const disp = E.round2(monto - com - iva);
-      rowsTx.push([t.fecha || '', t.hora || '', t.afil || '', t.producto || '', t.referencia || '', t.autorizacion || '', t.comercio || '', monto, com, iva, disp]);
+      rowsTx.push([t.fecha || '', t.hora || '', nombreGrupo, t.afil || '', t.producto || '', t.referencia || '', t.autorizacion || '', t.comercio || '', monto, com, iva, disp]);
       sMonto += monto; sCom += com; sIVA += iva; sDisp += disp;
     }
-    const nombreEnHoja = nombreGrupo + (calculos.filter(x => x.razon === cc.razon).length > 1 ? ' ' + cc.afil : '');
+    // Cada afiliación en su propia pestaña.
     hojasGrupo.push({
-      name: uniqueSheetName(nombreEnHoja),
+      name: uniqueSheetName('Afil ' + cc.afil),
       columns: colsGrupo,
       rows: rowsTx,
-      total: ['', '', '', '', '', '', 'TOTAL', E.round2(sMonto), E.round2(sCom), E.round2(sIVA), E.round2(sDisp)],
+      total: ['', '', '', '', '', '', '', 'TOTAL', E.round2(sMonto), E.round2(sCom), E.round2(sIVA), E.round2(sDisp)],
     });
-    resumenRows.push([nombreGrupo + (calculos.filter(x => x.razon === cc.razon).length > 1 ? ' · afil ' + cc.afil : ''), rawTx.length, E.round2(sMonto), E.round2(sCom), E.round2(sIVA), E.round2(sDisp)]);
+    resumenRows.push([nombreGrupo, cc.afil, rawTx.length, E.round2(sMonto), E.round2(sCom), E.round2(sIVA), E.round2(sDisp)]);
     totOp += sMonto; totCom += sCom; totIVA += sIVA; totDisp += sDisp; totTx += rawTx.length;
   }
+  // Detalle bancario — mismas órdenes SPEI que el layout, filtradas al grupo.
+  // DOM: concepto por afiliación + monto disp_dom. AMEX: concepto CPPXAMEX + disp_amex.
+  const bancoCols = [
+    { header: 'Concepto', width: 30, align: 'left' },
+    { header: 'Cuenta CLABE del beneficiario', width: 24, align: 'left' },
+    { header: 'Código del banco', width: 16, align: 'center' },
+    { header: 'Nombre del beneficiario', width: 32, align: 'left' },
+    { header: 'RFC o CURP', width: 20, align: 'left' },
+    { header: 'Cantidad', width: 16, numFmt: 'mxn' },
+    { header: 'Referencia', width: 16, align: 'center' },
+    { header: 'Fecha de pago', width: 18, align: 'center' },
+  ];
+  const bancoRows = [];
+  const pz = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: '2-digit', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const gp = t => (pz.find(p => p.type === t) || {}).value || '';
+  const refNum = Number(`1${gp('day')}${gp('month')}${gp('year')}`);
+  let totBanco = 0;
+  for (const cc of calculos) {
+    const r = cc.calc;
+    if (Math.abs(r.disp_dom) > 0.005) {
+      bancoRows.push([cc.concepto || `DISPERSION ${E.ult3(cc.afil)}CPPX00${cc.id_grupo || ''}`, String(cc.clabe || '—'), Number(cc.codigo_banco) || (cc.codigo_banco || '—'), cc.beneficiario || cc.razon || '—', '', E.round2(r.disp_dom), refNum, '']);
+      totBanco += r.disp_dom;
+    }
+    if (Math.abs(r.disp_amex) > 0.005) {
+      bancoRows.push([`DISPERSION ${E.ult3(cc.afil)}CPPXAMEX00${cc.id_grupo || ''}`, String(cc.clabe || '—'), Number(cc.codigo_banco) || (cc.codigo_banco || '—'), cc.beneficiario || cc.razon || '—', '', E.round2(r.disp_amex), refNum, '']);
+      totBanco += r.disp_amex;
+    }
+  }
+  const hojaBanco = {
+    name: 'Detalle bancario',
+    columns: bancoCols,
+    rows: bancoRows,
+    total: ['', '', '', '', 'TOTAL', E.round2(totBanco), '', ''],
+  };
   return X.buildPolipayXLSX({
     title: 'Detalle de corte de liquidación · por grupo y transacción',
     meta: metaComun,
     footer,
     sheets: [
-      { name: 'Resumen', columns: colsResumen, rows: resumenRows, total: ['TOTAL', totTx, E.round2(totOp), E.round2(totCom), E.round2(totIVA), E.round2(totDisp)] },
+      { name: 'Resumen', columns: colsResumen, rows: resumenRows, total: ['TOTAL', '', totTx, E.round2(totOp), E.round2(totCom), E.round2(totIVA), E.round2(totDisp)] },
       ...hojasGrupo,
+      hojaBanco,
     ],
   });
 }
