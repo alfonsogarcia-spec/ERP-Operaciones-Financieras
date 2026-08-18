@@ -1094,9 +1094,10 @@ async function buildDetalleTransaccionalXLSX(corte, calculos, txs, cat) {
       rowsTx.push([t.fecha || '', t.hora || '', nombreGrupo, t.afil || '', t.producto || '', t.referencia || '', t.autorizacion || '', t.comercio || '', monto, com, iva, disp]);
       sMonto += monto; sCom += com; sIVA += iva; sDisp += disp;
     }
-    // Cada afiliación en su propia pestaña.
+    // Cada afiliación en su propia pestaña. Nombre: "<Grupo> <Afil>"
+    // (uniqueSheetName trunca a 31 chars por Excel y desambigua duplicados).
     hojasGrupo.push({
-      name: uniqueSheetName('Afil ' + cc.afil),
+      name: uniqueSheetName(nombreGrupo + ' ' + cc.afil),
       columns: colsGrupo,
       rows: rowsTx,
       total: ['', '', '', '', '', '', '', 'TOTAL', E.round2(sMonto), E.round2(sCom), E.round2(sIVA), E.round2(sDisp)],
