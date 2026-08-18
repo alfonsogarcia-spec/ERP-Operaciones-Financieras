@@ -971,27 +971,24 @@ app.get('/api/cortes/:id/layout.xlsx', auth, async (req, res) => {
   const pz = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: '2-digit', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
   const gp = t => (pz.find(p => p.type === t) || {}).value || '';
   const referencia = Number(`1${gp('day')}${gp('month')}${gp('year')}`);
+  // Layout SPEI plano — sin banda POLIPAY, sin colores. Solo encabezado + filas.
+  // Formato exacto que espera el dispersor bancario.
+  const headL = [
+    'Concepto',
+    'Cuenta clabe del beneficiario',
+    'Código del banco del beneficiario',
+    'Nombre del beneficiario',
+    'RFC o CURP del beneficiario',
+    'Cantidad',
+    'Referencia numérica',
+    'Fecha de pago (Opcional, solo para transacciones futuras) Formato YYYY-mm-dd HH:mm',
+  ];
   const rowsL = orders.map(o => [o.concepto, String(o.clabe || ''), Number(o.cod) || o.cod, o.razon, '', o.cant, referencia, '']);
-  const metaL = X.metaCorte(c);
-  const buf = await X.buildPolipayXLSX({
-    title: 'Layout SPEI · Órdenes de dispersión',
-    meta: `Corte ${c.id_corte}   ·   ${metaL.fechaLarga}   ·   Generado ${metaL.hoy}   ·   ${orders.length} orden(es): ${dom.length} DOM + ${amex.length} AMEX`,
-    footer: `Polipay POS Settlement · Generado ${metaL.hoy} por ${c.creado_por || '—'}   ·   Todas las cifras en MXN`,
-    sheets: [{
-      name: 'LAYOUT',
-      columns: [
-        { header: 'Concepto', width: 26, align: 'left' },
-        { header: 'Cuenta clabe del beneficiario', width: 24, align: 'left' },
-        { header: 'Código del banco del beneficiario', width: 20, align: 'center' },
-        { header: 'Nombre del beneficiario', width: 32, align: 'left' },
-        { header: 'RFC o CURP del beneficiario', width: 22, align: 'left' },
-        { header: 'Cantidad', width: 16, numFmt: 'mxn' },
-        { header: 'Referencia numérica', width: 20, align: 'center' },
-        { header: 'Fecha de pago (Opcional)', width: 22, align: 'center' },
-      ],
-      rows: rowsL,
-    }],
-  });
+  const buf = X.buildXLSX([{
+    name: 'LAYOUT',
+    aoa: [headL, ...rowsL],
+    cols: [{ wch: 26 }, { wch: 24 }, { wch: 20 }, { wch: 32 }, { wch: 22 }, { wch: 16 }, { wch: 20 }, { wch: 40 }],
+  }]);
   await bit(req, 'layout', `exportó layout corte #${c.id_corte} (${orders.length} órdenes: ${dom.length} dom + ${amex.length} AMEX)`);
   enviarXLSX(res, `layout_spei_corte_${c.id_corte}_${c.fli}.xlsx`, buf);
 });
@@ -2842,27 +2839,23 @@ async function armarAdjuntosCorte(idCorte) {
   const pz = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: '2-digit', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
   const gp = t => (pz.find(p => p.type === t) || {}).value || '';
   const referencia = Number(`1${gp('day')}${gp('month')}${gp('year')}`);
+  // Layout SPEI plano — mismo formato que el endpoint público, sin banda POLIPAY.
+  const headL = [
+    'Concepto',
+    'Cuenta clabe del beneficiario',
+    'Código del banco del beneficiario',
+    'Nombre del beneficiario',
+    'RFC o CURP del beneficiario',
+    'Cantidad',
+    'Referencia numérica',
+    'Fecha de pago (Opcional, solo para transacciones futuras) Formato YYYY-mm-dd HH:mm',
+  ];
   const rowsL = orders.map(o => [o.concepto, String(o.clabe || ''), Number(o.cod) || o.cod, o.razon, '', o.cant, referencia, '']);
-  const metaLay = X.metaCorte(c);
-  const layoutBuf = await X.buildPolipayXLSX({
-    title: 'Layout SPEI · Órdenes de dispersión',
-    meta: `Corte ${c.id_corte}   ·   ${metaLay.fechaLarga}   ·   Generado ${metaLay.hoy}   ·   ${orders.length} orden(es)`,
-    footer: `Polipay POS Settlement · Generado ${metaLay.hoy} por ${c.creado_por || '—'}   ·   Todas las cifras en MXN`,
-    sheets: [{
-      name: 'LAYOUT',
-      columns: [
-        { header: 'Concepto', width: 26, align: 'left' },
-        { header: 'Cuenta clabe del beneficiario', width: 24, align: 'left' },
-        { header: 'Código del banco del beneficiario', width: 20, align: 'center' },
-        { header: 'Nombre del beneficiario', width: 32, align: 'left' },
-        { header: 'RFC o CURP del beneficiario', width: 22, align: 'left' },
-        { header: 'Cantidad', width: 16, numFmt: 'mxn' },
-        { header: 'Referencia numérica', width: 20, align: 'center' },
-        { header: 'Fecha de pago (Opcional)', width: 22, align: 'center' },
-      ],
-      rows: rowsL,
-    }],
-  });
+  const layoutBuf = X.buildXLSX([{
+    name: 'LAYOUT',
+    aoa: [headL, ...rowsL],
+    cols: [{ wch: 26 }, { wch: 24 }, { wch: 20 }, { wch: 32 }, { wch: 22 }, { wch: 16 }, { wch: 20 }, { wch: 40 }],
+  }]);
   // Reporte por cliente (con estilos de la plantilla)
   const reporteBuf = await buildReporteXLSX(c, cal);
   const adj = [
