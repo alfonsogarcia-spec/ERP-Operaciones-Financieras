@@ -2449,6 +2449,78 @@ app.post('/api/destinatarios-cliente/sync-cc-polipay', auth, requiereRol('admin'
   await bit(req, 'destinatario_cliente_sync_polipay', `grupos=${grupos.length} · creados=${creados} · actualizados=${actualizados}`);
   res.json({ ok: true, grupos: grupos.length, creados, actualizados });
 });
+// Plantilla Excel para carga masiva de destinatarios "Detalle por cliente".
+// Trae una fila por cada grupo activo (con el nombre ya llenado) para que el
+// operador solo agregue email/nombre/tipo/activo en las filas que necesite.
+app.get('/api/destinatarios-cliente/plantilla.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const grupos = (await db.query('select nombre_cliente from grupos where activo=true order by nombre_cliente')).rows;
+  const N = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const gp = t => (N.find(x => x.type === t) || {}).value;
+  const hoy = `${gp('day')}/${gp('month')}/${gp('year')}`;
+  const buf = await X.buildPolipayXLSX({
+    title: 'Plantilla · Destinatarios "Detalle por cliente"',
+    meta: `Una fila por contacto  ·  Rellena las columnas Correo, Nombre, Tipo y Activo  ·  Generado ${hoy}`,
+    footer: 'Tipo: to = Para · cc = Copia · bcc = Copia oculta   ·   Activo: sí / no   ·   Grupo cliente debe coincidir con el catálogo',
+    sheets: [{
+      name: 'Destinatarios',
+      columns: [
+        { header: 'Grupo cliente', width: 30, align: 'left' },
+        { header: 'Correo',        width: 34, align: 'left' },
+        { header: 'Nombre',        width: 26, align: 'left' },
+        { header: 'Tipo',          width: 10, align: 'center' },
+        { header: 'Activo',        width: 10, align: 'center' },
+      ],
+      rows: grupos.map(g => [g.nombre_cliente, '', '', 'cc', 'sí']),
+    }],
+  });
+  enviarXLSX(res, 'plantilla_destinatarios_cliente.xlsx', buf);
+});
+// Ingesta masiva desde Excel/CSV. Upsert por (id_grupo, email). Devuelve
+// { ok, procesados, creados, actualizados, errores:[{fila,motivo}] }.
+app.post('/api/destinatarios-cliente/importar', auth, requiereRol('admin'), upload.single('archivo'), validaArchivo, async (req, res) => {
+  if (!dbReady(res)) return;
+  let rows;
+  try { rows = X.parseBuffer(req.file.buffer, req.file.originalname); }
+  catch (e) { return res.status(400).json({ error: 'archivo_ilegible', mensaje: e.message }); }
+  if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'vacio' });
+  const grupos = (await db.query('select id_grupo, nombre_cliente from grupos')).rows;
+  const grupoPorNombre = n => grupos.find(g => nrm(g.nombre_cliente) === nrm(n));
+  const norm = s => String(s == null ? '' : s).trim();
+  const truthy = v => /^(s[ií]|y|yes|true|1|activo)$/i.test(String(v || '').trim());
+  const okTipo = t => ['to', 'cc', 'bcc'].includes(String(t || 'to').trim().toLowerCase());
+  let procesados = 0, creados = 0, actualizados = 0;
+  const errores = [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const nGrupo = norm(r['Grupo cliente'] ?? r['grupo cliente'] ?? r['grupo'] ?? r.grupo_cliente);
+    const email  = norm(r['Correo'] ?? r['correo'] ?? r['email'] ?? r.email).toLowerCase();
+    const nombre = norm(r['Nombre'] ?? r['nombre'] ?? r.nombre);
+    const tipo   = String(r['Tipo'] ?? r['tipo'] ?? 'to').trim().toLowerCase();
+    const activo = r['Activo'] == null && r['activo'] == null ? true : truthy(r['Activo'] ?? r['activo']);
+    if (!nGrupo || !email) continue;   // fila en blanco (por ejemplo grupo sin contactos)
+    procesados++;
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { errores.push({ fila: i + 2, motivo: 'correo_invalido: ' + email }); continue; }
+    if (!okTipo(tipo)) { errores.push({ fila: i + 2, motivo: 'tipo_invalido: ' + tipo }); continue; }
+    const g = grupoPorNombre(nGrupo);
+    if (!g) { errores.push({ fila: i + 2, motivo: 'grupo_no_existe: ' + nGrupo }); continue; }
+    const eHash = C.hmacEmail(email), eCif = C.encrypt(email), nCif = C.encrypt(nombre);
+    const existe = (await db.query('select id from destinatarios_cliente where id_grupo=$1 and email_hash=$2', [g.id_grupo, eHash])).rows[0];
+    if (existe) {
+      await db.query('update destinatarios_cliente set email=$1,email_cifrado=$2,nombre=$3,nombre_cifrado=$4,tipo=$5,activo=$6 where id=$7',
+        [email, eCif, nombre, nCif, tipo, activo, existe.id]);
+      actualizados++;
+    } else {
+      await db.query(
+        `insert into destinatarios_cliente(id_grupo, email, email_cifrado, email_hash, nombre, nombre_cifrado, tipo, activo, creado_por)
+         values($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [g.id_grupo, email, eCif, eHash, nombre, nCif, tipo, activo, req.user.nombre]);
+      creados++;
+    }
+  }
+  await bit(req, 'destinatario_cliente_import', `procesados=${procesados} · creados=${creados} · actualizados=${actualizados} · errores=${errores.length}`);
+  res.json({ ok: true, procesados, creados, actualizados, errores });
+});
 
 /* ============================================================================
    ENVÍO POR AMAZON SES (SendRawEmail con adjuntos)

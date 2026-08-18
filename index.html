@@ -942,11 +942,28 @@ async function vDestinatariosCorte(v){
 }
 async function vDestinatariosCliente(v){
   if(can('params')){
+    // Plantilla
+    $('#pageAction').append(el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/destinatarios-cliente/plantilla.xlsx','plantilla_destinatarios_cliente.xlsx').catch(e=>toast(errMsg(e),'err'))},'⬇ Plantilla'));
+    // Carga masiva (input file oculto)
+    const fileInp = el('input',{type:'file',accept:'.xlsx,.xls,.csv',style:'display:none',onchange:async(e)=>{
+      const f = e.target.files && e.target.files[0]; if(!f) return;
+      const fd = new FormData(); fd.append('archivo', f);
+      try{
+        const r = await withBusy('Cargando destinatarios…',()=>api('POST','/api/destinatarios-cliente/importar',fd));
+        let msg = `Procesados ${r.procesados} · Creados ${r.creados} · Actualizados ${r.actualizados}`;
+        if(r.errores && r.errores.length) msg += ` · ${r.errores.length} error(es): ${r.errores.slice(0,3).map(x=>'fila '+x.fila+' '+x.motivo).join('; ')}${r.errores.length>3?'…':''}`;
+        toast(msg, r.errores && r.errores.length ? 'err' : 'ok');
+        render();
+      }catch(ex){ toast(errMsg(ex),'err'); }
+      fileInp.value = '';
+    }});
+    v.append(fileInp);
+    $('#pageAction').append(el('button',{class:'btn ghost',onclick:()=>fileInp.click()},'⬆ Cargar destinatarios'));
     $('#pageAction').append(el('button',{class:'btn ghost',onclick:async()=>{
       if(!confirm('¿Agregar los 4 correos internos de Polipay como CC en TODOS los grupos activos? Se omiten los que ya existan.')) return;
       try{ const r=await withBusy('Sincronizando CC internos…',()=>api('POST','/api/destinatarios-cliente/sync-cc-polipay')); toast(`Listo · ${r.grupos} grupos · ${r.creados} creados · ${r.actualizados} actualizados`,'ok'); render(); }
       catch(e){toast(errMsg(e),'err');}
-    }},'✚ Añadir CC internos'));
+    }},'✚ CC internos'));
     $('#pageAction').append(el('button',{class:'btn',onclick:()=>editDestinatarioCliente()},'+ Contacto por cliente'));
   }
   const porCliente=await api('GET','/api/destinatarios-cliente');
