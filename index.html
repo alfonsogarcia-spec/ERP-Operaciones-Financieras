@@ -497,6 +497,13 @@ async function render(){renderNav();
     catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
     return;
   }
+  const mEnt = /^tar_ent_(\d+)$/.exec(VIEW);
+  if(mEnt){ const[t,s]=['Solicitud','Detalle del entregable'];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
+    const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
+    try{ await vEntregableDetalle(v, parseInt(mEnt[1],10)); }
+    catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
+    return;
+  }
   const mRef = /^disp_ref_(\d+)$/.exec(VIEW);
   if(mRef){ const[t,s]=['Devolución sospechosa','Detalle del caso'];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
     const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
@@ -509,7 +516,7 @@ async function render(){renderNav();
   try{await ({dashboard:vDashboard,ingesta:vIngesta,contracargos:vContracargos,retenciones:vRetenciones,cortes:vCortes,contable:vContabilidadCortes,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,destinatarios:vDestinatarios,usuarios:vUsuarios,bitacora:vBitacora,
     disp_dashboard:vDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC,disp_providers:vDispProviders,disp_reports:vDispReports,
     dest_liquidacion:vDestinatariosCorte,dest_liquidacion_cli:vDestinatariosCliente,dest_contabilidad:vDestinatariosContabilidad,dest_disputas:vDestDisputas,
-    tar_mis_rutinas:vTarMisRutinas,tar_mis_tareas:vTarMisTareas,tar_tablero:vTarTablero,tar_emisor:vTarPorProducto,tar_spei:vTarPorProducto,tar_agregador:vTarPorProducto,tar_calendario:vTarPlaceholder,tar_entregables:vTarPlaceholder,tar_reportes:vTarPlaceholder,tar_miembros:vTarPlaceholder}[VIEW]||vDashboard)(v);}
+    tar_mis_rutinas:vTarMisRutinas,tar_mis_tareas:vTarMisTareas,tar_tablero:vTarTablero,tar_emisor:vTarPorProducto,tar_spei:vTarPorProducto,tar_agregador:vTarPorProducto,tar_calendario:vTarPlaceholder,tar_entregables:vEntregables,tar_reportes:vTarPlaceholder,tar_miembros:vTarPlaceholder}[VIEW]||vDashboard)(v);}
   catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
 }
 function setView(v,node){v.innerHTML='';v.append(node);}
@@ -2610,6 +2617,209 @@ async function vRetenciones(v){
     p.append(tableWrap(['Folio','Fecha aplica','Grupo · Afil','Tipo','Bloque','Concepto',{t:'Monto'},'Estado',''],rowsT));
   }
   v.append(p);
+}
+
+/* ============================================================================
+   ENTREGABLES · Portal de solicitudes hacia Operaciones (fase 5)
+   ========================================================================= */
+const ENT_ESTADO_LBL = { nueva:'Nueva', aceptada:'Aceptada', en_ejecucion:'En ejecución', requiere_info:'Requiere info', validacion:'En validación', aprobada:'Aprobada', rechazada:'Rechazada', cancelada:'Cancelada' };
+function entBadgeEstado(e){ const m={nueva:'b',aceptada:'b',en_ejecucion:'v',requiere_info:'w',validacion:'v',aprobada:'ok',rechazada:'d',cancelada:'g'}; return `<span class="badge ${m[e]||'g'}">${ENT_ESTADO_LBL[e]||e}</span>`; }
+
+async function vEntregables(v){
+  if(can('disputas')||can('ver')) $('#pageAction').append(el('button',{class:'btn',onclick:()=>openNuevoEntregable()},'+ Nueva solicitud'));
+  const [rows, kpis, tipos] = await Promise.all([
+    api('GET','/api/entregables/solicitudes').catch(()=>[]),
+    api('GET','/api/entregables/kpis').catch(()=>({nuevas:0,en_curso:0,mias:0,vencidas:0})),
+    api('GET','/api/entregables/tipos?producto=agregador').catch(()=>[]),
+  ]);
+  v.innerHTML='';
+  v.append(cards([
+    ['Nuevas',kpis.nuevas,'sin aceptar'],
+    ['En curso',kpis.en_curso,''],
+    ['Mías (solicitadas)',kpis.mias,''],
+    ['Vencidas',kpis.vencidas,'Requieren atención'],
+  ]));
+  v.append(el('div',{class:'banner',html:'<b>Portal de solicitudes internas</b> · Áreas de negocio (Comercial, Legal, RH…) envían solicitudes basadas en procedimientos <b>POL-OP-P##</b>. Operaciones ejecuta y aprueba. Cada tipo tiene su formato POL-OP-F##.'}));
+  // Tabla de solicitudes
+  const p=el('div',{class:'panel'});
+  p.append(el('h3',{},'Solicitudes ('+rows.length+')',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},tipos.length+' tipos disponibles'))));
+  if(!rows.length){ p.append(el('div',{class:'empty'},'Aún no hay solicitudes. Presiona "+ Nueva solicitud" para arrancar.')); }
+  else {
+    const rowsT = rows.map(r=>{
+      const row=[
+        `<code style="font-size:11px">${esc(r.folio)}</code>`,
+        `<div class="tt">${esc(r.tipo_codigo||'—')}<small>${esc(r.tipo_nombre||'')}</small></div>`,
+        esc(r.titulo),
+        r.solicitante_nombre?esc(r.solicitante_nombre):'—',
+        entBadgeEstado(r.estado),
+        r.fecha_limite?fmtISO(r.fecha_limite):'—',
+      ];
+      row._onclick=()=>go('tar_ent_'+r.id);
+      return row;
+    });
+    p.append(tableWrap(['Folio','Tipo','Título','Solicitante','Estado','Vence'],rowsT));
+  }
+  v.append(p);
+}
+
+async function openNuevoEntregable(){
+  const tipos = await api('GET','/api/entregables/tipos?producto=agregador').catch(()=>[]);
+  if(!tipos.length) return toast('No hay tipos configurados','err');
+  const body=el('div',{});
+  // Paso 1: selector de tipo
+  const tipoSel=el('select',{style:'width:100%',onchange:()=>renderForm()});
+  tipoSel.append(el('option',{value:''},'— Selecciona un tipo de solicitud —'));
+  tipos.forEach(t=>tipoSel.append(el('option',{value:t.id},t.codigo+' · '+t.nombre)));
+  const titulo=el('input',{placeholder:'Título breve (ej. Alta comercio X para Grupo SFI)',style:'width:100%'});
+  const areaSol=el('input',{placeholder:'Tu área (Comercial, Legal, RH…)',style:'width:100%'});
+  body.append(fld('Tipo de solicitud',tipoSel),fld('Título',titulo),fld('Área solicitante',areaSol));
+  const descBox=el('div',{class:'muted',style:'font-size:12px;padding:0 0 12px 0'});
+  body.append(descBox);
+  const formWrap=el('div',{});
+  body.append(formWrap);
+  const camposMap = new Map();  // key → element
+  function renderForm(){
+    formWrap.innerHTML='';
+    camposMap.clear();
+    const tipo = tipos.find(t=>String(t.id)===tipoSel.value);
+    if(!tipo){ descBox.textContent=''; return; }
+    descBox.innerHTML='<b>'+esc(tipo.codigo)+'</b> — '+esc(tipo.descripcion||'');
+    const schema = tipo.form_schema || {};
+    (schema.secciones||[]).forEach(sec=>{
+      formWrap.append(el('h3',{style:'font-size:13px;color:var(--brand);margin:16px 0 8px'},sec.titulo));
+      const grid = el('div',{class:'form-grid'});
+      (sec.campos||[]).forEach(c=>{
+        let inp;
+        if(c.tipo==='textarea') inp = el('textarea',{rows:3,placeholder:c.hint||''});
+        else if(c.tipo==='select'){ inp=el('select'); inp.append(el('option',{value:''},'— Selecciona —')); (c.options||[]).forEach(o=>inp.append(el('option',{value:o},o))); }
+        else if(c.tipo==='radio'){
+          inp=el('div',{style:'display:flex;flex-direction:column;gap:4px'});
+          (c.options||[]).forEach((o,i)=>{
+            const id='r_'+c.key+'_'+i;
+            const rb=el('input',{type:'radio',name:c.key,id,value:o});
+            const lbl=el('label',{for:id,style:'display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;font-size:13px'},rb,el('span',{},o));
+            inp.append(lbl);
+          });
+        }
+        else if(c.tipo==='checkbox_group'){
+          inp=el('div',{style:'display:flex;flex-direction:column;gap:4px'});
+          (c.options||[]).forEach((o,i)=>{
+            const id='cb_'+c.key+'_'+i;
+            const cb=el('input',{type:'checkbox',id,value:o});
+            const lbl=el('label',{for:id,style:'display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;font-size:13px'},cb,el('span',{},o));
+            inp.append(lbl);
+          });
+        }
+        else if(c.tipo==='date') inp=el('input',{type:'date'});
+        else if(c.tipo==='number') inp=el('input',{type:'number',step:'0.01'});
+        else inp=el('input',{type:'text',placeholder:c.hint||''});
+        const lbl = c.label + (c.required?' *':'');
+        const wrap = el('label',{class:'field',style: sec.campos.length===1||c.tipo==='textarea'?'grid-column:1/-1':''}, el('span',{},lbl), inp);
+        if(c.hint) wrap.append(el('div',{class:'req-note'},c.hint));
+        grid.append(wrap);
+        camposMap.set(c.key,{el:inp,tipo:c.tipo,required:c.required,label:c.label});
+      });
+      formWrap.append(grid);
+    });
+  }
+  const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    if(!tipoSel.value) return toast('Selecciona un tipo','err');
+    if(!titulo.value.trim()) return toast('Ingresa un título','err');
+    // Recolectar datos del formulario
+    const datos = {};
+    const faltantes = [];
+    for(const [key,c] of camposMap.entries()){
+      let val = null;
+      if(c.tipo==='textarea' || c.tipo==='text' || c.tipo==='select' || c.tipo==='date' || c.tipo==='number') val = c.el.value ? c.el.value.trim() : '';
+      else if(c.tipo==='radio'){ const sel = c.el.querySelector('input[type=radio]:checked'); val = sel?sel.value:''; }
+      else if(c.tipo==='checkbox_group'){ val = [...c.el.querySelectorAll('input[type=checkbox]:checked')].map(x=>x.value); }
+      if(c.required && (!val || (Array.isArray(val)&&!val.length))) faltantes.push(c.label);
+      datos[key] = val;
+    }
+    if(faltantes.length) return toast('Faltan campos: '+faltantes.slice(0,3).join(', ')+(faltantes.length>3?'…':''),'err');
+    try{
+      const r = await api('POST','/api/entregables/solicitudes',{tipo_id:parseInt(tipoSel.value,10), titulo:titulo.value.trim(), solicitante_area:areaSol.value.trim()||undefined, datos });
+      toast('Creada · '+r.folio,'ok'); closeModal(); go('tar_ent_'+r.id);
+    }catch(e){ toast(errMsg(e),'err'); }
+  }},'Crear solicitud'));
+  modal('Nueva solicitud',body,foot,true);
+}
+
+async function vEntregableDetalle(v, id){
+  const s = await api('GET','/api/entregables/solicitudes/'+id);
+  v.innerHTML='';
+  // Header
+  const head = el('div',{style:'display:flex;align-items:center;gap:14px;margin-bottom:16px'});
+  head.append(el('div',{style:'font:800 22px Montserrat,sans-serif;color:var(--brand)'},esc(s.folio)));
+  head.append(el('span',{class:'badge b'},esc(s.tipo_codigo||'')));
+  head.append(el('span',{html:entBadgeEstado(s.estado)}));
+  head.append(el('div',{style:'flex:1'}));
+  head.append(el('button',{class:'btn ghost sm',onclick:()=>go('tar_entregables')},'← Volver'));
+  v.append(head);
+  // Cards
+  v.append(cards([
+    ['Tipo',s.tipo_nombre||'—'],
+    ['Solicitante',s.solicitante_nombre||'—',s.solicitante_area||''],
+    ['Ejecutor',s.ejecutor_nombre||'—'],
+    ['Vence',s.fecha_limite?fmtISO(s.fecha_limite):'—'],
+  ]));
+  // Título + acciones de transición
+  const pTit=el('div',{class:'panel'}); pTit.append(el('h3',{},esc(s.titulo)));
+  const finales = ['aprobada','rechazada','cancelada'].includes(s.estado);
+  if(!finales && can('disputas')){
+    const validos = {nueva:['aceptada','cancelada'],aceptada:['en_ejecucion','requiere_info','cancelada'],en_ejecucion:['validacion','requiere_info','rechazada'],requiere_info:['aceptada','en_ejecucion','cancelada'],validacion:['aprobada','rechazada','en_ejecucion']}[s.estado]||[];
+    const btns=el('div',{style:'display:flex;gap:6px;flex-wrap:wrap'});
+    validos.forEach(e=>btns.append(el('button',{class:'btn ghost sm',onclick:async()=>{ try{ await api('POST','/api/entregables/solicitudes/'+id+'/status',{estado:e}); toast(ENT_ESTADO_LBL[e],'ok'); go('tar_ent_'+id); }catch(er){toast(errMsg(er),'err');} }},'→ '+ENT_ESTADO_LBL[e])));
+    pTit.append(btns);
+  }
+  v.append(pTit);
+  // Datos del formulario (renderizado según form_schema)
+  const schema = s.tipo_form_schema || {};
+  const datos = typeof s.datos==='string' ? JSON.parse(s.datos) : (s.datos||{});
+  const pDat = el('div',{class:'panel'}); pDat.append(el('h3',{},'Formulario · '+esc(s.tipo_codigo||'')));
+  (schema.secciones||[]).forEach(sec=>{
+    pDat.append(el('h4',{style:'font-size:13px;color:var(--brand);margin:12px 0 6px'},sec.titulo));
+    const tbl=el('table'); (sec.campos||[]).forEach(c=>{
+      let val=datos[c.key];
+      if(Array.isArray(val)) val=val.join(', ');
+      const tr=el('tr');
+      tr.append(el('td',{style:'padding:8px 12px;color:var(--muted);width:40%;font-size:12px'},c.label));
+      tr.append(el('td',{style:'padding:8px 12px;font-weight:600;font-size:12px'},val||'—'));
+      tbl.append(tr);
+    });
+    pDat.append(tbl);
+  });
+  v.append(pDat);
+  // Adjuntos
+  const pAdj = el('div',{class:'panel'}); pAdj.append(el('h3',{},'Adjuntos ('+(s.adjuntos||[]).length+')',el('span',{class:'right'},el('span',{},'📎 ',el('label',{class:'btn ghost sm',style:'cursor:pointer'},'Subir archivo', (function(){const inp=el('input',{type:'file',style:'display:none',onchange:async(ev)=>{ if(!ev.target.files[0]) return; const fd=new FormData(); fd.append('archivo',ev.target.files[0]); try{await api('POST','/api/entregables/solicitudes/'+id+'/adjuntos',fd); toast('Subido','ok'); go('tar_ent_'+id);}catch(er){toast(errMsg(er),'err');}}}); return inp;})())))));
+  if(!(s.adjuntos||[]).length) pAdj.append(el('div',{class:'empty'},'Sin adjuntos.'));
+  else {
+    const t=el('table');
+    s.adjuntos.forEach(a=>{
+      const tr=el('tr');
+      tr.append(el('td',{style:'padding:8px 12px;font-weight:600'},esc(a.filename)));
+      tr.append(el('td',{style:'padding:8px 12px;color:var(--muted);font-size:11px'},esc(a.mime||'—')));
+      tr.append(el('td',{style:'padding:8px 12px'},el('button',{class:'btn ghost sm',onclick:()=>{const u='/api/entregables/adjuntos/'+a.id+'/download?token='+encodeURIComponent(TOKEN()); window.open(u,'_blank');}},'⬇')));
+      t.append(tr);
+    });
+    pAdj.append(t);
+  }
+  v.append(pAdj);
+  // Actividad
+  const pAct = el('div',{class:'panel'}); pAct.append(el('h3',{},'Actividad'));
+  (s.actividad||[]).slice().reverse().forEach(a=>{
+    const wrap=el('div',{style:'padding:8px 0;border-bottom:1px solid var(--line);font-size:12px'});
+    wrap.append(el('div',{class:'muted'},new Date(a.ts).toLocaleString('es-MX')+' · '+esc(a.actor||'—')));
+    let txt = a.detalle;
+    if(!txt && a.estado_nvo) txt = a.tipo+' · '+esc(a.estado_ant||'')+' → '+esc(a.estado_nvo||'');
+    wrap.append(el('div',{style:'margin-top:2px'},esc(txt||a.tipo)));
+    pAct.append(wrap);
+  });
+  // Comentario nuevo
+  const cmtTa = el('textarea',{rows:2,placeholder:'Escribe un comentario…',style:'width:100%;margin-top:10px'});
+  pAct.append(cmtTa);
+  pAct.append(el('div',{style:'display:flex;justify-content:flex-end;margin-top:6px'},el('button',{class:'btn sm',onclick:async()=>{ if(!cmtTa.value.trim()) return; try{ await api('POST','/api/entregables/solicitudes/'+id+'/comentario',{texto:cmtTa.value.trim()}); toast('Comentado','ok'); go('tar_ent_'+id); }catch(er){toast(errMsg(er),'err');} }},'Comentar')));
+  v.append(pAct);
 }
 
 /* ============================================================================

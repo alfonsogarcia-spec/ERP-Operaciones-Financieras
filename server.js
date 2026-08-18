@@ -3142,6 +3142,10 @@ mountDisputasRoutes(app, { auth, requiereRol, bit, db, C, D, upload, sesEnabled,
 const { mountTareasRoutes } = require('./lib/tareas-routes.js');
 mountTareasRoutes(app, { auth, requiereRol, bit, db });
 
+/* ---------- Módulo ENTREGABLES · Portal de solicitudes (fase 5) ---------- */
+const { mountEntregablesRoutes } = require('./lib/entregables-routes.js');
+mountEntregablesRoutes(app, { auth, requiereRol, bit, db, C, upload });
+
 /* ---------- Webhook público para ingesta de contracargos (Disputas Sprint 6) ----------
    Autentica con X-Webhook-Token; se compara HMAC contra providers.webhook_token_hash.
    Idempotente por (provider_id, external_id): si ya existe, retorna el mismo folio.

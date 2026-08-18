@@ -470,3 +470,72 @@ create table if not exists financiamientos (
 );
 create index if not exists idx_fin_fecha on financiamientos(cargado_en_fecha, estatus);
 create index if not exists idx_fin_afil  on financiamientos(numero_afiliacion, cargado_en_fecha);
+
+-- ============================================================================
+-- ENTREGABLES · Portal de solicitudes internas hacia Operaciones (fase 5)
+-- Áreas externas (Comercial, RH, Legal…) envían solicitudes a Operaciones
+-- basadas en procedimientos POL-OP-P##. Cada tipo tiene un formato POL-OP-F##
+-- (esquema del formulario en JSON) + plantilla descargable + bitácora POL-OP-R##.
+-- ============================================================================
+create table if not exists entregables_tipos (
+  id            serial primary key,
+  codigo        text unique not null,           -- POL-OP-P03
+  producto      text not null default 'agregador'
+                check (producto in ('emisor','spei','agregador','transversal')),
+  nombre        text not null,
+  descripcion   text,
+  form_schema   jsonb not null default '{}'::jsonb,
+  sla_dias      integer default 3,
+  plantilla_nombre text,
+  plantilla_bytes bytea,
+  plantilla_mime  text,
+  activo        boolean not null default true,
+  creado_at     timestamptz default now()
+);
+
+create table if not exists entregables_solicitudes (
+  id             serial primary key,
+  folio          text unique not null,           -- ENT-YYYY-NNNNNN
+  tipo_id        integer not null references entregables_tipos(id),
+  producto       text not null,
+  titulo         text not null,
+  datos          jsonb not null default '{}'::jsonb,  -- valores del formulario
+  solicitante_id integer references usuarios(id) on delete set null,
+  solicitante_area text,                          -- Comercial, Legal, etc.
+  ejecutor_id    integer references usuarios(id) on delete set null,
+  aprobador_id   integer references usuarios(id) on delete set null,
+  estado         text not null default 'nueva'
+                 check (estado in ('nueva','aceptada','en_ejecucion','requiere_info','validacion','aprobada','rechazada','cancelada')),
+  prioridad      text not null default 'media',
+  fecha_limite   date,
+  fecha_cierre   timestamptz,
+  creado_at      timestamptz default now(),
+  actualizado_at timestamptz default now()
+);
+create index if not exists idx_ent_producto on entregables_solicitudes(producto, estado);
+create index if not exists idx_ent_solicitante on entregables_solicitudes(solicitante_id);
+
+create table if not exists entregables_adjuntos (
+  id             serial primary key,
+  solicitud_id   integer not null references entregables_solicitudes(id) on delete cascade,
+  filename       text not null,
+  mime           text,
+  bytes_size     integer,
+  bytes_cifrado  bytea,                          -- cifrado en reposo con la llave del sistema
+  descripcion    text,
+  subido_por     text,
+  subido_at      timestamptz default now()
+);
+
+create table if not exists entregables_actividad (
+  id             serial primary key,
+  solicitud_id   integer not null references entregables_solicitudes(id) on delete cascade,
+  ts             timestamptz default now(),
+  actor          text,
+  tipo           text not null,                  -- created / status_change / comment / attach / edit
+  estado_ant     text,
+  estado_nvo     text,
+  detalle        text,
+  meta           jsonb
+);
+create index if not exists idx_ent_act on entregables_actividad(solicitud_id, ts desc);
