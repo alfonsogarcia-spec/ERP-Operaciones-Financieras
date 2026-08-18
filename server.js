@@ -2634,6 +2634,9 @@ app.post('/api/cortes/:id/notificar-clientes', auth, requiereRol('admin', 'tesor
     const to  = dest.filter(d => (d.tipo || 'to') === 'to').map(d => d.nombre ? `"${d.nombre}" <${d.email}>` : d.email);
     const cc2 = dest.filter(d => (d.tipo || 'to') === 'cc').map(d => d.nombre ? `"${d.nombre}" <${d.email}>` : d.email);
     const bcc = dest.filter(d => (d.tipo || 'to') === 'bcc').map(d => d.nombre ? `"${d.nombre}" <${d.email}>` : d.email);
+    // CC fijos internos de Polipay (dejan traza en todo envío a clientes).
+    const CC_FIJOS_POLIPAY = ['alfonso.garcia@polipay.io', 'laura.acosta@polipay.io', 'brandon.arroyo@polipay.io', 'lizette.trejo@polipay.io'];
+    for (const e of CC_FIJOS_POLIPAY) { if (!cc2.some(x => x.toLowerCase().includes(e))) cc2.push(e); }
     if (!to.length) { omitidos.push({ grupo: calGrupo[0].razon, motivo: 'sin_to' }); continue; }
     // XLSX filtrado a las afiliaciones de este grupo
     const afiles = new Set(calGrupo.map(c => String(c.afil)));
