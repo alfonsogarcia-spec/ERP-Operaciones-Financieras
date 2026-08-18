@@ -1761,8 +1761,9 @@ app.get('/api/financiamientos', auth, async (req, res) => {
   if (f.tipo)    { vals.push(String(f.tipo));    conds.push(`tipo=$${vals.length}`); }
   if (f.corte_id){ vals.push(parseInt(f.corte_id, 10)); conds.push(`aplicado_en_corte_id=$${vals.length}`); }
   const where = conds.length ? ' where ' + conds.join(' and ') : '';
-  const rows = (await db.query('select * from financiamientos' + where + ' order by cargado_en_fecha desc, id desc limit 2000', vals)).rows
-    .map(r => ({ ...r, monto: Number(r.monto), cargado_en_fecha: r.cargado_en_fecha ? String(r.cargado_en_fecha).slice(0, 10) : null }));
+  // cast a text en el SELECT para evitar que pglite devuelva Date como "Mon Aug 17".
+  const rows = (await db.query('select *, cargado_en_fecha::text as cargado_en_fecha from financiamientos' + where + ' order by cargado_en_fecha desc, id desc limit 2000', vals)).rows
+    .map(r => ({ ...r, monto: Number(r.monto) }));
   res.json(rows);
 });
 
@@ -1779,33 +1780,22 @@ app.get('/api/financiamientos/kpis', auth, async (req, res) => {
   });
 });
 
-// Plantilla estilo Polipay: 1 fila por grupo activo pre-llenada para agilizar captura.
+// Plantilla plana (sin banda decorativa) — solo encabezado + una fila de ejemplo
+// para que el operador entienda el formato. El parser tolerante en /ingesta
+// busca la fila que contenga "Grupo" y "Afiliación", por lo que también admite
+// otras plantillas del cliente si respetan esas dos columnas.
 app.get('/api/financiamientos/plantilla.xlsx', auth, async (req, res) => {
   if (!dbReady(res)) return;
-  const grupos = (await db.query('select nombre_cliente from grupos where activo=true order by nombre_cliente')).rows;
   const N = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
   const gp = t => (N.find(x => x.type === t) || {}).value;
   const hoy = `${gp('year')}-${gp('month')}-${gp('day')}`;
-  const hoyLbl = `${gp('day')}/${gp('month')}/${gp('year')}`;
-  const buf = await X.buildPolipayXLSX({
-    title: 'Plantilla · Retenciones por financiamiento / revenue share',
-    meta: `Fecha aplica ${hoyLbl} · Rellena Afiliación, Tipo, Bloque, Concepto, Monto — cambia la fecha si aplica otro día`,
-    footer: 'Tipo: financiamiento | revenue_share   ·   Bloque: DOM | AMEX   ·   Fecha aplica: YYYY-MM-DD (día del corte)',
-    sheets: [{
-      name: 'Retenciones',
-      columns: [
-        { header: 'Fecha aplica (YYYY-MM-DD)', width: 20, align: 'center' },
-        { header: 'Grupo cliente',              width: 30, align: 'left' },
-        { header: 'Número afiliación',          width: 18, align: 'left' },
-        { header: 'Tipo',                       width: 16, align: 'center' },
-        { header: 'Bloque',                     width: 10, align: 'center' },
-        { header: 'Concepto',                   width: 40, align: 'left' },
-        { header: 'Monto',                      width: 14, numFmt: 'mxn' },
-        { header: 'Moneda',                     width: 10, align: 'center' },
-      ],
-      rows: grupos.map(g => [hoy, g.nombre_cliente, '', 'financiamiento', 'DOM', '', 0, 'MXN']),
-    }],
-  });
+  const head = ['Fecha aplica (YYYY-MM-DD)', 'Grupo cliente', 'Número afiliación', 'Tipo', 'Bloque', 'Concepto', 'Monto', 'Moneda'];
+  const ejemplo = [hoy, 'GRUPO SFI', '9989455', 'financiamiento', 'DOM', 'Anticipo cap-tab', 15000, 'MXN'];
+  const buf = X.buildXLSX([{
+    name: 'Retenciones',
+    aoa: [head, ejemplo],
+    cols: [{ wch: 22 }, { wch: 24 }, { wch: 18 }, { wch: 16 }, { wch: 10 }, { wch: 30 }, { wch: 14 }, { wch: 10 }],
+  }]);
   enviarXLSX(res, 'plantilla_retenciones.xlsx', buf);
 });
 
@@ -1846,7 +1836,10 @@ app.post('/api/financiamientos/ingesta', auth, requiereRol('admin', 'operador'),
   const errores = [];
   for (let i = 0; i < filas.length; i++) {
     const r = filas[i];
-    const grupo = nrmTxt(r['Grupo cliente'] ?? r['grupo cliente'] ?? r['grupo'] ?? '').replace(/^grupo\s+/i, '');
+    // Guardamos el nombre TAL CUAL viene del layout — computeCorte lo compara
+    // con grupos.nombre_cliente normalizado. Antes hacíamos replace de "GRUPO "
+    // y eso rompía el match cuando el catálogo usaba el nombre completo.
+    const grupo = nrmTxt(r['Grupo cliente'] ?? r['grupo cliente'] ?? r['grupo'] ?? '');
     const afil  = nrmTxt(r['Número afiliación'] ?? r['numero afiliacion'] ?? r['afiliacion'] ?? r['afiliación'] ?? '').replace(/\D/g, '');
     const monto = Number(r['Monto'] ?? r['monto'] ?? 0);
     if (!grupo || !afil) continue;
