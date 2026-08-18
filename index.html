@@ -25,6 +25,39 @@
     .sidebar{width:248px;background:var(--oxford);color:#EAECF6;padding:20px 14px;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;border-right:1px solid rgba(255,255,255,.06)}
     .sidebar .brand-logo{height:26px;width:auto;max-width:140px;display:block;margin:4px 8px 2px;filter:brightness(0) invert(1)}
     .sidebar .sub{font-size:11px;color:rgba(255,255,255,.55);margin:0 8px 22px}
+    /* Workspace switcher */
+    .ws{margin:0 8px 14px;background:rgba(255,255,255,.06);border-radius:10px;padding:8px 10px;display:flex;align-items:center;gap:8px;cursor:pointer;border:1px solid rgba(255,255,255,.08)}
+    .ws:hover{background:rgba(255,255,255,.1)}
+    .ws .ws-ic{width:24px;height:24px;border-radius:7px;background:var(--capri);display:grid;place-items:center;color:#fff;font-weight:700;font-size:11px;flex:none}
+    .ws .ws-name{font-size:12px;color:#fff;font-weight:600;flex:1;min-width:0}
+    .ws .ws-name small{display:block;color:rgba(255,255,255,.55);font-weight:400;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .ws .caret{color:rgba(255,255,255,.55);font-size:10px}
+    /* Tareas */
+    .tipoD{color:#157BF6}.tipoS{color:#7C5CE6}.tipoM{color:#B45309}.tipoU{color:#111827}.tipoE{color:#0f766e}
+    .dotD{background:#157BF6}.dotS{background:#7C5CE6}.dotM{background:#B45309}.dotU{background:#111827}.dotE{background:#0f766e}
+    .tipo-tag{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+    .tipo-tag .dot{width:8px;height:8px;border-radius:50%;flex:none}
+    .rutina-card{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:13px;background:#fff;border-left:3px solid var(--accent);cursor:pointer}
+    .rutina-card.done{background:#EAF7EC;border-left-color:var(--ok);color:var(--muted)}
+    .rutina-card.done .t{text-decoration:line-through}
+    .rutina-card.venc{background:#FDEDED;border-left-color:var(--danger)}
+    .rutina-card.due{background:#FFF7D6;border-left-color:var(--warn-fill)}
+    .rutina-card input{margin-top:2px;flex:none}
+    .rutina-card .t{font-weight:600}
+    .rutina-card small{color:var(--muted);display:block;margin-top:2px;font-size:11px}
+    .tkboard{background:#F4F5F8;border:1px solid var(--line);border-radius:12px;padding:10px}
+    .tkboard h4{margin:0 0 10px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:flex;align-items:center;gap:6px}
+    .tkboard h4 .n{background:var(--artico);color:var(--brand);padding:2px 8px;border-radius:999px;font-size:11px}
+    .tkcard{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;border-left:3px solid transparent;cursor:pointer;font-size:12.5px}
+    .tkcard.tD{border-left-color:#157BF6}.tkcard.tS{border-left-color:#7C5CE6}.tkcard.tM{border-left-color:#B45309}.tkcard.tU{border-left-color:#111827}.tkcard.tE{border-left-color:#0f766e}
+    .tkcard .head{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+    .tkcard .folio{margin-left:auto;font-size:10px;color:var(--muted);font-family:ui-monospace,Menlo,monospace}
+    .tkcard .t{font-weight:700;line-height:1.35;margin-bottom:6px}
+    .tkcard .m{display:flex;gap:6px;flex-wrap:wrap;font-size:10px;align-items:center}
+    .streak{background:#FFF7D6;border:1px solid var(--warn-fill);border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:14px;margin-bottom:16px}
+    .streak .num{font-size:26px;font-weight:800;color:var(--warn)}
+    .streak .info{flex:1;font-size:13px}
+    .streak .info b{color:var(--ink)}
     .sidebar nav{flex:1;overflow-y:auto;min-height:0}
     .sidebar .navlbl{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.42);margin:14px 12px 6px;font-weight:600;display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;padding:2px 0}
     .sidebar .navlbl:hover{color:rgba(255,255,255,.7)}
@@ -189,7 +222,12 @@
 <div class="layout" id="app" style="display:none">
   <aside class="sidebar">
     <img class="brand-logo" src="/public/logo.png" alt="Polipay" />
-    <div class="sub">Polipay POS Settlement</div>
+    <div class="sub" id="wsSubtitle">Polipay POS Settlement</div>
+    <div class="ws" id="wsSwitch" onclick="toggleWorkspace()">
+      <div class="ws-ic" id="wsIcon">CS</div>
+      <div class="ws-name" id="wsName">Conciliación<small>Cambiar a Tareas Ops →</small></div>
+      <div class="caret">▾</div>
+    </div>
     <nav id="nav"></nav>
     <div class="sidebar-foot">
       <div class="who"><span class="avatar" id="whoAv">?</span><div><div id="whoName">—</div><div class="rolech" id="whoRole"></div></div></div>
@@ -334,12 +372,25 @@ function errMsg(e){const d=e&&e.data||{};if(e.status===403)return'No tienes perm
    NAV / ROUTER
    ========================================================================= */
 let VIEW='dashboard';
-const NAV=[
+/* ============================================================================
+   WORKSPACES: 'conciliacion' (todo lo original) | 'tareas' (microsistema)
+   ========================================================================= */
+let WORKSPACE = localStorage.getItem('cl_workspace') || 'conciliacion';
+function toggleWorkspace(){ WORKSPACE = (WORKSPACE==='conciliacion') ? 'tareas' : 'conciliacion'; localStorage.setItem('cl_workspace', WORKSPACE); VIEW = (WORKSPACE==='tareas') ? 'tar_mis_rutinas' : 'dashboard'; renderWs(); render(); }
+function renderWs(){
+  const isTareas = WORKSPACE==='tareas';
+  const nameEl=document.getElementById('wsName'); if(nameEl) nameEl.innerHTML = isTareas ? 'Tareas Ops<small>Cambiar a Conciliación →</small>' : 'Conciliación<small>Cambiar a Tareas Ops →</small>';
+  const icon=document.getElementById('wsIcon'); if(icon){ icon.textContent = isTareas ? 'TQ' : 'CS'; icon.style.background = isTareas ? '#0f766e' : 'var(--capri)'; }
+  const sub=document.getElementById('wsSubtitle'); if(sub) sub.textContent = isTareas ? 'Tareas de Operaciones' : 'Polipay POS Settlement';
+}
+
+const NAV_CONCILIACION=[
   {sec:'Inicio'},
   {id:'dashboard',t:'Panel general',ic:'ic_01'},
   {sec:'Liquidación'},
   {id:'ingesta',t:'Ingesta de transacciones',ic:'ic_04'},
   {id:'contracargos',t:'Contracargos',ic:'ic_05'},
+  {id:'retenciones',t:'Retenciones',ic:'ic_15'},
   {id:'cortes',t:'Cortes y liquidación',ic:'ic_06'},
   {sec:'Contabilidad'},
   {id:'contable',t:'Registro contable',ic:'ic_15'},
@@ -365,6 +416,22 @@ const NAV=[
   {id:'usuarios',t:'Usuarios',ic:'ic_20',cap:'usuarios'},
   {id:'bitacora',t:'Bitácora',ic:'ic_20'},
 ];
+const NAV_TAREAS=[
+  {sec:'Hoy'},
+  {id:'tar_mis_rutinas',t:'Mis rutinas',ic:'ic_01'},
+  {id:'tar_mis_tareas',t:'Mis tareas',ic:'ic_04'},
+  {id:'tar_tablero',t:'Tablero',ic:'ic_06'},
+  {sec:'Por producto'},
+  {id:'tar_emisor',t:'Emisor',ic:'ic_09'},
+  {id:'tar_spei',t:'SPEI',ic:'ic_11'},
+  {id:'tar_agregador',t:'Agregador',ic:'ic_12'},
+  {sec:'Más',col:true},
+  {id:'tar_calendario',t:'Calendario',ic:'ic_13'},
+  {id:'tar_entregables',t:'Entregables',ic:'ic_15'},
+  {id:'tar_reportes',t:'Reportes',ic:'ic_15'},
+  {id:'tar_miembros',t:'Miembros',ic:'ic_20'},
+];
+Object.defineProperty(window,'NAV',{ get(){ return WORKSPACE==='tareas' ? NAV_TAREAS : NAV_CONCILIACION; } });
 function navSecKey(name){ return 'cl_nav_'+String(name).toLowerCase().replace(/[^a-z0-9]+/g,'-'); }
 function renderNav(){
   const nav=$('#nav');nav.innerHTML='';
@@ -397,7 +464,7 @@ function renderNav(){
     (curBody || nav).append(link);
   }
 }
-const TITLES={dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],destinatarios:['Destinatarios','Correos que reciben el aviso automático de corte'],usuarios:['Usuarios','Quién tiene acceso a la plataforma y con qué rol'],bitacora:['Bitácora','Trazabilidad de acciones'],
+const TITLES={dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],retenciones:['Retenciones','Retenciones por financiamiento y revenue share aplicadas al monto a dispersar'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],destinatarios:['Destinatarios','Correos que reciben el aviso automático de corte'],usuarios:['Usuarios','Quién tiene acceso a la plataforma y con qué rol'],bitacora:['Bitácora','Trazabilidad de acciones'],
 disp_dashboard:['Panel de disputas','KPIs de contracargos, devoluciones y duplicados'],
 disp_chargebacks:['Contracargos (disputas)','Ciclo completo de disputa: 1er contracargo → representación → arbitraje'],
 disp_refunds:['Devoluciones sospechosas','Notificación al comercio y respuesta procede / no procede'],
@@ -409,7 +476,17 @@ disp_reports:['Reportes de disputas','Exportables por rango, comercio, reason co
 dest_liquidacion:['Destinatarios · Aviso de corte','Correos internos que reciben el informe del corte'],
 dest_liquidacion_cli:['Destinatarios · Detalle por cliente','Contactos por grupo cliente que reciben SU detalle transaccional'],
 dest_contabilidad:['Destinatarios · Contabilidad','Correos que reciben el registro contable semanal y el resumen mensual'],
-dest_disputas:['Destinatarios · Disputas','Grupos de cliente y sus contactos para notificar disputas']};
+dest_disputas:['Destinatarios · Disputas','Grupos de cliente y sus contactos para notificar disputas'],
+tar_mis_rutinas:['Mis rutinas','Rutinas diarias, semanales y mensuales asignadas a ti'],
+tar_mis_tareas:['Mis tareas','Todo lo que tienes asignado hoy · sin importar tipo o producto'],
+tar_tablero:['Tablero','Kanban global · agrupado por estado'],
+tar_emisor:['Emisor','Tareas del producto Emisor'],
+tar_spei:['SPEI','Tareas del producto SPEI'],
+tar_agregador:['Agregador','Tareas del producto Agregador'],
+tar_calendario:['Calendario','Todas las actividades del mes'],
+tar_entregables:['Entregables','Informes con flujo de aprobación'],
+tar_reportes:['Reportes','Cumplimiento, throughput y SLA'],
+tar_miembros:['Miembros','Equipo de operaciones']};
 function go(v){VIEW=v;render();}
 async function render(){renderNav();
   // Sub-vistas parametrizadas: "disp_cb_<id>" → vista detalle CB pantalla completa.
@@ -429,9 +506,10 @@ async function render(){renderNav();
   }
   const[t,s]=TITLES[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
   const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
-  try{await ({dashboard:vDashboard,ingesta:vIngesta,contracargos:vContracargos,cortes:vCortes,contable:vContabilidadCortes,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,destinatarios:vDestinatarios,usuarios:vUsuarios,bitacora:vBitacora,
+  try{await ({dashboard:vDashboard,ingesta:vIngesta,contracargos:vContracargos,retenciones:vRetenciones,cortes:vCortes,contable:vContabilidadCortes,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,destinatarios:vDestinatarios,usuarios:vUsuarios,bitacora:vBitacora,
     disp_dashboard:vDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC,disp_providers:vDispProviders,disp_reports:vDispReports,
-    dest_liquidacion:vDestinatariosCorte,dest_liquidacion_cli:vDestinatariosCliente,dest_contabilidad:vDestinatariosContabilidad,dest_disputas:vDestDisputas}[VIEW]||vDashboard)(v);}
+    dest_liquidacion:vDestinatariosCorte,dest_liquidacion_cli:vDestinatariosCliente,dest_contabilidad:vDestinatariosContabilidad,dest_disputas:vDestDisputas,
+    tar_mis_rutinas:vTarMisRutinas,tar_mis_tareas:vTarMisTareas,tar_tablero:vTarTablero,tar_emisor:vTarPorProducto,tar_spei:vTarPorProducto,tar_agregador:vTarPorProducto,tar_calendario:vTarPlaceholder,tar_entregables:vTarPlaceholder,tar_reportes:vTarPlaceholder,tar_miembros:vTarPlaceholder}[VIEW]||vDashboard)(v);}
   catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
 }
 function setView(v,node){v.innerHTML='';v.append(node);}
@@ -2451,7 +2529,9 @@ function openImport(tipo,title){
    ========================================================================= */
 function mountApp(){$('#loginScreen').style.display='none';$('#app').style.display='flex';
   $('#whoAv').textContent=(SES.nombre[0]||'?').toUpperCase();$('#whoName').textContent=SES.nombre;$('#whoRole').textContent=ROLES[SES.rol]||SES.rol;
-  VIEW='dashboard';render();}
+  renderWs();
+  VIEW = (WORKSPACE==='tareas') ? 'tar_mis_rutinas' : 'dashboard';
+  render();}
 async function boot(){
   try{
     const est=await fetch('/api/estado').then(r=>r.json());
@@ -2464,6 +2544,250 @@ async function boot(){
   initLogin();
 }
 boot();
+
+/* ============================================================================
+   RETENCIONES POR FINANCIAMIENTO / REVENUE SHARE
+   ========================================================================= */
+async function vRetenciones(v){
+  if(can('ingesta')){
+    $('#pageAction').append(el('button',{class:'btn ghost sm',onclick:()=>descargar('/api/financiamientos/plantilla.xlsx','plantilla_retenciones.xlsx').catch(e=>toast(errMsg(e),'err'))},'⬇ Descargar plantilla'));
+    const fileInp = el('input',{type:'file',accept:'.xlsx,.xls,.csv',style:'display:none',onchange:async(e)=>{
+      const f=e.target.files && e.target.files[0]; if(!f) return;
+      const fd=new FormData(); fd.append('archivo',f);
+      try{
+        const r=await withBusy('Cargando retenciones…',()=>api('POST','/api/financiamientos/ingesta',fd));
+        let msg = `Procesados ${r.procesados} · Creados ${r.creados}`;
+        if(r.errores && r.errores.length) msg += ` · ${r.errores.length} errores`;
+        toast(msg, r.errores && r.errores.length ? 'err' : 'ok');
+        render();
+      }catch(ex){ toast(errMsg(ex),'err'); }
+      fileInp.value='';
+    }});
+    v.append(fileInp);
+    $('#pageAction').append(el('button',{class:'btn',onclick:()=>fileInp.click()},'⬆ Cargar layout'));
+  }
+  const [rows,kpis] = await Promise.all([ api('GET','/api/financiamientos').catch(()=>[]), api('GET','/api/financiamientos/kpis').catch(()=>({pendientes:{n:0,monto:0},aplicados_mes:{n:0,monto:0},cancelados_mes:{n:0,monto:0}})) ]);
+  v.innerHTML='';
+  // KPIs
+  v.append(cards([
+    ['Pendientes',kpis.pendientes.n,'de aplicar en corte'],
+    ['Monto pendiente',mxn(kpis.pendientes.monto)],
+    ['Aplicados (mes)',kpis.aplicados_mes.n,mxn(kpis.aplicados_mes.monto)],
+    ['Cancelados (mes)',kpis.cancelados_mes.n,mxn(kpis.cancelados_mes.monto)],
+  ]));
+  v.append(el('div',{class:'banner',html:'<b>Cómo funciona:</b> descarga la plantilla, llena los campos (grupo, afiliación, tipo, bloque DOM/AMEX, concepto, monto, fecha aplica) y sube el layout. Al generar el corte de esa fecha, cada retención se <b>debita del bloque indicado</b> del grupo/afiliación — mismo comportamiento que contracargos. Puedes borrar retenciones mientras estén <b>Pendiente</b>; si ya se aplicaron, borra primero el corte.'}));
+  // Filtros
+  const filtros=el('div',{class:'filters'});
+  const estSel=el('select'); [['','Todos los estados'],['Pendiente','Pendiente'],['Aplicado','Aplicado'],['Cancelado','Cancelado']].forEach(([v,l])=>estSel.append(el('option',{value:v},l)));
+  const tipoSel=el('select'); [['','Todos los tipos'],['financiamiento','Financiamiento'],['revenue_share','Revenue share']].forEach(([v,l])=>tipoSel.append(el('option',{value:v},l)));
+  filtros.append(estSel,tipoSel);
+  v.append(filtros);
+  const filtered = rows.filter(r => (!estSel.value || r.estatus===estSel.value) && (!tipoSel.value || r.tipo===tipoSel.value));
+  const refiltrar = ()=>{ v.innerHTML=''; vRetenciones(v); };
+  estSel.addEventListener('change',refiltrar); tipoSel.addEventListener('change',refiltrar);
+  // Tabla
+  const p=el('div',{class:'panel'});
+  p.append(el('h3',{},'Retenciones ('+filtered.length+')'));
+  if(!filtered.length){ p.append(el('div',{class:'empty'},'No hay retenciones cargadas. Descarga la plantilla y sube un layout.')); }
+  else {
+    const tipoBadge = t => t==='financiamiento' ? '<span class="pill b">Financiamiento</span>' : t==='revenue_share' ? '<span class="pill v">Revenue share</span>' : '<span class="pill">'+esc(t)+'</span>';
+    const estBadge = e => e==='Pendiente' ? '<span class="badge w">Pendiente</span>' : e==='Aplicado' ? '<span class="badge ok">Aplicado</span>' : '<span class="badge g">Cancelado</span>';
+    const rowsT = filtered.map(r=>{
+      const acc = el('div',{style:'display:flex;gap:6px;justify-content:flex-end'});
+      if(r.estatus==='Pendiente' && can('ingesta')) acc.append(el('button',{class:'btn danger sm',onclick:async(e)=>{ e.stopPropagation(); if(!confirm('¿Eliminar retención '+r.folio+' por '+mxn(r.monto)+'?')) return; try{ await api('DELETE','/api/financiamientos/'+r.id); toast('Eliminada','ok'); render(); }catch(er){toast(errMsg(er),'err');}}},'Borrar'));
+      return [
+        `<code style="font-size:11px">${esc(r.folio||'—')}</code>`,
+        esc(r.cargado_en_fecha||'—'),
+        `<div class="tt">${esc(r.grupo_cliente)}<small>Afil ${esc(r.numero_afiliacion)}</small></div>`,
+        tipoBadge(r.tipo),
+        `<span class="pill">${r.bloque||'DOM'}</span>`,
+        esc(r.concepto||'—'),
+        {num: `<span style="color:var(--danger)">-${mxn(r.monto)}</span>`},
+        estBadge(r.estatus) + (r.aplicado_en_corte_id?' <small class="muted">#'+r.aplicado_en_corte_id+'</small>':''),
+        acc,
+      ];
+    });
+    p.append(tableWrap(['Folio','Fecha aplica','Grupo · Afil','Tipo','Bloque','Concepto',{t:'Monto'},'Estado',''],rowsT));
+  }
+  v.append(p);
+}
+
+/* ============================================================================
+   MÓDULO TAREAS OPS — vistas del microsistema (fase 4 · S1)
+   ========================================================================= */
+const TAR_TIPO = { diaria:['tipoD','dotD','● DIARIA'], semanal:['tipoS','dotS','● SEMANAL'], mensual:['tipoM','dotM','● MENSUAL'], unica:['tipoU','dotU','● ÚNICA'], entregable:['tipoE','dotE','● ENTREGABLE'] };
+const TAR_ESTADO_LBL = { backlog:'Backlog', por_hacer:'Por hacer', en_curso:'En curso', en_revision:'En revisión', bloqueado:'Bloqueado', terminado:'Terminado', cancelado:'Cancelado' };
+const TAR_ESTADOS = ['backlog','por_hacer','en_curso','en_revision','bloqueado','terminado'];
+function tarBadgeEstado(e){ const m={backlog:'g',por_hacer:'w',en_curso:'b',en_revision:'v',bloqueado:'d',terminado:'ok',cancelado:'g'}; return `<span class="badge ${m[e]||'g'}">${TAR_ESTADO_LBL[e]||e}</span>`; }
+function tarBadgePrio(p){ const m={baja:'⚪ Baja',media:'🟠 Media',alta:'🟡 Alta',urgente:'🔴 Urgente'}; return m[p]||p; }
+function tarTipoTag(tipo){ const spec=TAR_TIPO[tipo]||['tipoU','dotU',tipo]; return `<span class="tipo-tag ${spec[0]}"><span class="dot ${spec[1]}"></span>${spec[2]}</span>`; }
+
+async function vTarMisRutinas(v){
+  if(can('disputas'))$('#pageAction').append(el('button',{class:'btn ghost sm',onclick:async()=>{ if(!confirm('¿Cargar rutinas y tareas de demo? (solo funciona si aún no hay tickets)')) return; try{const r=await api('POST','/api/tareas/seed-demo'); toast(r.ok?'Cargado: '+r.creados+' tareas':'Ya hay '+r.total+' tareas','ok'); render();}catch(e){toast(errMsg(e),'err');} }},'⚡ Cargar demo'));
+  if(can('disputas'))$('#pageAction').append(el('button',{class:'btn',onclick:()=>openNuevaTarea()},'+ Nueva tarea'));
+  const tickets = await api('GET','/api/tareas/tickets?mias=true').catch(()=>[]);
+  const rutinas = tickets.filter(t => ['diaria','semanal','mensual'].includes(t.tipo));
+  const hoy = new Date().toISOString().slice(0,10);
+  const rutHoy = rutinas.filter(t => (t.tipo==='diaria') || (t.fecha_limite && String(t.fecha_limite).slice(0,10)===hoy));
+  const done = rutHoy.filter(t=>t.estado==='terminado').length;
+  v.innerHTML='';
+  const streak = el('div',{class:'streak'});
+  streak.append(el('div',{class:'num'},'🔥 '+done),el('div',{class:'info',html:'<b>'+done+' de '+rutHoy.length+' rutinas de hoy completadas</b> · buen ritmo, sigue así.'}));
+  v.append(streak);
+  const p=el('div',{class:'panel'});
+  p.append(el('h3',{},'Hoy · '+new Date().toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long'}),el('span',{class:'right'},el('span',{class:'pill'},done+' de '+rutHoy.length))));
+  if(!rutHoy.length){ p.append(el('div',{class:'empty'},'No tienes rutinas para hoy. Presiona "Cargar demo" para probar con datos de ejemplo.')); }
+  else {
+    const list=el('div',{style:'display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px'});
+    for(const t of rutHoy){
+      const clase = t.estado==='terminado'?'done':(t.hora_limite && t.hora_limite < new Date().toTimeString().slice(0,5) && t.estado!=='terminado')?'venc':'due';
+      const card = el('label',{class:'rutina-card '+clase});
+      const chk = el('input',{type:'checkbox'}); if(t.estado==='terminado') chk.checked=true;
+      chk.addEventListener('change',async()=>{ try{ await api('POST','/api/tareas/tickets/'+t.id+'/status',{estado: chk.checked?'terminado':'por_hacer'}); render(); }catch(e){toast(errMsg(e),'err');} });
+      const info = el('div',{},el('div',{class:'t',html: tarTipoTag(t.tipo)+' · '+esc(t.titulo)}),el('small',{},(t.hora_limite?t.hora_limite+' · ':'')+(t.estado==='terminado'?'✓ Hecho':(clase==='venc'?'⚠ Vencida':'Pendiente'))+' · '+esc(t.producto)));
+      card.append(chk,info);
+      card.addEventListener('click',ev=>{ if(ev.target!==chk) { /* click al card no marca chk */ } });
+      list.append(card);
+    }
+    p.append(list);
+  }
+  v.append(p);
+}
+
+async function vTarMisTareas(v){
+  if(can('disputas'))$('#pageAction').append(el('button',{class:'btn',onclick:()=>openNuevaTarea()},'+ Nueva tarea'));
+  const tickets = await api('GET','/api/tareas/tickets?mias=true').catch(()=>[]);
+  v.innerHTML='';
+  const kpis = await api('GET','/api/tareas/kpis').catch(()=>({abiertas:0,vencidas:0,por_vencer:0,cerradas_mes:0}));
+  v.append(cards([
+    ['Abiertas',kpis.abiertas],
+    ['Vencen 7 días',kpis.por_vencer,'',kpis.por_vencer>0?'warn':''],
+    ['Vencidas',kpis.vencidas,'',kpis.vencidas>0?'alert':''],
+    ['Cerradas mes',kpis.cerradas_mes,'',''],
+  ]));
+  const p=el('div',{class:'panel'});
+  p.append(el('h3',{},'Mis tareas abiertas ('+tickets.filter(t=>!['terminado','cancelado'].includes(t.estado)).length+')'));
+  const abiertas = tickets.filter(t=>!['terminado','cancelado'].includes(t.estado));
+  if(!abiertas.length){ p.append(el('div',{class:'empty'},'Sin tareas asignadas a ti.')); }
+  else {
+    const rows = abiertas.map(t=>{const r=[
+      `<code>${esc(t.folio)}</code>`,
+      {html: tarTipoTag(t.tipo)},
+      `<div class="tt">${esc(t.titulo)}</div>`,
+      esc(t.producto),
+      {html: tarBadgeEstado(t.estado)},
+      t.fecha_limite ? fmtISO(t.fecha_limite) : (t.hora_limite ? 'Hoy '+t.hora_limite : '—'),
+      tarBadgePrio(t.prioridad),
+    ]; r._onclick=()=>abrirTarea(t.id); return r;});
+    p.append(tableWrap(['Folio','Tipo','Título','Producto','Estado','Vence','Prio'],rows));
+  }
+  v.append(p);
+}
+
+async function vTarTablero(v){ return vTarPorProducto(v, null); }
+
+async function vTarPorProducto(v, prod){
+  const productoFromView = { tar_emisor:'emisor', tar_spei:'spei', tar_agregador:'agregador' }[VIEW] || null;
+  const producto = prod || productoFromView;
+  if(can('disputas'))$('#pageAction').append(el('button',{class:'btn',onclick:()=>openNuevaTarea(producto)},'+ Nueva tarea'));
+  const url = '/api/tareas/tickets' + (producto?'?producto='+producto:'');
+  const [tickets,kpis] = await Promise.all([ api('GET',url).catch(()=>[]), api('GET','/api/tareas/kpis'+(producto?'?producto='+producto:'')).catch(()=>({abiertas:0,vencidas:0,por_vencer:0,cerradas_mes:0})) ]);
+  v.innerHTML='';
+  v.append(cards([
+    ['Abiertas',kpis.abiertas],
+    ['Vencen 7 días',kpis.por_vencer,'',kpis.por_vencer>0?'warn':''],
+    ['Vencidas',kpis.vencidas,'',kpis.vencidas>0?'alert':''],
+    ['Cerradas mes',kpis.cerradas_mes,'',''],
+  ]));
+  // Filtro por tipo
+  const filtros = el('div',{class:'filters'});
+  const tabsRow = el('div',{class:'tabs'});
+  const tipos = [['','Todos'],['diaria','● Diarias'],['semanal','● Semanales'],['mensual','● Mensuales'],['unica','● Únicas'],['entregable','● Entregables']];
+  if(!vTarPorProducto._t) vTarPorProducto._t = { tipo: '' };
+  tipos.forEach(([val,lbl])=>{ const b=el('button',{class:'tab'+(vTarPorProducto._t.tipo===val?' active':''),onclick:()=>{ vTarPorProducto._t.tipo=val; render(); }},lbl); tabsRow.append(b); });
+  filtros.append(tabsRow);
+  v.append(filtros);
+  const tipoFiltro = vTarPorProducto._t.tipo;
+  const filtered = tickets.filter(t => !tipoFiltro || t.tipo===tipoFiltro);
+  // Kanban
+  const p=el('div',{class:'panel',style:'overflow-x:auto'});
+  const board=el('div',{style:'display:grid;grid-template-columns:repeat(6,minmax(220px,1fr));gap:12px;min-width:1300px'});
+  for(const est of TAR_ESTADOS){
+    const col=el('div',{class:'tkboard'});
+    const items = filtered.filter(t=>t.estado===est);
+    col.append(el('h4',{},TAR_ESTADO_LBL[est],el('span',{class:'n'},String(items.length))));
+    for(const t of items){
+      const spec=TAR_TIPO[t.tipo]||['tipoU','dotU','?'];
+      const card=el('div',{class:'tkcard t'+t.tipo.charAt(0).toUpperCase(),onclick:()=>abrirTarea(t.id)});
+      card.append(el('div',{class:'head',html: tarTipoTag(t.tipo)+'<span class="folio">'+esc(t.folio)+'</span>'}));
+      card.append(el('div',{class:'t'},t.titulo));
+      const m=el('div',{class:'m'});
+      m.append(el('span',{class:'pill'},t.producto));
+      if(t.fecha_limite) m.append(el('span',{class:'muted'},'Vence '+fmtISO(t.fecha_limite)));
+      if(t.hora_limite && t.tipo==='diaria') m.append(el('span',{class:'muted'},t.hora_limite));
+      card.append(m);
+      col.append(card);
+    }
+    board.append(col);
+  }
+  p.append(board);
+  v.append(p);
+}
+
+async function vTarPlaceholder(v){
+  v.innerHTML='';
+  v.append(el('div',{class:'panel'},el('div',{class:'empty'},'Esta vista se construirá en el próximo sprint (S3).')));
+}
+
+function openNuevaTarea(productoDefault){
+  const body=el('div',{});
+  const titulo=el('input',{placeholder:'Ej. Corte extraordinario Grupo SFI'});
+  const tipo=el('select'); [['unica','Única'],['diaria','Diaria (rutina)'],['semanal','Semanal'],['mensual','Mensual'],['entregable','Entregable']].forEach(([v,l])=>tipo.append(el('option',{value:v},l)));
+  const producto=el('select'); ['emisor','spei','agregador','contabilidad','sistema','transversal'].forEach(p=>producto.append(el('option',{value:p},p.charAt(0).toUpperCase()+p.slice(1))));
+  if(productoDefault) producto.value=productoDefault;
+  const prioridad=el('select'); ['baja','media','alta','urgente'].forEach(p=>prioridad.append(el('option',{value:p},p.charAt(0).toUpperCase()+p.slice(1)))); prioridad.value='media';
+  const fLim=el('input',{type:'date'});
+  const hLim=el('input',{type:'time'});
+  const desc=el('textarea',{rows:3,placeholder:'Descripción, criterio de aceptación, contexto…'});
+  body.append(fld('Título',titulo));
+  body.append(el('div',{class:'form-grid c3'},fld('Tipo',tipo),fld('Producto',producto),fld('Prioridad',prioridad)));
+  body.append(el('div',{class:'form-grid'},fld('Fecha límite',fLim),fld('Hora límite (rutinas diarias)',hLim)));
+  body.append(fld('Descripción',desc));
+  const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    if(!titulo.value.trim()) return toast('Falta el título','err');
+    try{
+      const r=await api('POST','/api/tareas/tickets',{ titulo:titulo.value.trim(), tipo:tipo.value, producto:producto.value, prioridad:prioridad.value, fecha_limite:fLim.value||undefined, hora_limite:hLim.value||undefined, descripcion:desc.value.trim()||undefined });
+      toast('Creada · '+r.folio,'ok'); closeModal(); render();
+    }catch(e){toast(errMsg(e),'err');}
+  }},'Crear tarea'));
+  modal('Nueva tarea',body,foot);
+}
+
+async function abrirTarea(id){
+  try{
+    const t = await api('GET','/api/tareas/tickets/'+id);
+    const body=el('div',{});
+    body.append(cards([['Folio',t.folio],['Producto',t.producto],['Tipo',(TAR_TIPO[t.tipo]||['','','?'])[2]],['Vence',t.fecha_limite?fmtISO(t.fecha_limite):(t.hora_limite?'Hoy '+t.hora_limite:'—')]]));
+    if(t.descripcion) body.append(el('div',{class:'banner'},esc(t.descripcion)));
+    // Transiciones
+    body.append(el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;margin:10px 0'},
+      ...TAR_ESTADOS.filter(e=>e!==t.estado).map(e=>el('button',{class:'btn ghost sm',onclick:async()=>{ try{ await api('POST','/api/tareas/tickets/'+id+'/status',{estado:e}); toast('Estado: '+TAR_ESTADO_LBL[e],'ok'); closeModal(); render(); }catch(er){toast(errMsg(er),'err');} }},'→ '+TAR_ESTADO_LBL[e])),
+    ));
+    // Actividad
+    if(t.actividad && t.actividad.length){
+      const p=el('div',{style:'margin-top:12px'});
+      p.append(el('h3',{},'Actividad'));
+      t.actividad.slice().reverse().forEach(a=>{
+        const wrap=el('div',{style:'padding:8px 0;border-bottom:1px solid var(--line);font-size:12px'});
+        wrap.append(el('div',{class:'muted'},new Date(a.ts).toLocaleString('es-MX')+' · '+esc(a.actor||'—')));
+        wrap.append(el('div',{},esc(a.detalle || (a.tipo+(a.estado_nvo?' · '+a.estado_nvo:'')))));
+        p.append(wrap);
+      });
+      body.append(p);
+    }
+    modal(t.folio+' · '+t.titulo,body,el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cerrar')),true);
+  }catch(e){toast(errMsg(e),'err');}
+}
 </script>
 </body>
 </html>

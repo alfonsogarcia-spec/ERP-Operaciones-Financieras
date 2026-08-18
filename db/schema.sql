@@ -341,3 +341,132 @@ alter table afiliaciones   add column if not exists razon_social_cifrada text;
 alter table contracargos   add column if not exists ultimos_4_cifrada text;
 
 alter table contracargos_reporte_dia add column if not exists archivo_bytes_cifrado bytea;
+
+-- ============================================================================
+-- MÓDULO TAREAS DE OPERACIONES (fase 4)
+-- Microsistema aislado: tickets con 5 tipos (diaria/semanal/mensual/única/entregable).
+-- Comparte auth y SES con el sistema principal; nada más.
+-- ============================================================================
+
+-- Rutinas: definición de tareas recurrentes que generan instancias automáticamente.
+create table if not exists tareas_rutinas (
+  id             serial primary key,
+  titulo         text not null,
+  descripcion    text,
+  producto       text not null default 'agregador'
+                 check (producto in ('emisor','spei','agregador','contabilidad','sistema','transversal')),
+  tipo           text not null
+                 check (tipo in ('diaria','semanal','mensual')),
+  hora_objetivo  text,                            -- 'HH:MM' local MX
+  dias_semana    text,                            -- 'lun,mar,mie,jue,vie' para diarias/semanales
+  dia_mes        integer,                         -- 1..31 para mensuales
+  n_dia_habil    integer,                         -- alternativa: N-ésimo día hábil
+  salta_feriados boolean not null default true,
+  responsable_id integer references usuarios(id) on delete set null,
+  etiquetas      jsonb not null default '[]',
+  activo         boolean not null default true,
+  creado_at      timestamptz default now(),
+  creado_por     text
+);
+
+-- Tickets: unidades de trabajo. Pueden ser instancias de rutinas o únicos/entregables.
+create table if not exists tareas_tickets (
+  id             serial primary key,
+  folio          text unique not null,           -- TSK-YYYY-NNNNNN
+  titulo         text not null,
+  descripcion    text,
+  producto       text not null default 'agregador'
+                 check (producto in ('emisor','spei','agregador','contabilidad','sistema','transversal')),
+  tipo           text not null default 'unica'
+                 check (tipo in ('diaria','semanal','mensual','unica','entregable')),
+  rutina_id      integer references tareas_rutinas(id) on delete set null,
+  prioridad      text not null default 'media'
+                 check (prioridad in ('baja','media','alta','urgente')),
+  estado         text not null default 'backlog'
+                 check (estado in ('backlog','por_hacer','en_curso','en_revision','bloqueado','terminado','cancelado')),
+  responsable_id integer references usuarios(id) on delete set null,
+  solicitante_id integer references usuarios(id) on delete set null,
+  fecha_inicio   date,
+  fecha_limite   date,
+  hora_limite    text,                            -- para rutinas diarias
+  fecha_cierre   timestamptz,
+  etiquetas      jsonb not null default '[]',
+  bloqueada_por  integer references tareas_tickets(id) on delete set null,
+  -- Entregable
+  aprobador_id      integer references usuarios(id) on delete set null,
+  estado_aprobacion text check (estado_aprobacion is null or estado_aprobacion in ('pendiente','aprobado','rechazado')),
+  archivo_final     text,                         -- nombre del archivo entregado
+  archivo_final_ver integer default 1,
+  -- Auditoría
+  creado_por     text,
+  creado_at      timestamptz default now(),
+  actualizado_at timestamptz default now(),
+  archivado      boolean not null default false
+);
+create index if not exists idx_tk_producto on tareas_tickets(producto, estado) where archivado=false;
+create index if not exists idx_tk_responsable on tareas_tickets(responsable_id, estado) where archivado=false;
+create index if not exists idx_tk_rutina on tareas_tickets(rutina_id, fecha_inicio) where rutina_id is not null;
+
+-- Subtareas: checklist dentro de un ticket.
+create table if not exists tareas_subtareas (
+  id         serial primary key,
+  ticket_id  integer not null references tareas_tickets(id) on delete cascade,
+  texto      text not null,
+  done       boolean not null default false,
+  orden      integer default 0,
+  creado_at  timestamptz default now()
+);
+
+-- Actividad: historial + comentarios de un ticket.
+create table if not exists tareas_actividad (
+  id         serial primary key,
+  ticket_id  integer not null references tareas_tickets(id) on delete cascade,
+  ts         timestamptz default now(),
+  actor      text,                                -- nombre/email del usuario
+  tipo       text not null,                       -- created/comment/status_change/assign/subtask/attach/edit
+  estado_ant text,
+  estado_nvo text,
+  detalle    text,
+  meta       jsonb
+);
+create index if not exists idx_act_ticket on tareas_actividad(ticket_id, ts desc);
+
+-- Miembros del workspace de Tareas (rol dentro del microsistema).
+create table if not exists tareas_miembros (
+  usuario_id integer primary key references usuarios(id) on delete cascade,
+  rol_tareas text not null default 'operador'
+             check (rol_tareas in ('direccion','coordinacion','operador','consulta')),
+  productos  jsonb not null default '[]',        -- ['agregador','spei','emisor']
+  activo     boolean not null default true,
+  agregado_at timestamptz default now()
+);
+
+-- ============================================================================
+-- RETENCIONES POR FINANCIAMIENTO / REVENUE SHARE
+-- Gemelo de "contracargos": se sube un layout por día con las retenciones que
+-- van a debitarse del monto a dispersar del grupo/afiliación en el corte.
+-- Cada fila indica su bloque (DOM o AMEX) para saber de qué dispersión resta.
+-- No es constancia obligatoria: el corte se puede generar sin layout.
+-- ============================================================================
+create table if not exists financiamientos (
+  id                    serial primary key,
+  folio                 text unique,                 -- FIN-YYYY-NNNNNN (interno)
+  cargado_en_fecha      date not null,               -- fecha del corte al que aplica
+  numero_afiliacion     text not null,
+  grupo_cliente         text not null,               -- sin prefijo "Grupo "
+  tipo                  text not null default 'financiamiento'
+                        check (tipo in ('financiamiento','revenue_share')),
+  concepto              text,
+  bloque                text not null default 'DOM'
+                        check (bloque in ('DOM','AMEX')),
+  monto                 numeric not null,
+  moneda                text default 'MXN',
+  estatus               text not null default 'Pendiente'
+                        check (estatus in ('Pendiente','Aplicado','Cancelado')),
+  aplicado_en_corte_id  integer references cortes(id_corte) on delete set null,
+  archivo_origen        text,
+  creado_at             timestamptz default now(),
+  creado_por            text
+);
+create index if not exists idx_fin_fecha on financiamientos(cargado_en_fecha, estatus);
+create index if not exists idx_fin_afil  on financiamientos(numero_afiliacion, cargado_en_fecha);

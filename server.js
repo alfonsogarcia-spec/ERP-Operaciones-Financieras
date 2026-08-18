@@ -736,12 +736,28 @@ async function computeCorte(fechaLiqIso) {
   const txs = (await db.query("select cliente,numero_afiliacion,producto,monto from transacciones where fecha_liq=$1 and upper(estatus)='APROBADO'", [fechaLiqIso])).rows;
   // Contracargos pendientes para esta fecha: se aplican al bloque correspondiente.
   const ccRows = (await db.query("select * from contracargos where cargado_en_fecha=$1 and estatus='Pendiente'", [fechaLiqIso])).rows;
-  const ccMap = new Map();  // key = grupo||afil||bloque -> {monto, ids:[], disputas_ids:[]}
+  const ccMap = new Map();  // key = grupo||afil||bloque -> {monto, ids:[], disputas_ids:[], fin_ids:[]}
   for (const c of ccRows) {
     const k = `${nrm(c.grupo_cliente)}||${String(c.numero_afiliacion)}||${c.bloque}`;
-    const cur = ccMap.get(k) || { monto: 0, ids: [], disputas_ids: [] };
+    const cur = ccMap.get(k) || { monto: 0, ids: [], disputas_ids: [], fin_ids: [] };
     cur.monto += Number(c.monto) || 0; cur.ids.push(c.id); ccMap.set(k, cur);
   }
+  // Retenciones por financiamiento / revenue share pendientes para este día.
+  // Se debitan del bloque (DOM|AMEX) indicado en el layout, mismo comportamiento que contracargos.
+  // Mantenemos el monto de retención por afil||bloque en un mapa aparte para poder mostrarlo
+  // en ajustes.financiamiento_dom / financiamiento_amex y en los reportes.
+  const finMap = new Map();  // key = grupo||afil||bloque -> monto
+  try {
+    const finRows = (await db.query("select * from financiamientos where cargado_en_fecha=$1 and estatus='Pendiente'", [fechaLiqIso])).rows;
+    for (const f of finRows) {
+      const k = `${nrm(f.grupo_cliente)}||${String(f.numero_afiliacion)}||${f.bloque}`;
+      const cur = ccMap.get(k) || { monto: 0, ids: [], disputas_ids: [], fin_ids: [] };
+      cur.monto += Number(f.monto) || 0;
+      cur.fin_ids = cur.fin_ids || []; cur.fin_ids.push(f.id);
+      ccMap.set(k, cur);
+      finMap.set(k, (finMap.get(k) || 0) + Number(f.monto || 0));
+    }
+  } catch (_e) { /* schema no listo aún → ignorar */ }
   // Contracargos del módulo Disputas cuya fecha_retencion cae hoy y aún no se
   // han retenido en ningún corte. Se descuentan del bloque DOM (o AMEX si
   // brand=AMEX) del comercio propietario.
@@ -789,9 +805,24 @@ async function computeCorte(fechaLiqIso) {
     };
     // Buscar contracargos pendientes para esta afiliación (usando el nombre del grupo del catálogo).
     const nomGrupo = g ? g.nombre_cliente : cliente;
-    const cDom = ccMap.get(`${nrm(nomGrupo)}||${afil}||DOM`) || { monto: 0, ids: [], disputas_ids: [] };
-    const cAmex = ccMap.get(`${nrm(nomGrupo)}||${afil}||AMEX`) || { monto: 0, ids: [], disputas_ids: [] };
-    const ajustes = { financiamientos: 0, contracargos_dom: E.round2(cDom.monto), contracargos_amex: E.round2(cAmex.monto) };
+    const cDom = ccMap.get(`${nrm(nomGrupo)}||${afil}||DOM`) || { monto: 0, ids: [], disputas_ids: [], fin_ids: [] };
+    const cAmex = ccMap.get(`${nrm(nomGrupo)}||${afil}||AMEX`) || { monto: 0, ids: [], disputas_ids: [], fin_ids: [] };
+    const finDomMonto  = finMap.get(`${nrm(nomGrupo)}||${afil}||DOM`)  || 0;
+    const finAmexMonto = finMap.get(`${nrm(nomGrupo)}||${afil}||AMEX`) || 0;
+    // cDom/cAmex.monto contiene TODO lo debitado del bloque (contracargo + retención).
+    // El motor recibe ese total como "contracargos" para no romper la compatibilidad.
+    // Guardamos las partes separadas para mostrarlas en reportes y correo.
+    const ajustes = {
+      financiamientos: 0,
+      contracargos_dom:  E.round2(cDom.monto),
+      contracargos_amex: E.round2(cAmex.monto),
+      // Solo la parte de contracargos (sin retención):
+      contracargo_solo_dom:  E.round2(cDom.monto  - finDomMonto),
+      contracargo_solo_amex: E.round2(cAmex.monto - finAmexMonto),
+      // Solo la parte de retención por financiamiento:
+      financiamiento_dom:  E.round2(finDomMonto),
+      financiamiento_amex: E.round2(finAmexMonto),
+    };
     const r = E.calcularCompensacion(arr, cat, params, ajustes);
     const faltantes = []; if (!g) faltantes.push('grupo'); if (!tasas) faltantes.push('tasas'); if (!co) faltantes.push('costos'); if (!cuenta && Math.abs(r.disp_total) > 0.005) faltantes.push('cuenta');
     calculos.push({
@@ -799,6 +830,7 @@ async function computeCorte(fechaLiqIso) {
       clabe: cuenta ? cuenta.clabe : '', codigo_banco: cuenta ? (cuenta.codigo_banco || bancoCod(cuenta.banco)) : null, banco: cuenta ? cuenta.banco : '', beneficiario: cuenta ? (cuenta.razon_social_beneficiario || cuenta.nombre_comercial) : '',
       calc: r, faltantes, ajustes, contracargos_ids: [...cDom.ids, ...cAmex.ids],
       disputas_cb_ids: [...(cDom.disputas_ids || []), ...(cAmex.disputas_ids || [])],
+      financiamiento_ids: [...(cDom.fin_ids || []), ...(cAmex.fin_ids || [])],
     });
     // Marcar ids "usados" para descontarlos de los huérfanos y del ccMap.
     ccMap.delete(`${nrm(nomGrupo)}||${afil}||DOM`); ccMap.delete(`${nrm(nomGrupo)}||${afil}||AMEX`);
@@ -839,8 +871,15 @@ app.post('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res)
       await db.query('update disputa.chargebacks set retenido_en_corte_id=$1 where id = any($2::int[])', [idCorte, disputasCbIds]);
     } catch (_e) { /* schema disputa no listo → ignorar */ }
   }
-  await bit(req, 'corte_generar', `${E.fmtFecha(E.parseFecha(iso))}, ${c.calculos.length} grupos, contracargos cargados=${rep.n_contracargos||0}${disputasCbIds.length?`, disputas cb=${disputasCbIds.length}`:''}`, { resource_type: 'corte', resource_id: idCorte });
-  res.json({ id_corte: idCorte, contracargos_no_aplicados: c.cc_no_aplicados, disputas_cb_aplicadas: disputasCbIds.length });
+  // Marcar los financiamientos aplicados en este corte.
+  const finIds = c.calculos.flatMap(cc => cc.financiamiento_ids || []);
+  if (finIds.length) {
+    try {
+      await db.query("update financiamientos set estatus='Aplicado', aplicado_en_corte_id=$1 where id = any($2::int[])", [idCorte, finIds]);
+    } catch (_e) { /* tabla nueva no lista → ignorar */ }
+  }
+  await bit(req, 'corte_generar', `${E.fmtFecha(E.parseFecha(iso))}, ${c.calculos.length} grupos, contracargos cargados=${rep.n_contracargos||0}${disputasCbIds.length?`, disputas cb=${disputasCbIds.length}`:''}${finIds.length?`, retenciones=${finIds.length}`:''}`, { resource_type: 'corte', resource_id: idCorte });
+  res.json({ id_corte: idCorte, contracargos_no_aplicados: c.cc_no_aplicados, disputas_cb_aplicadas: disputasCbIds.length, retenciones_aplicadas: finIds.length });
 });
 
 app.get('/api/cortes', auth, async (req, res) => {
@@ -898,6 +937,8 @@ app.delete('/api/cortes/:id', auth, requiereRol('admin', 'operador'), async (req
   await db.query("update contracargos set estatus='Pendiente', aplicado_en_corte_id=null where aplicado_en_corte_id=$1", [id]);
   // Liberar CB del módulo Disputas que quedaron marcados por este corte.
   try { await db.query('update disputa.chargebacks set retenido_en_corte_id=null where retenido_en_corte_id=$1', [id]); } catch (_e) {}
+  // Revertir retenciones por financiamiento aplicadas por este corte.
+  try { await db.query("update financiamientos set estatus='Pendiente', aplicado_en_corte_id=null where aplicado_en_corte_id=$1", [id]); } catch (_e) {}
   await db.query('delete from cortes where id_corte=$1', [id]);
   await bit(req, 'corte_baja', `estado ${c.estado}`, { resource_type: 'corte', resource_id: id });
   res.json({ ok: true });
@@ -1123,7 +1164,11 @@ async function buildReporteXLSX(c, cal) {
   const N = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' });
   const hoyStr = (function(){ const p=N.formatToParts(new Date()); const g=t=>(p.find(x=>x.type===t)||{}).value; return `${g('day')}/${g('month')}/${g('year')}`; })();
 
-  const head = ['Grupo','Afiliación','Concepto','Monto','Débito','Crédito','American Express','Internacional','A Compensar','Banca + IVA','A Dispersar','Diferencia'];
+  // Débitos aplicados al grupo/afil (contracargos + retenciones por bloque).
+  const aj = x => (x.ajustes ? (typeof x.ajustes === 'string' ? JSON.parse(x.ajustes) : x.ajustes) : {});
+  const ccOf  = x => { const a = aj(x); return (Number(a.contracargo_solo_dom || 0) + Number(a.contracargo_solo_amex || 0)); };
+  const finOf = x => { const a = aj(x); return (Number(a.financiamiento_dom || 0) + Number(a.financiamiento_amex || 0)); };
+  const head = ['Grupo','Afiliación','Concepto','Monto','Débito','Crédito','American Express','Internacional','A Compensar','Banca + IVA','Contracargos','Retenciones','A Dispersar','Diferencia'];
   const dataRows = cal.map(x => { const r = x.calc; return [
     x.razon,
     String(x.afil),
@@ -1135,11 +1180,15 @@ async function buildReporteXLSX(c, cal) {
     E.round2(r.m_int),
     E.round2(r.comp_total),
     E.round2(r.banca + r.iva_banca),
+    E.round2(ccOf(x)),
+    E.round2(finOf(x)),
     E.round2(r.disp_total),
     E.round2(r.diferencia),
   ]; });
   // Fila TOTAL
   const sumaBanca = cal.reduce((s, x) => s + (Number(x.calc.banca||0) + Number(x.calc.iva_banca||0)), 0);
+  const sumaCC    = cal.reduce((s, x) => s + ccOf(x), 0);
+  const sumaFin   = cal.reduce((s, x) => s + finOf(x), 0);
   const totalRow = ['TOTAL','','',
     Number(c.total_monto),
     E.round2(cal.reduce((s,x)=>s+Number(x.calc.m_tdd||0),0)),
@@ -1148,6 +1197,8 @@ async function buildReporteXLSX(c, cal) {
     E.round2(cal.reduce((s,x)=>s+Number(x.calc.m_int||0),0)),
     Number(c.total_comp),
     E.round2(sumaBanca),
+    E.round2(sumaCC),
+    E.round2(sumaFin),
     Number(c.total_disp),
     '',
   ];
@@ -1166,17 +1217,18 @@ async function buildReporteXLSX(c, cal) {
   wb.creator = 'Polipay POS Settlement';
   const ws = wb.addWorksheet('Reporte por cliente', { views: [{ state: 'frozen', ySplit: 5 }] });
 
-  // Anchos de columna (los de la plantilla)
+  // Anchos de columna (los de la plantilla + Contracargos + Retenciones)
   ws.columns = [
     { width: 24 }, { width: 13 }, { width: 24 }, { width: 15 },
     { width: 14 }, { width: 13 }, { width: 13 }, { width: 13 },
-    { width: 15 }, { width: 14 }, { width: 15 }, { width: 13 },
+    { width: 15 }, { width: 14 }, { width: 14 }, { width: 14 },
+    { width: 15 }, { width: 13 },
   ];
 
   const fill = c => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } });
   const setStyle = (row, opts) => {
     if (opts.height) row.height = opts.height;
-    for (let col = 1; col <= 12; col++) {
+    for (let col = 1; col <= 14; col++) {
       const cell = row.getCell(col);
       if (opts.fill) cell.fill = fill(opts.fill);
       if (opts.font) cell.font = Object.assign({ name: FONT_NAME }, opts.font);
@@ -1186,25 +1238,25 @@ async function buildReporteXLSX(c, cal) {
   };
 
   // Fila 1: POLIPAY
-  const r1 = ws.addRow(['POLIPAY']); ws.mergeCells('A1:L1');
+  const r1 = ws.addRow(['POLIPAY']); ws.mergeCells('A1:N1');
   setStyle(r1, { height: 33.75, fill: AZUL_MARINO, font: { color: { argb: BLANCO }, bold: true, size: 20, name: FONT_NAME }, align: { horizontal: 'left', vertical: 'middle', indent: 1 } });
 
   // Fila 2: subtítulo
-  const r2 = ws.addRow(['Reporte por Cliente  ·  Agregado por grupo y afiliación']); ws.mergeCells('A2:L2');
+  const r2 = ws.addRow(['Reporte por Cliente  ·  Agregado por grupo y afiliación']); ws.mergeCells('A2:N2');
   setStyle(r2, { height: 21.75, fill: BLANCO, font: { color: { argb: AZUL_HEADER }, bold: true, size: 12, name: FONT_NAME }, align: { horizontal: 'left', vertical: 'middle', indent: 1 } });
 
   // Fila 3: corte + fecha
-  const r3 = ws.addRow([`Corte ${c.id_corte}   |   ${fechaLarga}   |   Generado ${hoyStr}`]); ws.mergeCells('A3:L3');
+  const r3 = ws.addRow([`Corte ${c.id_corte}   |   ${fechaLarga}   |   Generado ${hoyStr}`]); ws.mergeCells('A3:N3');
   setStyle(r3, { height: 15.75, fill: BLANCO, font: { color: { argb: GRIS_META }, size: 9, name: FONT_NAME }, align: { horizontal: 'left', vertical: 'middle', indent: 1 } });
 
   // Fila 4: separador
-  const r4 = ws.addRow(['']); ws.mergeCells('A4:L4');
+  const r4 = ws.addRow(['']); ws.mergeCells('A4:N4');
   setStyle(r4, { height: 3.75, fill: BLANCO });
 
   // Fila 5: encabezados
   const r5 = ws.addRow(head);
   r5.height = 30;
-  for (let col = 1; col <= 12; col++) {
+  for (let col = 1; col <= 14; col++) {
     const cell = r5.getCell(col);
     cell.fill = fill(AZUL_HEADER);
     cell.font = { name: FONT_NAME, color: { argb: BLANCO }, bold: true, size: 10 };
@@ -1214,7 +1266,7 @@ async function buildReporteXLSX(c, cal) {
   // Filas de datos
   for (const dr of dataRows) {
     const rr = ws.addRow(dr); rr.height = 18;
-    for (let col = 1; col <= 12; col++) {
+    for (let col = 1; col <= 14; col++) {
       const cell = rr.getCell(col);
       cell.fill = fill(BLANCO);
       cell.font = { name: FONT_NAME, color: { argb: NEGRO_TXT }, size: 10 };
@@ -1225,7 +1277,7 @@ async function buildReporteXLSX(c, cal) {
 
   // Fila TOTAL
   const rt = ws.addRow(totalRow); rt.height = 22;
-  for (let col = 1; col <= 12; col++) {
+  for (let col = 1; col <= 14; col++) {
     const cell = rt.getCell(col);
     cell.fill = fill(BLANCO);
     cell.font = { name: FONT_NAME, color: { argb: NEGRO_TXT }, bold: true, size: 10 };
@@ -1239,7 +1291,7 @@ async function buildReporteXLSX(c, cal) {
 
   // Pie
   const rp = ws.addRow([`Polipay POS Settlement · Generado ${hoyStr} por ${c.creado_por || '—'}   ·   Todas las cifras en MXN`]);
-  const pieRow = rp.number; ws.mergeCells(`A${pieRow}:L${pieRow}`);
+  const pieRow = rp.number; ws.mergeCells(`A${pieRow}:N${pieRow}`);
   setStyle(rp, { height: 25.5, font: { color: { argb: GRIS_META }, size: 8, name: FONT_NAME }, align: { horizontal: 'left', vertical: 'top', indent: 1 } });
 
   const buf = await wb.xlsx.writeBuffer();
@@ -1689,6 +1741,147 @@ app.delete('/api/contracargos/:id', auth, requiereRol('admin', 'operador'), asyn
 });
 
 /* ============================================================================
+   RETENCIONES POR FINANCIAMIENTO / REVENUE SHARE
+   Se sube un layout xlsx con las retenciones del día. Al generar el corte,
+   se debitan del bloque (DOM o AMEX) indicado del grupo/afiliación.
+   Mismo patrón de contracargos: se puede borrar si estatus=Pendiente.
+   ========================================================================= */
+async function folioFIN(db) {
+  const y = new Date().getFullYear();
+  const r = await db.query("select coalesce(max(cast(substring(folio from 10) as integer)), 0) as m from financiamientos where folio like $1", [`FIN-${y}-%`]);
+  return 'FIN-' + y + '-' + String((r.rows[0].m || 0) + 1).padStart(6, '0');
+}
+
+app.get('/api/financiamientos', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const f = req.query || {};
+  const conds = [], vals = [];
+  if (f.fecha)   { vals.push(String(f.fecha));   conds.push(`cargado_en_fecha=$${vals.length}`); }
+  if (f.estatus) { vals.push(String(f.estatus)); conds.push(`estatus=$${vals.length}`); }
+  if (f.tipo)    { vals.push(String(f.tipo));    conds.push(`tipo=$${vals.length}`); }
+  if (f.corte_id){ vals.push(parseInt(f.corte_id, 10)); conds.push(`aplicado_en_corte_id=$${vals.length}`); }
+  const where = conds.length ? ' where ' + conds.join(' and ') : '';
+  const rows = (await db.query('select * from financiamientos' + where + ' order by cargado_en_fecha desc, id desc limit 2000', vals)).rows
+    .map(r => ({ ...r, monto: Number(r.monto), cargado_en_fecha: r.cargado_en_fecha ? String(r.cargado_en_fecha).slice(0, 10) : null }));
+  res.json(rows);
+});
+
+app.get('/api/financiamientos/kpis', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const q = async sql => (await db.query(sql)).rows[0];
+  const pend  = await q("select count(*)::int as n, coalesce(sum(monto),0) as m from financiamientos where estatus='Pendiente'");
+  const aplic = await q("select count(*)::int as n, coalesce(sum(monto),0) as m from financiamientos where estatus='Aplicado' and creado_at >= date_trunc('month', now())");
+  const canc  = await q("select count(*)::int as n, coalesce(sum(monto),0) as m from financiamientos where estatus='Cancelado' and creado_at >= date_trunc('month', now())");
+  res.json({
+    pendientes: { n: pend.n, monto: Number(pend.m) },
+    aplicados_mes: { n: aplic.n, monto: Number(aplic.m) },
+    cancelados_mes: { n: canc.n, monto: Number(canc.m) },
+  });
+});
+
+// Plantilla estilo Polipay: 1 fila por grupo activo pre-llenada para agilizar captura.
+app.get('/api/financiamientos/plantilla.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const grupos = (await db.query('select nombre_cliente from grupos where activo=true order by nombre_cliente')).rows;
+  const N = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const gp = t => (N.find(x => x.type === t) || {}).value;
+  const hoy = `${gp('year')}-${gp('month')}-${gp('day')}`;
+  const hoyLbl = `${gp('day')}/${gp('month')}/${gp('year')}`;
+  const buf = await X.buildPolipayXLSX({
+    title: 'Plantilla · Retenciones por financiamiento / revenue share',
+    meta: `Fecha aplica ${hoyLbl} · Rellena Afiliación, Tipo, Bloque, Concepto, Monto — cambia la fecha si aplica otro día`,
+    footer: 'Tipo: financiamiento | revenue_share   ·   Bloque: DOM | AMEX   ·   Fecha aplica: YYYY-MM-DD (día del corte)',
+    sheets: [{
+      name: 'Retenciones',
+      columns: [
+        { header: 'Fecha aplica (YYYY-MM-DD)', width: 20, align: 'center' },
+        { header: 'Grupo cliente',              width: 30, align: 'left' },
+        { header: 'Número afiliación',          width: 18, align: 'left' },
+        { header: 'Tipo',                       width: 16, align: 'center' },
+        { header: 'Bloque',                     width: 10, align: 'center' },
+        { header: 'Concepto',                   width: 40, align: 'left' },
+        { header: 'Monto',                      width: 14, numFmt: 'mxn' },
+        { header: 'Moneda',                     width: 10, align: 'center' },
+      ],
+      rows: grupos.map(g => [hoy, g.nombre_cliente, '', 'financiamiento', 'DOM', '', 0, 'MXN']),
+    }],
+  });
+  enviarXLSX(res, 'plantilla_retenciones.xlsx', buf);
+});
+
+// Ingesta del layout — parser tolerante a la banda POLIPAY.
+app.post('/api/financiamientos/ingesta', auth, requiereRol('admin', 'operador'), upload.single('archivo'), validaArchivo, async (req, res) => {
+  if (!dbReady(res)) return;
+  let filas;
+  try {
+    const XLSX = require('xlsx');
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    if (!ws) return res.status(400).json({ error: 'sin_hojas' });
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+    let hdrIdx = -1;
+    for (let i = 0; i < Math.min(aoa.length, 15); i++) {
+      const line = (aoa[i] || []).map(v => String(v || '').toLowerCase());
+      if (line.some(c => c.includes('grupo')) && line.some(c => c.includes('afiliaci'))) { hdrIdx = i; break; }
+    }
+    if (hdrIdx < 0) return res.status(400).json({ error: 'sin_encabezado' });
+    const headers = aoa[hdrIdx].map(h => String(h || '').trim());
+    filas = aoa.slice(hdrIdx + 1).map(r => { const o = {}; headers.forEach((h, i) => { o[h] = r[i]; }); return o; });
+  } catch (e) { return res.status(400).json({ error: 'archivo_ilegible', mensaje: e.message }); }
+
+  const nrmTxt = s => String(s == null ? '' : s).trim();
+  const parseFechaAplica = v => {
+    if (!v) return null;
+    if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0, 10);
+    const s = String(v).trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    if (/^\d{2}\/\d{2}\/\d{4}/.test(s)) { const [d, m, y] = s.split('/'); return `${y}-${m}-${d}`; }
+    return null;
+  };
+  const okTipo = t => ['financiamiento', 'revenue_share'].includes(String(t || 'financiamiento').toLowerCase().replace(/[ -]/g, '_').replace('rev_share', 'revenue_share'));
+  const okBloque = b => ['DOM', 'AMEX'].includes(String(b || 'DOM').trim().toUpperCase());
+
+  const archivo = req.file.originalname;
+  let procesados = 0, creados = 0, cancelados = 0;
+  const errores = [];
+  for (let i = 0; i < filas.length; i++) {
+    const r = filas[i];
+    const grupo = nrmTxt(r['Grupo cliente'] ?? r['grupo cliente'] ?? r['grupo'] ?? '').replace(/^grupo\s+/i, '');
+    const afil  = nrmTxt(r['Número afiliación'] ?? r['numero afiliacion'] ?? r['afiliacion'] ?? r['afiliación'] ?? '').replace(/\D/g, '');
+    const monto = Number(r['Monto'] ?? r['monto'] ?? 0);
+    if (!grupo || !afil) continue;
+    procesados++;
+    if (!monto || monto <= 0) { errores.push({ fila: i + 2, motivo: 'monto_invalido' }); continue; }
+    let tipo = nrmTxt(r['Tipo'] ?? r['tipo'] ?? 'financiamiento').toLowerCase().replace(/[ -]/g, '_').replace('rev_share', 'revenue_share');
+    if (!okTipo(tipo)) tipo = 'financiamiento';
+    const bloque = okBloque(r['Bloque'] ?? r['bloque']) ? String(r['Bloque'] ?? r['bloque']).trim().toUpperCase() : 'DOM';
+    const concepto = nrmTxt(r['Concepto'] ?? r['concepto'] ?? '') || null;
+    const moneda = (nrmTxt(r['Moneda'] ?? r['moneda']) || 'MXN').toUpperCase().slice(0, 3);
+    const fecha = parseFechaAplica(r['Fecha aplica (YYYY-MM-DD)'] ?? r['fecha aplica'] ?? r['fecha']) || new Date().toISOString().slice(0, 10);
+    const folio = await folioFIN(db);
+    await db.query(
+      `insert into financiamientos(folio, cargado_en_fecha, numero_afiliacion, grupo_cliente, tipo, concepto, bloque, monto, moneda, estatus, archivo_origen, creado_por)
+       values($1,$2,$3,$4,$5,$6,$7,$8,$9,'Pendiente',$10,$11)`,
+      [folio, fecha, afil, grupo, tipo, concepto, bloque, monto, moneda, archivo, req.user.nombre]
+    );
+    creados++;
+  }
+  await bit(req, 'financiamientos_ingesta', `archivo=${archivo} · procesados=${procesados} · creados=${creados} · errores=${errores.length}`);
+  res.json({ ok: true, procesados, creados, cancelados, errores });
+});
+
+app.delete('/api/financiamientos/:id', auth, requiereRol('admin', 'operador'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const id = parseInt(req.params.id, 10);
+  const c = (await db.query('select estatus from financiamientos where id=$1', [id])).rows[0];
+  if (!c) return res.status(404).json({ error: 'no_existe' });
+  if (c.estatus === 'Aplicado') return res.status(409).json({ error: 'ya_aplicado', mensaje: 'Retención ya aplicada al corte. Bórralo primero.' });
+  await db.query('delete from financiamientos where id=$1', [id]);
+  await bit(req, 'financiamientos', `eliminó retención #${id}`);
+  res.json({ ok: true });
+});
+
+/* ============================================================================
    INFORME DEL CORTE POR CORREO (Amazon SES)
    Genera el HTML del informe con marca Polipay. Endpoint preview HTML sin envío
    real (para verificar visual). El envío por SES se activará cuando estén las
@@ -1707,7 +1900,9 @@ async function armarInformeHTML(idCorte, opts) {
   // Top 5 por disp_total
   const top = [...cal].sort((a, b) => Math.abs(b.calc.disp_total) - Math.abs(a.calc.disp_total)).slice(0, 5);
   // Totales
-  const tCC = cal.reduce((s, x) => s + (Number(x.ajustes.contracargos_dom || 0) + Number(x.ajustes.contracargos_amex || 0)), 0);
+  // Contracargos = solo la parte de contracargos (sin retención). Retenciones = solo financiamiento/revenue share.
+  const tCC  = cal.reduce((s, x) => s + (Number(x.ajustes.contracargo_solo_dom  || 0) + Number(x.ajustes.contracargo_solo_amex  || 0)), 0);
+  const tFin = cal.reduce((s, x) => s + (Number(x.ajustes.financiamiento_dom    || 0) + Number(x.ajustes.financiamiento_amex    || 0)), 0);
   const tUtil = cal.reduce((s, x) => s + Number(x.calc.utilidad || 0), 0);
   const cuadra = c.cuadra;
   const marca = cuadra ? '✓' : '✗';
@@ -1789,6 +1984,10 @@ async function armarInformeHTML(idCorte, opts) {
         <tr>
           <td style="padding:14px 16px;background:#fff;font:400 14px/1.4 Montserrat,Arial,sans-serif;color:${ink}">Contracargos aplicados</td>
           <td align="right" style="padding:14px 16px;background:#fff;font:700 14px/1.4 Montserrat,Arial,sans-serif;color:${ink};font-variant-numeric:tabular-nums">$ ${fmtMXN(tCC).replace('$','')}</td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;background:#fff;border-top:1px solid ${line};font:400 14px/1.4 Montserrat,Arial,sans-serif;color:${ink}">Retenciones (financiamiento / revenue share)</td>
+          <td align="right" style="padding:14px 16px;background:#fff;border-top:1px solid ${line};font:700 14px/1.4 Montserrat,Arial,sans-serif;color:${ink};font-variant-numeric:tabular-nums">$ ${fmtMXN(tFin).replace('$','')}</td>
         </tr>
         <tr>
           <td style="padding:14px 16px;background:${softBlue};border-top:1px solid ${line};font:400 14px/1.4 Montserrat,Arial,sans-serif;color:${ink}">Utilidad</td>
@@ -2690,6 +2889,48 @@ async function armarAdjuntosCorte(idCorte) {
       adj.push({ filename: nombre, contentType: rep.archivo_mime || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: buf });
     }
   }
+
+  // Retenciones aplicadas en este corte — se generan al vuelo con look Polipay.
+  try {
+    const retRows = (await db.query('select * from financiamientos where aplicado_en_corte_id=$1 order by grupo_cliente, numero_afiliacion', [idCorte])).rows;
+    if (retRows.length) {
+      const metaR = X.metaCorte(c);
+      const totalRet = retRows.reduce((s, r) => s + Number(r.monto || 0), 0);
+      const retBuf = await X.buildPolipayXLSX({
+        title: 'Retenciones aplicadas al corte · financiamiento y revenue share',
+        meta: `Corte ${c.id_corte}   ·   ${metaR.fechaLarga}   ·   Generado ${metaR.hoy}   ·   ${retRows.length} retención(es)`,
+        footer: `Polipay POS Settlement · Generado ${metaR.hoy} por ${c.creado_por || '—'}   ·   Todas las cifras en MXN`,
+        sheets: [{
+          name: 'Retenciones aplicadas',
+          columns: [
+            { header: 'Folio', width: 20, align: 'left' },
+            { header: 'Fecha aplica', width: 14, align: 'center' },
+            { header: 'Grupo cliente', width: 30, align: 'left' },
+            { header: 'Número afiliación', width: 18, align: 'left' },
+            { header: 'Tipo', width: 18, align: 'center' },
+            { header: 'Bloque', width: 10, align: 'center' },
+            { header: 'Concepto', width: 40, align: 'left' },
+            { header: 'Monto', width: 14, numFmt: 'mxn' },
+            { header: 'Moneda', width: 10, align: 'center' },
+          ],
+          rows: retRows.map(r => [
+            r.folio || '—',
+            r.cargado_en_fecha ? String(r.cargado_en_fecha).slice(0, 10) : '—',
+            r.grupo_cliente || '—',
+            String(r.numero_afiliacion || '—'),
+            r.tipo === 'revenue_share' ? 'Revenue share' : 'Financiamiento',
+            r.bloque || 'DOM',
+            r.concepto || '—',
+            E.round2(Number(r.monto || 0)),
+            r.moneda || 'MXN',
+          ]),
+          total: ['', '', '', '', '', '', 'TOTAL RETENIDO', E.round2(totalRet), ''],
+        }],
+      });
+      adj.push({ filename: `retenciones_corte_${c.id_corte}_${c.fli}.xlsx`, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: retBuf });
+    }
+  } catch (_e) { /* tabla financiamientos no lista → ignorar */ }
+
   return adj;
 }
 
@@ -2907,6 +3148,10 @@ app.get('/api/bitacora/verificar-integridad', auth, requiereRol('admin'), async 
 
 /* ---------- Módulo DISPUTAS (Sprint 1 · portado de sistema Python Contracargos) ---------- */
 mountDisputasRoutes(app, { auth, requiereRol, bit, db, C, D, upload, sesEnabled, sendSES, armarNotifDisputaHTML, path, fs: require('fs'), X, enviarXLSX });
+
+/* ---------- Módulo TAREAS (fase 4) ---------- */
+const { mountTareasRoutes } = require('./lib/tareas-routes.js');
+mountTareasRoutes(app, { auth, requiereRol, bit, db });
 
 /* ---------- Webhook público para ingesta de contracargos (Disputas Sprint 6) ----------
    Autentica con X-Webhook-Token; se compara HMAC contra providers.webhook_token_hash.
