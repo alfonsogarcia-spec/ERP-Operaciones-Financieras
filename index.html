@@ -522,7 +522,7 @@ async function render(){renderNav();
   try{await ({dashboard:vDashboard,ingesta:vIngesta,contracargos:vContracargos,retenciones:vRetenciones,cortes:vCortes,contable:vContabilidadCortes,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,destinatarios:vDestinatarios,usuarios:vUsuarios,bitacora:vBitacora,
     disp_dashboard:vDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC,disp_providers:vDispProviders,disp_reports:vDispReports,
     dest_liquidacion:vDestinatariosCorte,dest_liquidacion_cli:vDestinatariosCliente,dest_contabilidad:vDestinatariosContabilidad,dest_disputas:vDestDisputas,
-    tar_mis_rutinas:vTarMisRutinas,tar_mis_tareas:vTarMisTareas,tar_tablero:vTarTablero,tar_emisor:vTarPorProducto,tar_spei:vTarPorProducto,tar_agregador:vTarPorProducto,tar_calendario:vTarCalendario,tar_entregables:vEntregables,tar_reportes:vTarPlaceholder,tar_miembros:vTarMiembros}[VIEW]||vDashboard)(v);}
+    tar_mis_rutinas:vTarMisRutinas,tar_mis_tareas:vTarMisTareas,tar_tablero:vTarTablero,tar_emisor:vTarPorProducto,tar_spei:vTarPorProducto,tar_agregador:vTarPorProducto,tar_calendario:vTarCalendario,tar_entregables:vEntregables,tar_reportes:vTarReportes,tar_miembros:vTarMiembros}[VIEW]||vDashboard)(v);}
   catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
 }
 function setView(v,node){v.innerHTML='';v.append(node);}
@@ -3085,6 +3085,79 @@ async function vTarCalendario(v){
     `;
     document.head.appendChild(s);
   }
+}
+
+/* ============================================================================
+   REPORTES · KPIs de cumplimiento por producto (Sprint D)
+   ========================================================================= */
+let _REP_STATE = null;
+function _repState(){
+  if(_REP_STATE) return _REP_STATE;
+  const hoy = new Date(); const hace30 = new Date(hoy.getTime() - 30*24*60*60*1000);
+  const iso = d => new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);
+  _REP_STATE = { producto: '', desde: iso(hace30), hasta: iso(hoy) };
+  return _REP_STATE;
+}
+async function vTarReportes(v){
+  const st = _repState();
+  const productos = ['','emisor','spei','agregador','contabilidad','sistema','transversal'];
+  const prodLabel = p => p ? p.charAt(0).toUpperCase()+p.slice(1) : 'Todos los productos';
+  const prodSel = el('select',{style:'min-width:170px',onchange:e=>{ st.producto=e.target.value; render(); }});
+  productos.forEach(p=>{ const o=el('option',{value:p},prodLabel(p)); if(p===st.producto) o.selected=true; prodSel.append(o); });
+  const desde = el('input',{type:'date',value:st.desde,onchange:e=>{ st.desde=e.target.value; render(); }});
+  const hasta = el('input',{type:'date',value:st.hasta,onchange:e=>{ st.hasta=e.target.value; render(); }});
+  $('#pageAction').append(
+    el('span',{class:'muted',style:'font-size:12px'},'Desde'), desde,
+    el('span',{class:'muted',style:'font-size:12px'},'Hasta'), hasta,
+    prodSel,
+  );
+
+  const qs = new URLSearchParams();
+  if(st.producto) qs.set('producto', st.producto);
+  if(st.desde)    qs.set('desde', st.desde);
+  if(st.hasta)    qs.set('hasta', st.hasta);
+  const data = await api('GET','/api/tareas/reportes?'+qs.toString()).catch(()=>null);
+  v.innerHTML='';
+  if(!data){ v.append(el('div',{class:'banner err'},'No se pudo cargar el reporte.')); return; }
+
+  // KPIs
+  const pctFmt = p => p==null ? '—' : (p + '%');
+  v.append(cards([
+    ['Rutinas totales', data.rutinas.total, `${data.rutinas.hechas} hechas · ${data.rutinas.en_curso} en curso · ${data.rutinas.vencidas} vencidas`],
+    ['Entregables', data.entregables.total, `${data.entregables.aprobadas} aprobadas · ${data.entregables.rechazadas} rechazadas · ${data.entregables.en_curso} en curso`],
+    ['Cumplimiento SLA', pctFmt(data.entregables.sla_pct), `${data.entregables.sla_cumplido} de ${data.entregables.total} cerrados dentro de plazo`],
+    ['Aprobación 1ª vuelta', pctFmt(data.entregables.primera_vuelta_pct), `${data.entregables.primera_vuelta} aprobadas sin pasar por revisión`],
+  ]));
+
+  // Distribución por producto
+  if(data.por_producto && data.por_producto.length){
+    const p = el('div',{class:'panel'});
+    p.append(el('h3',{},'Rutinas y tareas por producto'));
+    const max = Math.max(...data.por_producto.map(x=>x.n)) || 1;
+    data.por_producto.forEach(x=>{
+      const w = Math.round((x.n/max)*100);
+      p.append(el('div',{style:'display:grid;grid-template-columns:140px 1fr 60px;align-items:center;gap:12px;margin:6px 0'},
+        el('div',{style:'font-size:13px'},prodLabel(x.producto||'—')),
+        el('div',{style:'background:var(--panel-alt,#f1f5f9);border-radius:4px;height:14px;overflow:hidden'},
+          el('div',{style:`background:var(--brand,#2563eb);height:100%;width:${w}%;transition:width .3s`})),
+        el('div',{style:'font-size:13px;font-weight:600;text-align:right'},String(x.n)),
+      ));
+    });
+    v.append(p);
+  }
+
+  // Top ejecutores + Top áreas en dos columnas
+  const grid = el('div',{style:'display:grid;grid-template-columns:1fr 1fr;gap:14px'});
+  const pE = el('div',{class:'panel'});
+  pE.append(el('h3',{},'Top ejecutores'));
+  const rowsE = data.top_ejecutores.map(u=>[esc(u.nombre||u.email),esc(u.email||''),String(u.n)]);
+  pE.append(tableWrap(['Nombre','Correo','Entregables'],rowsE,{empty:'Sin ejecutores asignados en el periodo.'}));
+  const pA = el('div',{class:'panel'});
+  pA.append(el('h3',{},'Áreas solicitantes'));
+  const rowsA = data.top_areas.map(a=>[esc(a.area),String(a.n)]);
+  pA.append(tableWrap(['Área','Solicitudes'],rowsA,{empty:'Sin solicitudes en el periodo.'}));
+  grid.append(pE, pA);
+  v.append(grid);
 }
 
 /* ============================================================================
