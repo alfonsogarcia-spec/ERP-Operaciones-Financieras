@@ -3152,7 +3152,7 @@ mountDisputasRoutes(app, { auth, requiereRol, bit, db, C, D, upload, sesEnabled,
 
 /* ---------- Módulo TAREAS (fase 4) ---------- */
 const { mountTareasRoutes } = require('./lib/tareas-routes.js');
-mountTareasRoutes(app, { auth, requiereRol, bit, db });
+mountTareasRoutes(app, { auth, requiereRol, bit, db, X });
 
 /* ---------- Módulo ENTREGABLES · Portal de solicitudes (fase 5) ---------- */
 const { mountEntregablesRoutes } = require('./lib/entregables-routes.js');

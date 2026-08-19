@@ -423,6 +423,9 @@ const NAV_CONCILIACION=[
   {id:'bitacora',t:'Bitácora',ic:'ic_20'},
 ];
 const NAV_TAREAS=[
+  {sec:'Vistas'},
+  {id:'tar_calendario',t:'Calendario',ic:'ic_13'},
+  {id:'tar_reportes',t:'Reportes',ic:'ic_15'},
   {sec:'Hoy'},
   {id:'tar_mis_rutinas',t:'Mis rutinas',ic:'ic_01'},
   {id:'tar_mis_tareas',t:'Mis tareas',ic:'ic_04'},
@@ -432,9 +435,7 @@ const NAV_TAREAS=[
   {id:'tar_spei',t:'SPEI',ic:'ic_11'},
   {id:'tar_agregador',t:'Agregador',ic:'ic_12'},
   {sec:'Más',col:true},
-  {id:'tar_calendario',t:'Calendario',ic:'ic_13'},
   {id:'tar_entregables',t:'Entregables',ic:'ic_15'},
-  {id:'tar_reportes',t:'Reportes',ic:'ic_15'},
   {id:'tar_miembros',t:'Miembros',ic:'ic_20'},
 ];
 Object.defineProperty(window,'NAV',{ get(){ return WORKSPACE==='tareas' ? NAV_TAREAS : NAV_CONCILIACION; } });
@@ -3106,10 +3107,25 @@ async function vTarReportes(v){
   productos.forEach(p=>{ const o=el('option',{value:p},prodLabel(p)); if(p===st.producto) o.selected=true; prodSel.append(o); });
   const desde = el('input',{type:'date',value:st.desde,onchange:e=>{ st.desde=e.target.value; render(); }});
   const hasta = el('input',{type:'date',value:st.hasta,onchange:e=>{ st.hasta=e.target.value; render(); }});
+  const descargar = el('button',{class:'btn',onclick:async()=>{
+    const qs = new URLSearchParams();
+    if(st.producto) qs.set('producto', st.producto);
+    if(st.desde)    qs.set('desde', st.desde);
+    if(st.hasta)    qs.set('hasta', st.hasta);
+    try{
+      const r = await fetch('/api/tareas/reportes.xlsx?'+qs.toString(), {headers:{Authorization:'Bearer '+TOKEN()}});
+      if(!r.ok){ toast('No se pudo descargar el reporte','err'); return; }
+      const blob = await r.blob();
+      const nombre = (r.headers.get('Content-Disposition')||'').match(/filename="([^"]+)"/)?.[1] || 'reporte-tareas-ops.xlsx';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=url; a.download=nombre; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 4000);
+    }catch(e){ toast(errMsg(e),'err'); }
+  }},'⬇ Descargar Excel');
   $('#pageAction').append(
     el('span',{class:'muted',style:'font-size:12px'},'Desde'), desde,
     el('span',{class:'muted',style:'font-size:12px'},'Hasta'), hasta,
-    prodSel,
+    prodSel, descargar,
   );
 
   const qs = new URLSearchParams();
