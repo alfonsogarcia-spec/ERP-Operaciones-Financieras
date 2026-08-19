@@ -3181,6 +3181,45 @@ async function vTarReportes(v){
     v.append(p);
   }
 
+  // Detalle por entregable con tiempos de transición
+  if(data.detalle && data.detalle.length){
+    const fmtDur = ms => {
+      if(ms==null||ms<0) return '<span class="muted">—</span>';
+      const s = Math.floor(ms/1000);
+      const d = Math.floor(s/86400), h = Math.floor((s%86400)/3600), m = Math.floor((s%3600)/60);
+      const dias = ms/(1000*60*60*24);
+      const label = d>0 ? `${d}d ${h}h ${m}m` : (h>0 ? `${h}h ${m}m` : `${m}m`);
+      const cls = dias>3 ? 'err' : dias>1 ? 'b' : 'ok';
+      return `<span class="badge ${cls}">${label}</span>`;
+    };
+    const fmtFH = iso => {
+      if(!iso) return '<span class="muted">—</span>';
+      const dt = new Date(iso); const p = n => String(n).padStart(2,'0');
+      return `${dt.getFullYear()}-${p(dt.getMonth()+1)}-${p(dt.getDate())} ${p(dt.getHours())}:${p(dt.getMinutes())}`;
+    };
+    const p = el('div',{class:'panel'});
+    p.append(el('h3',{},'Detalle por entregable · tiempos',el('span',{class:'right',style:'font-size:11px;color:var(--muted)'},data.detalle.length+' solicitud(es)')));
+    p.append(el('div',{class:'req-note'},'Recep. → Acept. mide cuánto tardó Operaciones en tomar la solicitud. Acept. → Cierre mide el tiempo de ejecución. Total va de recepción a cierre.'));
+    const rows = data.detalle.map(r => [
+      `<b>${esc(r.folio)}</b><div class="muted" style="font-size:11px">${esc(r.tipo_codigo||'')}</div>`,
+      esc(r.titulo||''),
+      esc(prodLabel(r.producto||'')),
+      esc(r.estado||''),
+      fmtFH(r.creado_at),
+      fmtFH(r.aceptada_at),
+      fmtFH(r.fecha_cierre),
+      fmtDur(r.ms_recepcion_a_aceptacion),
+      fmtDur(r.ms_aceptacion_a_cierre),
+      fmtDur(r.ms_total),
+    ]);
+    p.append(tableWrap(
+      ['Folio','Solicitud','Producto','Estado','Recepción','Aceptación','Cierre','Recep. → Acept.','Acept. → Cierre','Total'],
+      rows,
+      {empty:'Sin entregables en el periodo.'}
+    ));
+    v.append(p);
+  }
+
   // Top ejecutores + Top áreas en dos columnas
   const grid = el('div',{style:'display:grid;grid-template-columns:1fr 1fr;gap:14px'});
   const pE = el('div',{class:'panel'});
