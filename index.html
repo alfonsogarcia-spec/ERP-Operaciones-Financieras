@@ -2691,6 +2691,7 @@ async function openNuevoEntregable(){
     if(!tipo){ descBox.textContent=''; return; }
     descBox.innerHTML='<b>'+esc(tipo.codigo)+'</b> — '+esc(tipo.descripcion||'');
     const schema = tipo.form_schema || {};
+    const condicionales = [];  // {campo, show_if, wrap}
     (schema.secciones||[]).forEach(sec=>{
       formWrap.append(el('h3',{style:'font-size:13px;color:var(--brand);margin:16px 0 8px'},sec.titulo));
       const grid = el('div',{class:'form-grid'});
@@ -2723,10 +2724,43 @@ async function openNuevoEntregable(){
         const wrap = el('label',{class:'field',style: sec.campos.length===1||c.tipo==='textarea'?'grid-column:1/-1':''}, el('span',{},lbl), inp);
         if(c.hint) wrap.append(el('div',{class:'req-note'},c.hint));
         grid.append(wrap);
-        camposMap.set(c.key,{el:inp,tipo:c.tipo,required:c.required,label:c.label});
+        camposMap.set(c.key,{el:inp,tipo:c.tipo,required:c.required,label:c.label,show_if:c.show_if||null,wrap});
+        if(c.show_if) condicionales.push({key:c.key, show_if:c.show_if, wrap, entry:camposMap.get(c.key)});
       });
       formWrap.append(grid);
     });
+    // Evalúa las condiciones show_if y engancha listeners a los campos que las disparan
+    function valorDe(key){
+      const c = camposMap.get(key); if(!c) return null;
+      if(c.tipo==='checkbox_group') return [...c.el.querySelectorAll('input[type=checkbox]:checked')].map(x=>x.value);
+      if(c.tipo==='radio'){ const s = c.el.querySelector('input[type=radio]:checked'); return s?s.value:''; }
+      return c.el.value||'';
+    }
+    function evalCond(cond){
+      const v = valorDe(cond.key);
+      const arr = Array.isArray(v) ? v : [v];
+      if(cond.any_of) return cond.any_of.some(o => arr.includes(o));
+      if(cond.equals) return arr.includes(cond.equals);
+      return true;
+    }
+    function refrescarCondicionales(){
+      condicionales.forEach(cd => {
+        const visible = evalCond(cd.show_if);
+        cd.wrap.style.display = visible ? '' : 'none';
+        cd.entry.visible = visible;
+      });
+    }
+    condicionales.forEach(cd => {
+      const trigger = camposMap.get(cd.show_if.key);
+      if(!trigger) return;
+      if(trigger.tipo==='checkbox_group' || trigger.tipo==='radio'){
+        trigger.el.querySelectorAll('input').forEach(i => i.addEventListener('change', refrescarCondicionales));
+      } else {
+        trigger.el.addEventListener('change', refrescarCondicionales);
+        trigger.el.addEventListener('input', refrescarCondicionales);
+      }
+    });
+    refrescarCondicionales();
   }
   const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
     if(!tipoSel.value) return toast('Selecciona un tipo','err');
@@ -2735,6 +2769,8 @@ async function openNuevoEntregable(){
     const datos = {};
     const faltantes = [];
     for(const [key,c] of camposMap.entries()){
+      const oculto = c.show_if && c.visible===false;
+      if(oculto){ datos[key] = null; continue; }
       let val = null;
       if(c.tipo==='textarea' || c.tipo==='text' || c.tipo==='select' || c.tipo==='date' || c.tipo==='number') val = c.el.value ? c.el.value.trim() : '';
       else if(c.tipo==='radio'){ const sel = c.el.querySelector('input[type=radio]:checked'); val = sel?sel.value:''; }
