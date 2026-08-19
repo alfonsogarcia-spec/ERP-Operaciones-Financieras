@@ -492,7 +492,7 @@ tar_agregador:['Agregador','Tareas del producto Agregador'],
 tar_calendario:['Calendario','Todas las actividades del mes'],
 tar_entregables:['Entregables','Informes con flujo de aprobación'],
 tar_reportes:['Reportes','Cumplimiento, throughput y SLA'],
-tar_miembros:['Miembros','Equipo de operaciones']};
+tar_miembros:['Miembros','Usuarios que operan Tareas Ops · rol y productos que pueden atender']};
 function go(v){VIEW=v;render();}
 async function render(){renderNav();
   // Sub-vistas parametrizadas: "disp_cb_<id>" → vista detalle CB pantalla completa.
@@ -522,7 +522,7 @@ async function render(){renderNav();
   try{await ({dashboard:vDashboard,ingesta:vIngesta,contracargos:vContracargos,retenciones:vRetenciones,cortes:vCortes,contable:vContabilidadCortes,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,destinatarios:vDestinatarios,usuarios:vUsuarios,bitacora:vBitacora,
     disp_dashboard:vDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC,disp_providers:vDispProviders,disp_reports:vDispReports,
     dest_liquidacion:vDestinatariosCorte,dest_liquidacion_cli:vDestinatariosCliente,dest_contabilidad:vDestinatariosContabilidad,dest_disputas:vDestDisputas,
-    tar_mis_rutinas:vTarMisRutinas,tar_mis_tareas:vTarMisTareas,tar_tablero:vTarTablero,tar_emisor:vTarPorProducto,tar_spei:vTarPorProducto,tar_agregador:vTarPorProducto,tar_calendario:vTarPlaceholder,tar_entregables:vEntregables,tar_reportes:vTarPlaceholder,tar_miembros:vTarPlaceholder}[VIEW]||vDashboard)(v);}
+    tar_mis_rutinas:vTarMisRutinas,tar_mis_tareas:vTarMisTareas,tar_tablero:vTarTablero,tar_emisor:vTarPorProducto,tar_spei:vTarPorProducto,tar_agregador:vTarPorProducto,tar_calendario:vTarPlaceholder,tar_entregables:vEntregables,tar_reportes:vTarPlaceholder,tar_miembros:vTarMiembros}[VIEW]||vDashboard)(v);}
   catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
 }
 function setView(v,node){v.innerHTML='';v.append(node);}
@@ -2989,6 +2989,91 @@ async function vTarPorProducto(v, prod){
 async function vTarPlaceholder(v){
   v.innerHTML='';
   v.append(el('div',{class:'panel'},el('div',{class:'empty'},'Esta vista se construirá en el próximo sprint (S3).')));
+}
+
+/* ============================================================================
+   MIEMBROS del workspace Tareas Ops · rol + productos que puede atender
+   ========================================================================= */
+const PRODUCTOS_TAREAS = ['emisor','spei','agregador','contabilidad','sistema','transversal'];
+const ROLES_TAREAS = {direccion:'Dirección',coordinacion:'Coordinación',operador:'Operador',consulta:'Consulta'};
+async function vTarMiembros(v){
+  if(!can('usuarios')){v.innerHTML='';v.append(el('div',{class:'banner err'},'Solo un administrador puede gestionar miembros.'));return;}
+  $('#pageAction').append(el('button',{class:'btn',onclick:()=>editMiembro()},'+ Agregar miembro'));
+  const [miembros, usuarios] = await Promise.all([
+    api('GET','/api/tareas/miembros').catch(()=>[]),
+    api('GET','/api/usuarios').catch(()=>[]),
+  ]);
+  v.innerHTML='';
+  const p=el('div',{class:'panel'});
+  const activos = miembros.filter(m=>m.activo).length;
+  p.append(el('h3',{},'Miembros del workspace',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},activos+' activo(s) de '+miembros.length))));
+  p.append(el('div',{class:'banner',html:'Los <b>miembros</b> son los usuarios que pueden ejecutar y aprobar rutinas, tareas y entregables dentro de Tareas Ops. La lista de productos determina qué solicitudes pueden atender. Un miembro con <b>transversal</b> puede atender solicitudes de cualquier producto.'}));
+  const rolBadge = r => ({direccion:'v',coordinacion:'b',operador:'ok',consulta:'g'}[r]||'g');
+  const rows = miembros.map(m=>{
+    const prods = (m.productos||[]).map(x=>`<span class="pill">${esc(x)}</span>`).join(' ')||'<span class="muted">—</span>';
+    const st = m.activo ? '<span class="badge ok">Activo</span>' : '<span class="badge g">Inactivo</span>';
+    return [
+      esc(m.nombre||m.email||''),
+      esc(m.email||''),
+      `<span class="badge ${rolBadge(m.rol_tareas)}">${esc(ROLES_TAREAS[m.rol_tareas]||m.rol_tareas)}</span>`,
+      prods,
+      st,
+      el('button',{class:'btn ghost sm',onclick:e=>{e.stopPropagation();editMiembro(m, usuarios);}},'Editar'),
+    ];
+  });
+  p.append(tableWrap(['Nombre','Correo','Rol en Tareas','Productos','Estado',''], rows, {empty:'Todavía no hay miembros. Agrega el primero para empezar a asignar entregables.'}));
+  v.append(p);
+  window._TAR_USUARIOS = usuarios;
+}
+function editMiembro(m, usuariosIn){
+  const isNew = !m; m = m||{};
+  const usuarios = usuariosIn || window._TAR_USUARIOS || [];
+  const body = el('div',{});
+  let userSel;
+  if(isNew){
+    userSel = el('select');
+    userSel.append(el('option',{value:''},'— Selecciona un usuario —'));
+    usuarios.filter(u=>u.activo).forEach(u=>userSel.append(el('option',{value:u.id},(u.nombre||u.email)+' · '+u.email)));
+    body.append(fld('Usuario', userSel));
+  } else {
+    body.append(fld('Usuario', el('div',{class:'muted',style:'padding:8px 0'},esc((m.nombre||'')+' · '+(m.email||'')))));
+  }
+  const rol = el('select');
+  Object.entries(ROLES_TAREAS).forEach(([k,l])=>rol.append(el('option',{value:k},l)));
+  rol.value = m.rol_tareas || 'operador';
+  const prodsWrap = el('div',{style:'display:flex;flex-direction:column;gap:6px'});
+  const prodInputs = {};
+  PRODUCTOS_TAREAS.forEach(p=>{
+    const id = 'mprod_'+p;
+    const cb = el('input',{type:'checkbox',id,value:p});
+    if((m.productos||[]).includes(p)) cb.checked = true;
+    prodInputs[p] = cb;
+    prodsWrap.append(el('label',{for:id,style:'display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400'},cb,el('span',{},p.charAt(0).toUpperCase()+p.slice(1))));
+  });
+  const activo = el('input',{type:'checkbox'});
+  activo.checked = m.activo !== false;
+  body.append(fld('Rol dentro de Tareas', rol));
+  body.append(el('label',{class:'field'},el('span',{},'Productos que puede atender'),prodsWrap));
+  body.append(el('div',{class:'req-note'},'Dirección y Coordinación pueden ser aprobadores. Operador solo ejecuta. Consulta solo lee.'));
+  body.append(el('label',{class:'field',style:'flex-direction:row;align-items:center;gap:8px'},activo,el('span',{},'Miembro activo')));
+  const foot = el('div',{});
+  if(!isNew) foot.append(el('button',{class:'btn danger',onclick:async()=>{
+    if(!confirm('¿Quitar a '+m.nombre+' del workspace de Tareas Ops? No se elimina el usuario, solo su membresía.')) return;
+    try{ await api('DELETE','/api/tareas/miembros/'+m.usuario_id); closeModal(); toast('Miembro removido','ok'); render(); }
+    catch(e){ toast(errMsg(e),'err'); }
+  }},'Quitar'), el('div',{style:'flex:1'}));
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'));
+  foot.append(el('button',{class:'btn',onclick:async()=>{
+    const usuario_id = isNew ? parseInt(userSel.value,10) : m.usuario_id;
+    if(!usuario_id) return toast('Selecciona un usuario','err');
+    const productos = PRODUCTOS_TAREAS.filter(p=>prodInputs[p].checked);
+    if(!productos.length) return toast('Selecciona al menos un producto','err');
+    try{
+      await api('POST','/api/tareas/miembros',{usuario_id, rol_tareas:rol.value, productos, activo:activo.checked});
+      closeModal(); toast(isNew?'Miembro agregado':'Cambios guardados','ok'); render();
+    }catch(e){ toast(errMsg(e),'err'); }
+  }},'Guardar'));
+  modal(isNew?'Nuevo miembro':'Editar miembro', body, foot);
 }
 
 function openNuevaTarea(productoDefault){
