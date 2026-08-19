@@ -3145,20 +3145,39 @@ async function vTarReportes(v){
     ['Aprobación 1ª vuelta', pctFmt(data.entregables.primera_vuelta_pct), `${data.entregables.primera_vuelta} aprobadas sin pasar por revisión`],
   ]));
 
-  // Distribución por producto
-  if(data.por_producto && data.por_producto.length){
+  // Productividad por producto (matriz completa)
+  if(data.productividad && data.productividad.length){
     const p = el('div',{class:'panel'});
-    p.append(el('h3',{},'Rutinas y tareas por producto'));
-    const max = Math.max(...data.por_producto.map(x=>x.n)) || 1;
-    data.por_producto.forEach(x=>{
-      const w = Math.round((x.n/max)*100);
-      p.append(el('div',{style:'display:grid;grid-template-columns:140px 1fr 60px;align-items:center;gap:12px;margin:6px 0'},
-        el('div',{style:'font-size:13px'},prodLabel(x.producto||'—')),
-        el('div',{style:'background:var(--panel-alt,#f1f5f9);border-radius:4px;height:14px;overflow:hidden'},
-          el('div',{style:`background:var(--brand,#2563eb);height:100%;width:${w}%;transition:width .3s`})),
-        el('div',{style:'font-size:13px;font-weight:600;text-align:right'},String(x.n)),
-      ));
+    p.append(el('h3',{},'Productividad por producto',el('span',{class:'right',style:'font-size:11px;color:var(--muted)'},'Rutinas y entregables agrupados por producto')));
+    const rows = data.productividad.map(x => {
+      const rp = x.rutinas_cumplimiento_pct;
+      const sp = x.sla_pct, pv = x.primera_vuelta_pct;
+      const chip = (val, kind) => {
+        if(val==null) return '<span class="muted">—</span>';
+        const cls = kind==='good' ? (val>=80?'ok':val>=50?'b':'err') : (val>=80?'ok':val>=50?'b':'err');
+        return `<span class="badge ${cls}">${val}%</span>`;
+      };
+      return [
+        `<b>${esc(prodLabel(x.producto))}</b>`,
+        String(x.rutinas_total),
+        String(x.rutinas_hechas),
+        String(x.rutinas_en_curso),
+        x.rutinas_vencidas>0 ? `<span class="badge err">${x.rutinas_vencidas}</span>` : '0',
+        chip(rp,'good'),
+        String(x.entregables_total),
+        String(x.entregables_aprobadas),
+        x.entregables_rechazadas>0 ? `<span class="badge err">${x.entregables_rechazadas}</span>` : '0',
+        String(x.entregables_en_curso),
+        x.entregables_vencidas>0 ? `<span class="badge err">${x.entregables_vencidas}</span>` : '0',
+        chip(sp,'good'),
+        chip(pv,'good'),
+      ];
     });
+    p.append(tableWrap(
+      ['Producto','Rut. total','Hechas','En curso','Vencidas','% cumpl.','Ent. total','Aprob.','Rechaz.','En curso','Vencidas','% SLA','% 1ª vuelta'],
+      rows,
+      {empty:'Sin actividad en el periodo.'}
+    ));
     v.append(p);
   }
 
