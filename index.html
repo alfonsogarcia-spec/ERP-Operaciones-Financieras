@@ -306,11 +306,17 @@ function can(cap){if(!SES)return false;const M={
 /* ---------- login (Google Sign-In) ---------- */
 let GOOGLE_CLIENT_ID=''; let GSI_TRIES=0;
 async function initLogin(){
-  try{
-    const cfg=await fetch('/api/config-publica').then(r=>r.json());
-    GOOGLE_CLIENT_ID=cfg.googleClientId||'';
-  }catch(_e){GOOGLE_CLIENT_ID='';}
-  if(!GOOGLE_CLIENT_ID){$('#lgErr').textContent='Sistema no configurado: falta GOOGLE_CLIENT_ID en el servidor.';$('#lgErr').className='login-err show';return;}
+  let cfg={googleClientId:'',devMode:false};
+  try{ cfg=await fetch('/api/config-publica').then(r=>r.json()); }catch(_e){}
+  GOOGLE_CLIENT_ID=cfg.googleClientId||'';
+  // DEV mode: server local sin Google Client ID → auto-login como admin bootstrap.
+  if(cfg.devMode || !GOOGLE_CLIENT_ID){
+    try{
+      const r=await fetch('/api/login/dev',{method:'POST'}).then(x=>x.json());
+      if(r.token){ localStorage.setItem('cl_token',r.token); localStorage.setItem('cl_user',JSON.stringify(r.user)); SES=r.user; mountApp(); return; }
+    }catch(_e){}
+    $('#lgErr').textContent='Sistema no configurado: falta GOOGLE_CLIENT_ID en el servidor.';$('#lgErr').className='login-err show';return;
+  }
   renderGoogleBtn();
 }
 function renderGoogleBtn(){

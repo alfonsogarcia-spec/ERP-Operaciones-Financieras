@@ -275,7 +275,19 @@ app.get('/api/estado', (_req, res) => res.json(estadoServicio()));
 /* ---------- login (Google Sign-In · whitelist) ---------- */
 // Config pública para el front: Client ID de Google + roles (etiquetas).
 app.get('/api/config-publica', (_req, res) => {
-  res.json({ googleClientId: GOOGLE_CLIENT_ID, roles: ROLES });
+  res.json({ googleClientId: GOOGLE_CLIENT_ID, roles: ROLES, devMode: !GOOGLE_CLIENT_ID });
+});
+
+// Bypass DEV: sólo funciona cuando NO hay GOOGLE_CLIENT_ID (== ambiente local).
+// Devuelve token del primer usuario admin activo (típicamente el bootstrap).
+// En prod donde GOOGLE_CLIENT_ID está definido, responde 404.
+app.post('/api/login/dev', async (req, res) => {
+  if (!dbReady(res)) return;
+  if (GOOGLE_CLIENT_ID) return res.status(404).json({ error: 'no_disponible' });
+  const u = (await db.query("select * from usuarios where activo=true and rol='admin' order by id limit 1")).rows[0];
+  if (!u) return res.status(500).json({ error: 'sin_admin' });
+  const safe = { id: u.id, email: u.email, nombre: u.nombre, rol: u.rol };
+  res.json({ token: firmar(u), user: safe });
 });
 
 // Recibe un ID token de Google (Google Identity Services devuelve `credential`).
