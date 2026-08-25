@@ -513,6 +513,33 @@ app.delete('/api/catalogo/afil-grupo/:idg/:afil', auth, requiereRol('admin'), as
   res.json({ ok: true });
 });
 
+// Bulk delete: relaciones afil_grupo (borra tasas pactadas, conserva grupo y afiliación)
+app.post('/api/catalogo/afil-grupo/bulk-delete', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const items = Array.isArray((req.body || {}).items) ? req.body.items : [];
+  if (!items.length) return res.json({ ok: true, deleted: 0 });
+  let deleted = 0;
+  for (const it of items) {
+    const idg = parseInt(it.id_grupo, 10); const afil = String(it.numero_afiliacion || '');
+    if (!idg || !afil) continue;
+    const r = await db.query('delete from afil_grupo where id_grupo=$1 and numero_afiliacion=$2', [idg, afil]);
+    deleted += r.rowCount || 0;
+  }
+  await bit(req, 'catalogo', `bulk_delete afil_grupo · items=${items.length} · borradas=${deleted}`);
+  res.json({ ok: true, deleted });
+});
+
+// Bulk delete: grupos completos (borra grupo + todas sus relaciones afil_grupo)
+app.post('/api/catalogo/grupos/bulk-delete', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const ids = Array.isArray((req.body || {}).ids) ? req.body.ids.map(x => parseInt(x, 10)).filter(n => !isNaN(n)) : [];
+  if (!ids.length) return res.json({ ok: true, grupos: 0, relaciones: 0 });
+  const rels = await db.query('delete from afil_grupo where id_grupo = any($1::int[])', [ids]);
+  const gs   = await db.query('delete from grupos where id_grupo = any($1::int[])', [ids]);
+  await bit(req, 'catalogo', `bulk_delete grupos · ids=${ids.length} · grupos=${gs.rowCount} · rels=${rels.rowCount}`);
+  res.json({ ok: true, grupos: gs.rowCount || 0, relaciones: rels.rowCount || 0 });
+});
+
 // Cuentas de liquidación (admin)
 app.post('/api/catalogo/cuenta', auth, requiereRol('admin'), async (req, res) => {
   if (!dbReady(res)) return;

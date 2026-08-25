@@ -906,14 +906,68 @@ function resumenContable(r){const t=r.totales;const p=el('div',{class:'panel'});
 
 /* ---------- GRUPOS ---------- */
 async function vGrupos(v){
-  if(can('catalogos'))$('#pageAction').append(el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/plantilla/grupos.xlsx','plantilla_grupos.xlsx')},'⬇ Plantilla Excel'),el('span',{},' '),el('button',{class:'btn secondary sm',onclick:()=>openImport('grupos','Importar grupos')},'Importar Excel'),el('span',{},' '),el('button',{class:'btn',onclick:()=>editGrupo()},'+ Alta guiada'));
+  if(can('catalogos'))$('#pageAction').append(
+    el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/plantilla/grupos.xlsx','plantilla_grupos.xlsx')},'⬇ Plantilla Excel'),
+    el('span',{},' '),
+    el('button',{class:'btn secondary sm',onclick:()=>openImport('grupos','Importar grupos')},'Importar Excel'),
+    el('span',{},' '),
+    el('button',{class:'btn',onclick:()=>editGrupo()},'+ Alta guiada'),
+  );
   const d=await api('GET','/api/catalogo/grupos-full');v.innerHTML='';
-  const p=el('div',{class:'panel'});p.append(el('h3',{},'Grupos, afiliaciones y condiciones pactadas'));
-  const rows=d.afilGrupo.map(ag=>{const g=d.grupos.find(x=>String(x.id_grupo)===String(ag.id_grupo));const af=d.afiliaciones.find(a=>String(a.numero_afiliacion)===String(ag.numero_afiliacion));const co=d.costos.find(c=>String(c.numero_afiliacion)===String(ag.numero_afiliacion));
-    const r=[`<div class="tt">${esc(g?g.nombre_cliente:('grupo '+ag.id_grupo))}<small>id ${esc(ag.id_grupo)}</small></div>`,`<div class="tt">${esc(ag.numero_afiliacion)}<small>${esc(af?af.razon_social:'')}</small></div>`,{num:pct(+ag.tasa_pac_tdd)},{num:pct(+ag.tasa_pac_tdc)},{num:pct(+ag.tasa_pac_amex)},{num:pct(+ag.tasa_pac_int)},{num:pct(+ag.pct_banca||0)},co?'<span class="badge ok">sí</span>':'<span class="badge w">no</span>'];
-    if(can('catalogos'))r._onclick=()=>editGrupo(ag,af,co);return r;});
-  p.append(tableWrap(['Grupo',{t:'Afiliación'},{t:'Pac.TDD'},{t:'Pac.TDC'},{t:'Pac.AMEX'},{t:'Pac.INT'},{t:'%Banca'},'Costos'],rows,{empty:'Sin grupos. Usa “Alta guiada” o importa un CSV/Excel.'}));
+  const p=el('div',{class:'panel'});
+  p.append(el('h3',{},'Grupos, afiliaciones y condiciones pactadas'));
+  // Barra de acciones masivas
+  const barra = el('div',{style:'display:flex;align-items:center;gap:10px;margin:0 0 10px 0;font-size:13px'});
+  const chkAll = el('input',{type:'checkbox',id:'chkAll'});
+  const cntEl = el('span',{class:'muted'},'0 seleccionados');
+  const btnDel = el('button',{class:'btn danger sm',disabled:true,onclick:async()=>{
+    const seleccion = [...document.querySelectorAll('input.chkAG:checked')].map(c=>({id_grupo:+c.dataset.g, numero_afiliacion:c.dataset.a}));
+    if(!seleccion.length) return;
+    if(!confirm(`¿Eliminar ${seleccion.length} relación(es) grupo × afiliación?\nBorra las tasas pactadas pero conserva la afiliación y el grupo.`)) return;
+    try{
+      const r = await api('POST','/api/catalogo/afil-grupo/bulk-delete',{items:seleccion});
+      toast(`Eliminadas: ${r.deleted}`, r.deleted?'ok':'err'); render();
+    }catch(e){ toast(errMsg(e),'err'); }
+  }},'🗑 Eliminar seleccionados');
+  const btnDelGrupos = el('button',{class:'btn danger sm',disabled:true,onclick:async()=>{
+    const ids = [...new Set([...document.querySelectorAll('input.chkAG:checked')].map(c=>+c.dataset.g))];
+    if(!ids.length) return;
+    if(!confirm(`¿Eliminar ${ids.length} grupo(s) COMPLETAMENTE?\nBorra grupos y todas sus relaciones afil_grupo (deja afiliaciones y cortes históricos intactos).`)) return;
+    try{
+      const r = await api('POST','/api/catalogo/grupos/bulk-delete',{ids});
+      toast(`Grupos eliminados: ${r.grupos}, relaciones: ${r.relaciones}`, r.grupos?'ok':'err'); render();
+    }catch(e){ toast(errMsg(e),'err'); }
+  }},'🗑 Eliminar grupos');
+  barra.append(chkAll, el('label',{for:'chkAll',style:'cursor:pointer'},'Seleccionar todo'), cntEl, el('span',{style:'flex:1'}), can('catalogos')?btnDel:null, can('catalogos')?btnDelGrupos:null);
+  if(can('catalogos')) p.append(barra);
+  // Filas con checkbox
+  const refreshCount = ()=>{
+    const n = document.querySelectorAll('input.chkAG:checked').length;
+    cntEl.textContent = n + ' seleccionados';
+    btnDel.disabled = !n; btnDelGrupos.disabled = !n;
+  };
+  const rows = d.afilGrupo.map(ag=>{
+    const g=d.grupos.find(x=>String(x.id_grupo)===String(ag.id_grupo));
+    const af=d.afiliaciones.find(a=>String(a.numero_afiliacion)===String(ag.numero_afiliacion));
+    const co=d.costos.find(c=>String(c.numero_afiliacion)===String(ag.numero_afiliacion));
+    const cb = el('input',{type:'checkbox','class':'chkAG','data-g':ag.id_grupo,'data-a':ag.numero_afiliacion,onclick:e=>{e.stopPropagation();refreshCount();}});
+    const r=[
+      cb,
+      `<div class="tt">${esc(g?g.nombre_cliente:('grupo '+ag.id_grupo))}<small>id ${esc(ag.id_grupo)}</small></div>`,
+      `<div class="tt">${esc(ag.numero_afiliacion)}<small>${esc(af?af.razon_social:'')}</small></div>`,
+      {num:pct(+ag.tasa_pac_tdd)},{num:pct(+ag.tasa_pac_tdc)},{num:pct(+ag.tasa_pac_amex)},{num:pct(+ag.tasa_pac_int)},{num:pct(+ag.pct_banca||0)},
+      co?'<span class="badge ok">sí</span>':'<span class="badge w">no</span>',
+    ];
+    if(can('catalogos')) r._onclick=()=>editGrupo(ag,af,co);
+    return r;
+  });
+  p.append(tableWrap(['',{t:'Grupo'},{t:'Afiliación'},{t:'Pac.TDD'},{t:'Pac.TDC'},{t:'Pac.AMEX'},{t:'Pac.INT'},{t:'%Banca'},'Costos'],rows,{empty:'Sin grupos. Usa "Alta guiada" o importa un CSV/Excel.'}));
   v.append(p);
+  // Handler "seleccionar todo"
+  chkAll.addEventListener('click', ()=>{
+    document.querySelectorAll('input.chkAG').forEach(x=>{ x.checked = chkAll.checked; });
+    refreshCount();
+  });
 }
 function editGrupo(ag,af,co){const isNew=!ag;ag=ag||{};af=af||{};co=co||{};const body=el('div',{});
   const I=(v='')=>el('input',{value:v});const NN=(v='',s='0.0001')=>el('input',{type:'number',step:s});
