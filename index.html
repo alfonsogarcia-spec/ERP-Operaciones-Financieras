@@ -1454,7 +1454,12 @@ async function vDispDashboard(v){
 const CBF={estado:'',ciclo:'',brand:'',q:'',desde:'',hasta:'',solo_vencidos:false,limit:100,offset:0};
 async function vDispCB(v){
   v.innerHTML='';
-  if(can('disputas'))$('#pageAction').append(el('button',{class:'btn',onclick:openCBNuevo},'+ Nuevo contracargo'));
+  const qsExport = () => Object.entries(CBF).filter(([,x])=>x!=='' && x!==false && x!=null).map(([k,x])=>`${k}=${encodeURIComponent(x)}`).join('&');
+  $('#pageAction').append(el('button',{class:'btn secondary sm',onclick:()=>{
+    const hoy = new Date().toISOString().slice(0,10);
+    descargar('/api/disputa/chargebacks/xlsx'+(qsExport()?'?'+qsExport():''), `Contracargos_Disputas_${hoy}.xlsx`);
+  }},'⬇ Descargar reporte'));
+  if(can('disputas'))$('#pageAction').append(el('span',{},' '), el('button',{class:'btn',onclick:openCBNuevo},'+ Nuevo contracargo'));
   // Filtros
   const pf=el('div',{class:'panel'});
   const g=el('div',{class:'form-grid c3'});
