@@ -696,6 +696,15 @@ async function vContracargos(v){
   if(can('ingesta'))$('#pageAction').append(
     el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/contracargos/xlsx?fecha='+fecha,'Contracargos_a_Retener_'+fecha+'.xlsx')},'⬇ Descargar reporte'),
     el('span',{},' '),
+    el('button',{class:'btn ghost sm',onclick:async()=>{
+      if(!confirm('Re-homologar el "Grupo de cliente" de todos los contracargos Pendientes contra el catálogo de grupos.\n\nSirve cuando ya cargaste reportes antes con nombres distintos y ahora quieres normalizarlos.')) return;
+      try{ const r = await api('POST','/api/contracargos/homologar-grupos');
+        toast(`Revisados: ${r.revisados} · Renombrados: ${r.cambios}`, r.cambios?'ok':'ok');
+        if(r.grupos_sin_match && r.grupos_sin_match.length) setTimeout(()=>toast('⚠ Sin match: '+r.grupos_sin_match.join(', '),'err'), 800);
+        render();
+      }catch(e){ toast(errMsg(e),'err'); }
+    }},'🔁 Homologar grupos'),
+    el('span',{},' '),
     el('button',{class:'btn',onclick:()=>openCargarContracargos(fecha)},'Cargar reporte del día'),
   );
   const d = await api('GET','/api/contracargos?fecha='+fecha);
@@ -761,6 +770,9 @@ function openCargarContracargos(fechaDefault){
       const res=await withBusy('Procesando reporte en el servidor…',()=>api('POST','/api/contracargos/ingesta',fd));
       closeModal(); _ccFecha=res.fecha; render();
       toast(`Reporte del ${res.fecha}: ${res.filas} filas · ${res.insertados} nuevos · ${res.actualizados} actualizados · ${mxn(res.monto_total)}`,'ok');
+      if(res.grupos_sin_match && res.grupos_sin_match.length){
+        setTimeout(()=>toast('⚠ Grupos NO encontrados en catálogo (el corte podría fallar): '+res.grupos_sin_match.join(', '),'err'), 800);
+      }
     }catch(e){toast('Error: '+errMsg(e),'err');}
   }},'Procesar'));
   modal('Cargar reporte de contracargos',body,foot,true);

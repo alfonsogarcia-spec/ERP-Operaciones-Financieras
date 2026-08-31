@@ -1669,6 +1669,30 @@ function bloqueFromMarca(m) {
 function limpiaGrupo(g) {
   return String(g || '').replace(/^(grupo|group)\s+/i, '').trim();
 }
+// Homologa el nombre del grupo contra el catálogo `grupos` para que coincida
+// exactamente con el nombre_cliente registrado (case-insensitive + sin acentos).
+// Así el corte no truena por diferencia de mayúsculas/acentos entre el nombre
+// que viene en el reporte y el que está capturado en el catálogo.
+let _cacheGrupos = null, _cacheGruposTs = 0;
+async function _grupos() {
+  const ahora = Date.now();
+  if (_cacheGrupos && (ahora - _cacheGruposTs) < 30000) return _cacheGrupos;
+  const rows = (await db.query('select id_grupo, nombre_cliente from grupos')).rows;
+  _cacheGrupos = rows;
+  _cacheGruposTs = ahora;
+  return rows;
+}
+function _keyNorm(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+async function homologarGrupo(nombreRecibido) {
+  const limpio = limpiaGrupo(nombreRecibido);
+  if (!limpio) return '';
+  const key = _keyNorm(limpio);
+  const grupos = await _grupos();
+  const match = grupos.find(g => _keyNorm(g.nombre_cliente) === key);
+  return match ? match.nombre_cliente : limpio;
+}
 async function getContracargoResumen(fecha) {
   const rep = (await db.query('select * from contracargos_reporte_dia where fecha=$1', [fecha])).rows[0];
   const items = (await db.query('select * from contracargos where cargado_en_fecha=$1 order by id', [fecha])).rows
@@ -1796,6 +1820,10 @@ app.post('/api/contracargos/ingesta', auth, requiereRol('admin', 'operador'), up
         iAut = col('Autorización'), iU4 = col('Últimos 4'), iCaso = col('Caso / ARN'), iFecCbk = col('Fecha CBK'),
         iLim = col('Límite representment'), iEstado = col('Estado');
   const filas = [];
+  // Precarga catálogo de grupos para homologar nombres.
+  _cacheGrupos = null;  // fuerza refresh
+  await _grupos();
+  const grupoNoMatch = new Set();  // grupos que no encontraron match exacto en catálogo
   for (let i = hdrRow + 1; i < aoa.length; i++) {
     const r = aoa[i]; if (!r) continue;
     const folio = String(r[iFolio] || '').trim();
@@ -1803,9 +1831,14 @@ app.post('/api/contracargos/ingesta', auth, requiereRol('admin', 'operador'), up
     if (!/^cb/i.test(folio)) continue;
     const monto = E.parseMonto(iMonto >= 0 ? r[iMonto] : 0);
     const marca = String(r[iMarca] || '').trim().toUpperCase();
+    const grupoRaw = limpiaGrupo(r[iGrupo] || '');
+    const grupoCanon = await homologarGrupo(grupoRaw);
+    if (grupoRaw && grupoCanon === grupoRaw && !_cacheGrupos.find(g => _keyNorm(g.nombre_cliente) === _keyNorm(grupoRaw))) {
+      grupoNoMatch.add(grupoRaw);
+    }
     filas.push({
       folio, fecha_registro: String(r[iFecReg] || ''), afil: String(r[iAfil] || '').replace(/\D/g, ''),
-      comercio: String(r[iComercio] || ''), grupo: limpiaGrupo(r[iGrupo] || ''), marca,
+      comercio: String(r[iComercio] || ''), grupo: grupoCanon, marca,
       bloque: bloqueFromMarca(marca), canal: String(r[iCanal] || ''), codigo_razon: String(r[iCodRazon] || ''),
       categoria: String(r[iCat] || ''), monto, moneda: String(r[iMoneda] || ''),
       ticket: String(r[iTicket] || ''), aut: String(r[iAut] || ''), u4: String(r[iU4] || ''),
@@ -1842,8 +1875,32 @@ app.post('/api/contracargos/ingesta', auth, requiereRol('admin', 'operador'), up
     }
   }
   await bit(req, 'contracargos', `carga ${fecha}: ${insertados} nuevos, ${actualizados} actualizados, ${ignorados} ya aplicados (total ${filas.length}, monto ${E.round2(total)})`);
-  res.json({ fecha, filas: filas.length, insertados, actualizados, ignorados, monto_total: E.round2(total) });
+  const grupos_sin_match = [...grupoNoMatch];
+  res.json({ fecha, filas: filas.length, insertados, actualizados, ignorados, monto_total: E.round2(total), grupos_sin_match });
 });
+// Re-homologa el grupo_cliente de todos los contracargos Pendientes contra el catálogo grupos.
+// Útil cuando ya tenías contracargos cargados y ahora quieres normalizarlos sin borrar y resubir.
+app.post('/api/contracargos/homologar-grupos', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const rows = (await db.query("select id, grupo_cliente from contracargos where estatus='Pendiente'")).rows;
+  _cacheGrupos = null;
+  await _grupos();
+  let cambios = 0;
+  const sinMatch = new Set();
+  for (const r of rows) {
+    const canon = await homologarGrupo(r.grupo_cliente || '');
+    if (canon && canon !== r.grupo_cliente) {
+      await db.query('update contracargos set grupo_cliente=$1 where id=$2', [canon, r.id]);
+      cambios++;
+    }
+    if (r.grupo_cliente && !_cacheGrupos.find(g => _keyNorm(g.nombre_cliente) === _keyNorm(r.grupo_cliente))) {
+      sinMatch.add(r.grupo_cliente);
+    }
+  }
+  await bit(req, 'contracargos', `homologacion ${cambios} filas renombradas · ${sinMatch.size} grupos sin match`);
+  res.json({ ok: true, revisados: rows.length, cambios, grupos_sin_match: [...sinMatch] });
+});
+
 app.delete('/api/contracargos/:id', auth, requiereRol('admin', 'operador'), async (req, res) => {
   if (!dbReady(res)) return;
   const id = parseInt(req.params.id, 10);
