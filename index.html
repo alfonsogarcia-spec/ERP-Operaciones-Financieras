@@ -693,7 +693,11 @@ function hoyMx(){ const p=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Mex
 let _ccFecha=null;
 async function vContracargos(v){
   const fecha = _ccFecha || hoyMx();
-  if(can('ingesta'))$('#pageAction').append(el('button',{class:'btn',onclick:()=>openCargarContracargos(fecha)},'Cargar reporte del día'));
+  if(can('ingesta'))$('#pageAction').append(
+    el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/contracargos/xlsx?fecha='+fecha,'Contracargos_a_Retener_'+fecha+'.xlsx')},'⬇ Descargar reporte'),
+    el('span',{},' '),
+    el('button',{class:'btn',onclick:()=>openCargarContracargos(fecha)},'Cargar reporte del día'),
+  );
   const d = await api('GET','/api/contracargos?fecha='+fecha);
   const huerfanos = await api('GET','/api/contracargos/huerfanos?antes_de='+fecha);
   v.innerHTML='';

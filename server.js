@@ -1680,6 +1680,84 @@ app.get('/api/contracargos', auth, async (req, res) => {
   const fecha = req.query.fecha; if (!fecha) return res.status(400).json({ error: 'fecha' });
   res.json(await getContracargoResumen(fecha));
 });
+// Descarga XLSX del reporte del día en el MISMO formato del archivo original
+// (mismo layout que se sube, para editar y reimportar sin fricción).
+app.get('/api/contracargos/xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const fecha = req.query.fecha;
+  if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return res.status(400).json({ error: 'fecha' });
+  const { items } = await getContracargoResumen(fecha);
+  const ExcelJS = require('exceljs');
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Polipay POS Settlement';
+  const ws = wb.addWorksheet('Contracargos a retener');
+  // Anchos de columna (18)
+  ws.columns = [
+    { width: 14 }, { width: 14 }, { width: 12 }, { width: 26 }, { width: 22 }, { width: 12 },
+    { width: 12 }, { width: 12 }, { width: 20 }, { width: 14 }, { width: 8 }, { width: 12 },
+    { width: 14 }, { width: 10 }, { width: 14 }, { width: 12 }, { width: 18 }, { width: 12 },
+  ];
+  // F1: título
+  const r1 = ws.addRow([`Reporte de contracargos a retener — ${fecha}`]);
+  ws.mergeCells(1, 1, 1, 18);
+  r1.getCell(1).font = { bold: true, size: 12, color: { argb: 'FF051B3B' } };
+  // F2: rango (día previo inclusive → día del reporte exclusivo, T-1 estándar)
+  const d = new Date(fecha + 'T00:00:00');
+  const prev = new Date(d); prev.setDate(prev.getDate() - 3);
+  const rangeMsg = `Registros del ${prev.toISOString().slice(0,10)} (inclusive) al ${fecha} (exclusivo)`;
+  const r2 = ws.addRow([rangeMsg]);
+  ws.mergeCells(2, 1, 2, 18);
+  r2.getCell(1).font = { size: 9, color: { argb: 'FF667085' } };
+  // F3: vacía
+  ws.addRow([]);
+  // F4: headers
+  const headers = ['Folio','Fecha registro','Afiliación','Comercio','Grupo de cliente','Marca','Canal','Código razón','Categoría','Monto a retener','Moneda','Ticket','Autorización','Últimos 4','Caso / ARN','Fecha CBK','Límite representment','Estado'];
+  const r4 = ws.addRow(headers);
+  r4.eachCell(c => {
+    c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF3083F4' } };
+    c.alignment = { horizontal: 'center', vertical: 'middle' };
+  });
+  // Datos
+  let total = 0;
+  for (const it of items) {
+    const monto = Number(it.monto) || 0;
+    total += monto;
+    ws.addRow([
+      it.origen_folio || '',
+      it.fecha_registro || '',
+      it.numero_afiliacion || '',
+      it.comercio || '',
+      it.grupo_cliente || '',
+      it.marca || '',
+      it.canal || '',
+      it.codigo_razon || '',
+      it.categoria || '',
+      monto,
+      it.moneda || 'MXN',
+      it.ticket || '',
+      it.autorizacion || '',
+      it.ultimos_4 || '',
+      it.caso_arn || '',
+      it.fecha_cbk || '',
+      it.limite_representment || '',
+      it.estado_origen || '',
+    ]);
+  }
+  // Fila TOTAL (col I "TOTAL" · col J monto sumado)
+  const rt = ws.addRow([]);
+  rt.getCell(9).value = 'TOTAL';
+  rt.getCell(9).font = { bold: true };
+  rt.getCell(10).value = Number(total.toFixed(2));
+  rt.getCell(10).font = { bold: true };
+  // Formato moneda en col J
+  ws.getColumn(10).numFmt = '#,##0.00';
+  const buf = await wb.xlsx.writeBuffer();
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="Contracargos_a_Retener_${fecha}.xlsx"`);
+  res.end(Buffer.from(buf));
+});
+
 app.get('/api/contracargos/dias', auth, async (req, res) => {
   if (!dbReady(res)) return;
   const rows = (await db.query('select r.fecha::text as fecha, r.n_contracargos, r.monto_total, r.cargado_por, r.cargado_at, (select count(*)::int from contracargos c where c.cargado_en_fecha=r.fecha and c.estatus=\'Pendiente\') as pendientes, (select count(*)::int from contracargos c where c.cargado_en_fecha=r.fecha and c.estatus=\'Aplicado\') as aplicados from contracargos_reporte_dia r order by r.fecha desc')).rows;
