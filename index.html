@@ -816,7 +816,15 @@ async function openNuevoCorte(){
   body.append(el('div',{class:'banner',html:'El corte toma las transacciones <b>APROBADAS</b> cuya fecha de liquidación coincide con la objetivo y agrupa por CLIENTE + AFILIACIÓN.'}),el('label',{class:'field'},'Fecha de liquidación objetivo',sel));
   if(sinLiq)body.append(el('div',{class:'banner warn',html:`⚠️ ${sinLiq} aprobadas sin fecha de liquidación no entrarán a ningún corte.`}));
   const foot=el('div',{});foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
-    try{const {id_corte}=await withBusy('Generando corte en el servidor…',()=>api('POST','/api/cortes',{fecha_liq:sel.value}));closeModal();abrirCorte(id_corte);}catch(e){toast('Error: '+errMsg(e),'err');}
+    try{
+      const res = await withBusy('Generando corte en el servidor…',()=>api('POST','/api/cortes',{fecha_liq:sel.value}));
+      closeModal();
+      if(res.contracargos_no_aplicados && res.contracargos_no_aplicados.length){
+        const suma = res.contracargos_no_aplicados.reduce((s,x)=>s+Number(x.monto||0),0);
+        setTimeout(()=>toast(`⚠ ${res.contracargos_no_aplicados.length} contracargo(s) no se aplicaron al corte (${mxn(suma)}). Usa 🔍 Diagnóstico para ver por qué.`, 'err'), 500);
+      }
+      abrirCorte(res.id_corte);
+    }catch(e){toast('Error: '+errMsg(e),'err');}
   }},'Generar corte'));
   modal('Nuevo corte',body,foot);
 }

@@ -773,11 +773,19 @@ async function construirDiagnostico() {
    ========================================================================= */
 async function computeCorte(fechaLiqIso) {
   const txs = (await db.query("select cliente,numero_afiliacion,producto,monto from transacciones where fecha_liq=$1 and upper(estatus)='APROBADO'", [fechaLiqIso])).rows;
+  // Precargar catálogo de grupos para HOMOLOGAR el grupo_cliente de cada contracargo
+  // contra el nombre CANÓNICO del catálogo (mismo que usan las transacciones y el
+  // resto del código de corte). Sin esto, un reporte con "Grupo SFI" o "sfi" o
+  // cualquier variante NO cruza con la tx cuyo `cliente` es "SFI".
+  const gruposCat = (await db.query('select nombre_cliente from grupos')).rows.map(g => g.nombre_cliente);
+  const canonMap = new Map(gruposCat.map(n => [nrm(n), n]));
+  const canonNombre = n => canonMap.get(nrm(n)) || n;
   // Contracargos pendientes para esta fecha: se aplican al bloque correspondiente.
   const ccRows = (await db.query("select * from contracargos where cargado_en_fecha=$1 and estatus='Pendiente'", [fechaLiqIso])).rows;
   const ccMap = new Map();  // key = grupo||afil||bloque -> {monto, ids:[], disputas_ids:[], fin_ids:[]}
   for (const c of ccRows) {
-    const k = `${nrm(c.grupo_cliente)}||${String(c.numero_afiliacion)}||${c.bloque}`;
+    const canon = canonNombre(c.grupo_cliente || '');
+    const k = `${nrm(canon)}||${String(c.numero_afiliacion)}||${c.bloque}`;
     const cur = ccMap.get(k) || { monto: 0, ids: [], disputas_ids: [], fin_ids: [] };
     cur.monto += Number(c.monto) || 0; cur.ids.push(c.id); ccMap.set(k, cur);
   }
@@ -789,7 +797,8 @@ async function computeCorte(fechaLiqIso) {
   try {
     const finRows = (await db.query("select * from financiamientos where cargado_en_fecha=$1 and estatus='Pendiente'", [fechaLiqIso])).rows;
     for (const f of finRows) {
-      const k = `${nrm(f.grupo_cliente)}||${String(f.numero_afiliacion)}||${f.bloque}`;
+      const canon = canonNombre(f.grupo_cliente || '');
+      const k = `${nrm(canon)}||${String(f.numero_afiliacion)}||${f.bloque}`;
       const cur = ccMap.get(k) || { monto: 0, ids: [], disputas_ids: [], fin_ids: [] };
       cur.monto += Number(f.monto) || 0;
       cur.fin_ids = cur.fin_ids || []; cur.fin_ids.push(f.id);
@@ -816,7 +825,7 @@ async function computeCorte(fechaLiqIso) {
       const monto = Number(C.decryptString(cb.disputed_amount_cifrado) || 0);
       if (!monto || !cb.merchant_affiliation) continue;
       const bloque = String(cb.brand || '').toUpperCase() === 'AMEX' ? 'AMEX' : 'DOM';
-      const grupoNombre = cb.grupo_nombre || C.decryptString(cb.merchant_name_cifrado) || cb.merchant_name || '';
+      const grupoNombre = canonNombre(cb.grupo_nombre || C.decryptString(cb.merchant_name_cifrado) || cb.merchant_name || '');
       const k = `${nrm(grupoNombre)}||${String(cb.merchant_affiliation)}||${bloque}`;
       const cur = ccMap.get(k) || { monto: 0, ids: [], disputas_ids: [] };
       cur.monto += monto; cur.disputas_ids.push(cb.id); ccMap.set(k, cur);
