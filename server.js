@@ -1878,6 +1878,49 @@ app.post('/api/contracargos/ingesta', auth, requiereRol('admin', 'operador'), up
   const grupos_sin_match = [...grupoNoMatch];
   res.json({ fecha, filas: filas.length, insertados, actualizados, ignorados, monto_total: E.round2(total), grupos_sin_match });
 });
+// Diagnóstico: por qué los contracargos de una fecha no se aplican al corte.
+//   Cruza los contracargos Pendientes de la fecha con las transacciones del mismo día
+//   por (grupo_cliente normalizado, numero_afiliacion) y reporta cuáles matchean.
+app.get('/api/contracargos/diagnostico', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const fecha = req.query.fecha;
+  if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return res.status(400).json({ error: 'fecha' });
+  const nrm = s => E.normStr(String(s || ''));
+  const ccs = (await db.query("select id, origen_folio, grupo_cliente, numero_afiliacion, bloque, monto, estatus from contracargos where cargado_en_fecha=$1", [fecha])).rows;
+  const txs = (await db.query("select distinct cliente, numero_afiliacion from transacciones where fecha_liq=$1 and upper(estatus)='APROBADO'", [fecha])).rows;
+  const grupos = (await db.query('select id_grupo, nombre_cliente from grupos')).rows;
+  const grupoPorNombre = nombre => grupos.find(g => nrm(g.nombre_cliente) === nrm(nombre));
+  // Set de (grupo||afil) presentes en las transacciones del día
+  const txSet = new Set();
+  for (const t of txs) {
+    const g = grupoPorNombre(t.cliente);
+    const nom = g ? g.nombre_cliente : t.cliente;
+    txSet.add(`${nrm(nom)}||${String(t.numero_afiliacion)}`);
+  }
+  const detalle = ccs.map(c => {
+    const k = `${nrm(c.grupo_cliente)}||${String(c.numero_afiliacion)}`;
+    const matches = txSet.has(k);
+    const enCatalogo = !!grupos.find(g => nrm(g.nombre_cliente) === nrm(c.grupo_cliente));
+    let motivo = null;
+    if (c.estatus !== 'Pendiente') motivo = `estatus=${c.estatus}`;
+    else if (!matches && !enCatalogo) motivo = 'grupo NO existe en catálogo';
+    else if (!matches) motivo = 'no hay transacciones aprobadas del día para grupo+afiliación';
+    return {
+      id: c.id, folio: c.origen_folio, grupo: c.grupo_cliente, afil: c.numero_afiliacion,
+      bloque: c.bloque, monto: Number(c.monto), estatus: c.estatus, matchea: matches && c.estatus === 'Pendiente', motivo,
+    };
+  });
+  const total = ccs.length;
+  const pendientes = ccs.filter(c => c.estatus === 'Pendiente').length;
+  const matcheables = detalle.filter(d => d.matchea).length;
+  res.json({
+    fecha, total_contracargos: total, pendientes, matcheables,
+    no_matchean: pendientes - matcheables,
+    transacciones_del_dia: txs.length,
+    detalle,
+  });
+});
+
 // Re-homologa el grupo_cliente de todos los contracargos Pendientes contra el catálogo grupos.
 // Útil cuando ya tenías contracargos cargados y ahora quieres normalizarlos sin borrar y resubir.
 app.post('/api/contracargos/homologar-grupos', auth, requiereRol('admin'), async (req, res) => {

@@ -697,6 +697,22 @@ async function vContracargos(v){
     el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/contracargos/xlsx?fecha='+fecha,'Contracargos_a_Retener_'+fecha+'.xlsx')},'⬇ Descargar reporte'),
     el('span',{},' '),
     el('button',{class:'btn ghost sm',onclick:async()=>{
+      try{ const r = await api('GET','/api/contracargos/diagnostico?fecha='+fecha);
+        const body = el('div',{});
+        body.append(el('div',{class:'banner',html:`Contracargos del ${fecha}: <b>${r.total_contracargos}</b> · Pendientes: <b>${r.pendientes}</b> · Van al corte: <b style="color:#059669">${r.matcheables}</b> · No matchean: <b style="color:#dc2626">${r.no_matchean}</b> · Txns aprobadas: <b>${r.transacciones_del_dia}</b>`}));
+        const noMatch = r.detalle.filter(d => !d.matchea);
+        if(noMatch.length){
+          body.append(el('h3',{style:'font-size:13px;color:var(--brand);margin:14px 0 6px'},`Contracargos que NO se aplicarán (${noMatch.length})`));
+          const rows = noMatch.map(d => [esc(d.folio||''), esc(d.grupo||''), esc(d.afil||''), esc(d.bloque||''), {num: mxn(d.monto)}, esc(d.motivo || '—')]);
+          body.append(tableWrap(['Folio','Grupo','Afiliación','Bloque',{t:'Monto'},'Motivo'], rows));
+        } else if (r.pendientes > 0) {
+          body.append(el('div',{class:'banner ok',html:'✅ Todos los contracargos pendientes van a aplicarse al corte.'}));
+        }
+        modal('Diagnóstico de aplicación al corte', body, el('div',{},el('button',{class:'btn',onclick:closeModal},'Cerrar')), true);
+      }catch(e){ toast(errMsg(e),'err'); }
+    }},'🔍 Diagnóstico'),
+    el('span',{},' '),
+    el('button',{class:'btn ghost sm',onclick:async()=>{
       if(!confirm('Re-homologar el "Grupo de cliente" de todos los contracargos Pendientes contra el catálogo de grupos.\n\nSirve cuando ya cargaste reportes antes con nombres distintos y ahora quieres normalizarlos.')) return;
       try{ const r = await api('POST','/api/contracargos/homologar-grupos');
         toast(`Revisados: ${r.revisados} · Renombrados: ${r.cambios}`, r.cambios?'ok':'ok');
