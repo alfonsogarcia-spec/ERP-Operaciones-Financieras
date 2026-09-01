@@ -1144,7 +1144,20 @@ function editGrupo(ag,af,co){const isNew=!ag;ag=ag||{};af=af||{};co=co||{};const
 
 /* ---------- CUENTAS ---------- */
 async function vCuentas(v){
-  if(can('catalogos'))$('#pageAction').append(el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/plantilla/cuentas.xlsx','plantilla_cuentas.xlsx')},'⬇ Plantilla Excel'),el('span',{},' '),el('button',{class:'btn secondary sm',onclick:()=>openImport('cuentas','Importar cuentas')},'Importar Excel'),el('span',{},' '),el('button',{class:'btn',onclick:()=>editCuenta()},'+ Cuenta'));
+  if(can('catalogos'))$('#pageAction').append(
+    el('button',{class:'btn secondary sm',onclick:async(ev)=>{
+      const btn=ev.currentTarget; const label=btn.textContent; btn.disabled=true; btn.textContent='Generando…';
+      try{ await descargar('/api/catalogo/cuentas.xlsx','catalogo_cuentas_'+hoyMx()+'.xlsx'); toast('Descarga lista','ok'); }
+      catch(e){ toast('No se pudo descargar: '+(e.status===404?'endpoint no disponible aún (espera el redeploy)':errMsg(e)),'err'); }
+      finally{ btn.disabled=false; btn.textContent=label; }
+    }},'⬇ Descargar cuentas'),
+    el('span',{},' '),
+    el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/plantilla/cuentas.xlsx','plantilla_cuentas.xlsx')},'⬇ Plantilla Excel'),
+    el('span',{},' '),
+    el('button',{class:'btn secondary sm',onclick:()=>openImport('cuentas','Importar cuentas')},'Importar Excel'),
+    el('span',{},' '),
+    el('button',{class:'btn',onclick:()=>editCuenta()},'+ Cuenta')
+  );
   const [cuentas,grupos,bancos]=await Promise.all([api('GET','/api/catalogo/cuentas'),api('GET','/api/catalogo/grupos'),api('GET','/api/catalogo/bancos')]);
   const gf=await api('GET','/api/catalogo/grupos-full');
   v.innerHTML='';const p=el('div',{class:'panel'});p.append(el('h3',{},'Cuentas de liquidación'));

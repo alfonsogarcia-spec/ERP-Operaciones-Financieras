@@ -488,6 +488,29 @@ app.get('/api/catalogo/grupos-full.xlsx', auth, async (req, res) => {
   enviarXLSX(res, `catalogo_grupos_${iso}.xlsx`, X.buildXLSX([sheet]));
 });
 
+// Descarga del catálogo de cuentas de liquidación con las mismas columnas que
+// la plantilla de importación (id_grupo, numero_afiliacion, nombre_comercial,
+// razon_social_beneficiario, banco, clabe). Se registra ANTES del handler
+// paramétrico por la misma razón que grupos-full.xlsx.
+app.get('/api/catalogo/cuentas.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const [cuentas, grupos] = await Promise.all([getCuentas(), getGrupos()]);
+  const nombreDe = idg => { const g = grupos.find(x => String(x.id_grupo) === String(idg)); return g ? g.nombre_cliente : ''; };
+  const HEAD = ['id_grupo', 'nombre_cliente', 'numero_afiliacion', 'nombre_comercial',
+    'razon_social_beneficiario', 'banco', 'codigo_banco', 'clabe'];
+  const filas = cuentas.map(c => [
+    c.id_grupo, nombreDe(c.id_grupo), c.numero_afiliacion || '',
+    c.nombre_comercial || '', c.razon_social_beneficiario || '',
+    c.banco || '', c.codigo_banco == null ? '' : c.codigo_banco,
+    c.clabe || '',
+  ]);
+  filas.sort((a, b) => String(a[1]).localeCompare(String(b[1])) || String(a[2]).localeCompare(String(b[2])));
+  const iso = new Date().toISOString().slice(0, 10);
+  const sheet = { name: 'Cuentas', aoa: [HEAD, ...filas] };
+  await bit(req, 'catalogo', `descargó cuentas: ${filas.length} cuentas`);
+  enviarXLSX(res, `catalogo_cuentas_${iso}.xlsx`, X.buildXLSX([sheet]));
+});
+
 app.get('/api/catalogo/:tipo', auth, async (req, res) => {
   if (!dbReady(res)) return;
   const t = req.params.tipo;
