@@ -1053,6 +1053,8 @@ function resumenContable(r){const t=r.totales;const p=el('div',{class:'panel'});
 /* ---------- GRUPOS ---------- */
 async function vGrupos(v){
   if(can('catalogos'))$('#pageAction').append(
+    el('button',{class:'btn secondary sm',onclick:()=>{ const iso=new Date().toISOString().slice(0,10); descargar('/api/catalogo/grupos-full.xlsx','catalogo_grupos_'+iso+'.xlsx'); }},'⬇ Descargar catálogo'),
+    el('span',{},' '),
     el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/plantilla/grupos.xlsx','plantilla_grupos.xlsx')},'⬇ Plantilla Excel'),
     el('span',{},' '),
     el('button',{class:'btn secondary sm',onclick:()=>openImport('grupos','Importar grupos')},'Importar Excel'),
