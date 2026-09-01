@@ -453,6 +453,41 @@ app.delete('/api/usuarios/:id', auth, requiereRol('admin'), async (req, res) => 
 /* ============================================================================
    CATÁLOGOS
    ========================================================================= */
+// Descarga del catálogo grupo × afiliación × tasas × costos como está ahora.
+// IMPORTANTE: debe declararse ANTES de `/api/catalogo/:tipo` — Express
+// matchearía `:tipo = "grupos-full.xlsx"` y devolvería 404.
+app.get('/api/catalogo/grupos-full.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const [grupos, afilGrupo, afiliaciones, costos] = await Promise.all([getGrupos(), getAfilGrupo(), getAfiliaciones(), getCostos()]);
+  const grupoPor = id => grupos.find(g => String(g.id_grupo) === String(id));
+  const afilPor  = n  => afiliaciones.find(a => String(a.numero_afiliacion) === String(n));
+  const costoPor = n  => costos.find(c => String(c.numero_afiliacion) === String(n));
+  const HEAD = ['id_grupo', 'nombre_cliente', 'numero_afiliacion', 'razon_social',
+    'tasa_pac_tdd', 'tasa_pac_tdc', 'tasa_pac_amex', 'tasa_pac_int',
+    'costo_x_trx', 'pct_banca', 'int_tdd', 'int_tdc', 'int_amex', 'int_int', 'fee_broxel'];
+  const filas = afilGrupo.map(ag => {
+    const g = grupoPor(ag.id_grupo) || {};
+    const af = afilPor(ag.numero_afiliacion) || {};
+    const co = costoPor(ag.numero_afiliacion) || {};
+    return [
+      ag.id_grupo, g.nombre_cliente || '', ag.numero_afiliacion, af.razon_social || '',
+      Number(ag.tasa_pac_tdd || 0), Number(ag.tasa_pac_tdc || 0),
+      Number(ag.tasa_pac_amex || 0), Number(ag.tasa_pac_int || 0),
+      Number(ag.costo_x_trx || 0), Number(ag.pct_banca || 0),
+      co.int_tdd == null ? '' : Number(co.int_tdd),
+      co.int_tdc == null ? '' : Number(co.int_tdc),
+      co.int_amex == null ? '' : Number(co.int_amex),
+      co.int_int == null ? '' : Number(co.int_int),
+      co.fee_broxel == null ? '' : Number(co.fee_broxel),
+    ];
+  });
+  filas.sort((a, b) => String(a[1]).localeCompare(String(b[1])) || String(a[2]).localeCompare(String(b[2])));
+  const iso = new Date().toISOString().slice(0, 10);
+  const sheet = { name: 'Grupos', aoa: [HEAD, ...filas] };
+  await bit(req, 'catalogo', `descargó grupos-full: ${filas.length} relaciones`);
+  enviarXLSX(res, `catalogo_grupos_${iso}.xlsx`, X.buildXLSX([sheet]));
+});
+
 app.get('/api/catalogo/:tipo', auth, async (req, res) => {
   if (!dbReady(res)) return;
   const t = req.params.tipo;
@@ -3369,41 +3404,6 @@ app.get('/api/plantilla/:tipo.xlsx', auth, (req, res) => {
   else if (t === 'cuentas') sheet = { name: 'Cuentas', aoa: [['id_grupo', 'numero_afiliacion', 'nombre_comercial', 'razon_social_beneficiario', 'banco', 'clabe'], [3, '7194416', 'DEAL', 'Deal Comercializadora SA', 'STP', '646180123456789012']] };
   else return res.status(404).json({ error: 'tipo' });
   enviarXLSX(res, `plantilla_${t}.xlsx`, X.buildXLSX([sheet]));
-});
-
-// Descarga el catálogo COMPLETO grupo × afiliación × tasas × costos como está
-// ahora mismo en la BD. Usa las mismas columnas que la plantilla de importación,
-// para que el mismo archivo se pueda re-importar sin transformar.
-app.get('/api/catalogo/grupos-full.xlsx', auth, async (req, res) => {
-  if (!dbReady(res)) return;
-  const [grupos, afilGrupo, afiliaciones, costos] = await Promise.all([getGrupos(), getAfilGrupo(), getAfiliaciones(), getCostos()]);
-  const grupoPor = id => grupos.find(g => String(g.id_grupo) === String(id));
-  const afilPor  = n  => afiliaciones.find(a => String(a.numero_afiliacion) === String(n));
-  const costoPor = n  => costos.find(c => String(c.numero_afiliacion) === String(n));
-  const HEAD = ['id_grupo', 'nombre_cliente', 'numero_afiliacion', 'razon_social',
-    'tasa_pac_tdd', 'tasa_pac_tdc', 'tasa_pac_amex', 'tasa_pac_int',
-    'costo_x_trx', 'pct_banca', 'int_tdd', 'int_tdc', 'int_amex', 'int_int', 'fee_broxel'];
-  const filas = afilGrupo.map(ag => {
-    const g = grupoPor(ag.id_grupo) || {};
-    const af = afilPor(ag.numero_afiliacion) || {};
-    const co = costoPor(ag.numero_afiliacion) || {};
-    return [
-      ag.id_grupo, g.nombre_cliente || '', ag.numero_afiliacion, af.razon_social || '',
-      Number(ag.tasa_pac_tdd || 0), Number(ag.tasa_pac_tdc || 0),
-      Number(ag.tasa_pac_amex || 0), Number(ag.tasa_pac_int || 0),
-      Number(ag.costo_x_trx || 0), Number(ag.pct_banca || 0),
-      co.int_tdd == null ? '' : Number(co.int_tdd),
-      co.int_tdc == null ? '' : Number(co.int_tdc),
-      co.int_amex == null ? '' : Number(co.int_amex),
-      co.int_int == null ? '' : Number(co.int_int),
-      co.fee_broxel == null ? '' : Number(co.fee_broxel),
-    ];
-  });
-  filas.sort((a, b) => String(a[1]).localeCompare(String(b[1])) || String(a[2]).localeCompare(String(b[2])));
-  const iso = new Date().toISOString().slice(0, 10);
-  const sheet = { name: 'Grupos', aoa: [HEAD, ...filas] };
-  await bit(req, 'catalogo', `descargó grupos-full: ${filas.length} relaciones`);
-  enviarXLSX(res, `catalogo_grupos_${iso}.xlsx`, X.buildXLSX([sheet]));
 });
 
 // GET /api/bitacora — queryable con filtros y paginación.
