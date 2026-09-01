@@ -1053,7 +1053,12 @@ function resumenContable(r){const t=r.totales;const p=el('div',{class:'panel'});
 /* ---------- GRUPOS ---------- */
 async function vGrupos(v){
   if(can('catalogos'))$('#pageAction').append(
-    el('button',{class:'btn secondary sm',onclick:()=>{ const iso=new Date().toISOString().slice(0,10); descargar('/api/catalogo/grupos-full.xlsx','catalogo_grupos_'+iso+'.xlsx'); }},'⬇ Descargar catálogo'),
+    el('button',{class:'btn secondary sm',onclick:async(ev)=>{
+      const btn = ev.currentTarget; const label = btn.textContent; btn.disabled=true; btn.textContent='Generando…';
+      try{ await descargar('/api/catalogo/grupos-full.xlsx','catalogo_grupos_'+hoyMx()+'.xlsx'); toast('Descarga lista','ok'); }
+      catch(e){ toast('No se pudo descargar: '+(e.status===404?'endpoint no disponible aún (espera el redeploy)':errMsg(e)),'err'); }
+      finally{ btn.disabled=false; btn.textContent=label; }
+    }},'⬇ Descargar catálogo'),
     el('span',{},' '),
     el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/plantilla/grupos.xlsx','plantilla_grupos.xlsx')},'⬇ Plantilla Excel'),
     el('span',{},' '),
