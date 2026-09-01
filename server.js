@@ -43,6 +43,7 @@ const AL = require('./lib/alertas.js');
 const WORM = require('./lib/worm.js');
 const D = require('./lib/disputas.js');
 const mountDisputasRoutes = require('./lib/disputas-routes.js');
+const CCS = require('./lib/contracargos-sync.js');
 if (!C.ready()) console.warn('⚠  Cifrado app-layer NO configurado (falta ENCRYPTION_KEY_V1 o HMAC_PEPPER). Dual-write escribirá "plain:" en las columnas cifradas.');
 
 const app = express();
@@ -806,31 +807,11 @@ async function computeCorte(fechaLiqIso) {
       finMap.set(k, (finMap.get(k) || 0) + Number(f.monto || 0));
     }
   } catch (_e) { /* schema no listo aún → ignorar */ }
-  // Contracargos del módulo Disputas cuya fecha_retencion cae hoy y aún no se
-  // han retenido en ningún corte. Se descuentan del bloque DOM (o AMEX si
-  // brand=AMEX) del comercio propietario.
-  try {
-    const cbRows = (await db.query(
-      `select cb.id, cb.merchant_affiliation, cb.brand, cb.disputed_amount_cifrado,
-              cb.client_group_id, cg.nombre as grupo_nombre, cb.merchant_name, cb.merchant_name_cifrado
-         from disputa.chargebacks cb
-         left join disputa.client_groups cg on cg.id = cb.client_group_id
-        where cb.fecha_retencion = $1
-          and cb.retenido_en_corte_id is null
-          and cb.archivado = false
-          and cb.status not in ('CANCELLED','EXPIRED','WON')`,
-      [fechaLiqIso]
-    )).rows;
-    for (const cb of cbRows) {
-      const monto = Number(C.decryptString(cb.disputed_amount_cifrado) || 0);
-      if (!monto || !cb.merchant_affiliation) continue;
-      const bloque = String(cb.brand || '').toUpperCase() === 'AMEX' ? 'AMEX' : 'DOM';
-      const grupoNombre = canonNombre(cb.grupo_nombre || C.decryptString(cb.merchant_name_cifrado) || cb.merchant_name || '');
-      const k = `${nrm(grupoNombre)}||${String(cb.merchant_affiliation)}||${bloque}`;
-      const cur = ccMap.get(k) || { monto: 0, ids: [], disputas_ids: [] };
-      cur.monto += monto; cur.disputas_ids.push(cb.id); ccMap.set(k, cur);
-    }
-  } catch (_e) { /* schema disputa no listo → ignorar en dev */ }
+  // NOTA: los chargebacks de Disputas ya no se leen aquí. Ahora se propagan a
+  // `contracargos` (schema conciliacion) vía `lib/contracargos-sync.js` cada vez
+  // que cambia su estado/fecha_retencion en el módulo de Disputas. Esta tabla es
+  // la ÚNICA fuente de verdad para el corte, evita doble contabilización y
+  // permite reprogramar huérfanos sin tocar el CB.
   const [params, grupos, afilGrupo, costos, cuentas, bancos] = [await getParams(), await getGrupos(), await getAfilGrupo(), await getCostos(), await getCuentas(), await getBancos()];
   const grupoPorNombre = nombre => grupos.find(g => nrm(g.nombre_cliente) === nrm(nombre));
   const tasasDe = (idg, afil) => afilGrupo.find(a => String(a.id_grupo) === String(idg) && String(a.numero_afiliacion) === String(afil));
@@ -963,6 +944,19 @@ app.post('/api/cortes/:id/:accion', auth, async (req, res, next) => {
     await db.query('update cortes set estado=$1,validado_por=$2 where id_corte=$3', ['Validado', req.user.nombre, c.id_corte]);
     // Marcar contracargos como Aplicado a este corte
     await db.query("update contracargos set estatus='Aplicado', aplicado_en_corte_id=$1 where id in (select cc::int from calculos, jsonb_array_elements_text(coalesce(contracargos_ids,'[]'::jsonb)) as cc where corte_id=$1)", [c.id_corte]);
+    // Marcar los chargebacks del módulo Disputas cuyos contracargos quedaron
+    // aplicados aquí, derivándolos del origen_folio 'CB-<id>'.
+    try {
+      await db.query(`
+        update disputa.chargebacks
+           set retenido_en_corte_id=$1
+         where id in (
+           select substring(origen_folio from 4)::int
+             from contracargos
+            where aplicado_en_corte_id=$1
+              and origen_folio like 'CB-%'
+         )`, [c.id_corte]);
+    } catch (_e) { /* schema disputa no listo → ignorar */ }
   }
   if (accion === 'dispersar') await db.query('update cortes set estado=$1,dispersado_por=$2 where id_corte=$3', ['Dispersado', req.user.nombre, c.id_corte]);
   if (accion === 'cerrar') await db.query('update cortes set estado=$1 where id_corte=$2', ['Cerrado', c.id_corte]);
@@ -1962,6 +1956,107 @@ app.delete('/api/contracargos/:id', auth, requiereRol('admin', 'operador'), asyn
   await db.query('delete from contracargos where id=$1', [id]);
   await bit(req, 'contracargos', `eliminó contracargo #${id}`);
   res.json({ ok: true });
+});
+
+// Registro MANUAL de un contracargo. La fecha propuesta se ajusta al siguiente
+// corte que aún no exista (cualquier estado): si el usuario pide 2026-09-01 pero
+// ese día ya tiene corte, se corre al siguiente día hábil sin corte.
+app.post('/api/contracargos', auth, requiereRol('admin', 'operador'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const b = req.body || {};
+  const grupoRaw = String(b.grupo_cliente || '').trim();
+  const afil = String(b.numero_afiliacion || '').trim();
+  const bloque = String(b.bloque || '').toUpperCase();
+  const monto = Number(b.monto);
+  const fechaPedidaIso = String(b.cargado_en_fecha || '').slice(0, 10);
+  if (!grupoRaw) return res.status(400).json({ error: 'grupo_requerido' });
+  if (!afil) return res.status(400).json({ error: 'afiliacion_requerida' });
+  if (!['DOM', 'AMEX'].includes(bloque)) return res.status(400).json({ error: 'bloque_invalido', validos: ['DOM', 'AMEX'] });
+  if (!monto || monto <= 0) return res.status(400).json({ error: 'monto_invalido' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaPedidaIso)) return res.status(400).json({ error: 'fecha_invalida' });
+
+  // Homologar contra catálogo (mismo criterio que carga masiva)
+  const grupoCanon = await homologarGrupo(grupoRaw) || grupoRaw;
+  const feriados = await getFeriados();
+  const fechaFinal = await CCS.siguienteCorteNoGenerado(db, fechaPedidaIso, feriados);
+
+  // Folio único manual: MAN-YYYY-NNNN
+  const y = new Date().getFullYear();
+  const r = await db.query("select coalesce(max(cast(substring(origen_folio from 10) as integer)), 0) as m from contracargos where origen_folio like $1", [`MAN-${y}-%`]);
+  const folio = 'MAN-' + y + '-' + String((r.rows[0].m || 0) + 1).padStart(6, '0');
+
+  const row = (await db.query(`
+    insert into contracargos(
+      origen_folio, cargado_en_fecha, fecha_registro, numero_afiliacion, comercio,
+      grupo_cliente, marca, bloque, monto, moneda, estatus, creado_por, archivo_origen,
+      codigo_razon, categoria
+    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Pendiente',$11,'manual',$12,$13)
+    returning id
+  `, [folio, fechaFinal, new Date().toISOString().slice(0, 10), afil, b.comercio || grupoCanon,
+      grupoCanon, b.marca || (bloque === 'AMEX' ? 'AMEX' : 'VISA'), bloque, monto, b.moneda || 'MXN',
+      req.user.nombre || req.user.email, b.codigo_razon || 'MANUAL', b.categoria || 'Manual'])).rows[0];
+
+  await bit(req, 'contracargos', `alta manual ${folio} ${grupoCanon}/${afil} ${bloque} $${monto} → ${fechaFinal}${fechaFinal !== fechaPedidaIso ? ' (movido desde ' + fechaPedidaIso + ')' : ''}`);
+  res.json({ ok: true, id: row.id, folio, cargado_en_fecha: fechaFinal, movido: fechaFinal !== fechaPedidaIso, fecha_pedida: fechaPedidaIso });
+});
+
+// Reprogramar la fecha de retención de un contracargo Pendiente (o huérfano).
+// La fecha se ajusta al siguiente corte no generado, igual que en el alta manual.
+app.patch('/api/contracargos/:id/reprogramar', auth, requiereRol('admin', 'operador'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const id = parseInt(req.params.id, 10);
+  const nuevaIso = String((req.body || {}).cargado_en_fecha || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(nuevaIso)) return res.status(400).json({ error: 'fecha_invalida' });
+  const c = (await db.query('select id, estatus, cargado_en_fecha::text as prev, origen_folio from contracargos where id=$1', [id])).rows[0];
+  if (!c) return res.status(404).json({ error: 'no_existe' });
+  if (c.estatus === 'Aplicado') return res.status(409).json({ error: 'ya_aplicado', mensaje: 'No se puede reprogramar un contracargo ya aplicado a un corte.' });
+  if (c.estatus === 'Cancelado') return res.status(409).json({ error: 'cancelado', mensaje: 'Este contracargo está cancelado; recuperalo desde Disputas antes de reprogramar.' });
+  const feriados = await getFeriados();
+  const fechaFinal = await CCS.siguienteCorteNoGenerado(db, nuevaIso, feriados);
+  await db.query("update contracargos set cargado_en_fecha=$1, estatus='Pendiente', aplicado_en_corte_id=null where id=$2", [fechaFinal, id]);
+  await bit(req, 'contracargos', `reprogramó ${c.origen_folio || '#' + id}: ${c.prev} → ${fechaFinal}`);
+  res.json({ ok: true, id, cargado_en_fecha: fechaFinal, movido: fechaFinal !== nuevaIso, fecha_pedida: nuevaIso });
+});
+
+// Resync masivo Disputas→Contracargos. Recorre los CBs activos con fecha_retencion
+// y crea/actualiza el contracargo correspondiente. Útil al poblar la tabla la
+// primera vez, o al recuperarse de un downtime del puente.
+app.post('/api/contracargos/resync-disputas', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  let cbs = [];
+  try {
+    cbs = (await db.query(`
+      select id from disputa.chargebacks
+       where archivado = false
+         and status not in ('CANCELLED','EXPIRED','WON')
+         and fecha_retencion is not null
+    `)).rows;
+  } catch (_e) { return res.status(503).json({ error: 'schema_disputa_no_listo' }); }
+  const feriados = await getFeriados();
+  let creados = 0, actualizados = 0, sin_cambio = 0, errores = 0;
+  for (const r of cbs) {
+    try {
+      const out = await CCS.syncCbAContracargos(db, r.id, { crypto: C, feriados, actor: req.user.nombre });
+      if (out.accion === 'creado') creados++;
+      else if (out.accion === 'actualizado') actualizados++;
+      else sin_cambio++;
+    } catch (_e) { errores++; }
+  }
+  await bit(req, 'contracargos', `resync-disputas: ${creados} creados, ${actualizados} actualizados, ${sin_cambio} sin cambio, ${errores} errores`);
+  res.json({ ok: true, revisados: cbs.length, creados, actualizados, sin_cambio, errores });
+});
+
+// Huérfanos: contracargos Pendientes cuya fecha ya pasó (no cruzaron con ningún corte del día).
+app.get('/api/contracargos/huerfanos', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const rows = (await db.query(`
+    select id, origen_folio, cargado_en_fecha::text as cargado_en_fecha, grupo_cliente, numero_afiliacion,
+           bloque, monto, marca, codigo_razon, categoria, comercio
+      from contracargos
+     where estatus='Pendiente' and cargado_en_fecha < current_date
+     order by cargado_en_fecha asc, id asc
+  `)).rows;
+  res.json({ total: rows.length, total_monto: rows.reduce((s, r) => s + Number(r.monto || 0), 0), filas: rows });
 });
 
 /* ============================================================================
@@ -3362,7 +3457,7 @@ app.get('/api/bitacora/verificar-integridad', auth, requiereRol('admin'), async 
 });
 
 /* ---------- Módulo DISPUTAS (Sprint 1 · portado de sistema Python Contracargos) ---------- */
-mountDisputasRoutes(app, { auth, requiereRol, bit, db, C, D, upload, sesEnabled, sendSES, armarNotifDisputaHTML, path, fs: require('fs'), X, enviarXLSX });
+mountDisputasRoutes(app, { auth, requiereRol, bit, db, C, D, upload, sesEnabled, sendSES, armarNotifDisputaHTML, path, fs: require('fs'), X, enviarXLSX, CCS, getFeriados });
 
 /* ---------- Módulo TAREAS (fase 4) ---------- */
 const { mountTareasRoutes } = require('./lib/tareas-routes.js');

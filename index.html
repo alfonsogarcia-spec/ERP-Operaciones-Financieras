@@ -694,7 +694,17 @@ let _ccFecha=null;
 async function vContracargos(v){
   const fecha = _ccFecha || hoyMx();
   if(can('ingesta'))$('#pageAction').append(
-    el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/contracargos/xlsx?fecha='+fecha,'Contracargos_a_Retener_'+fecha+'.xlsx')},'⬇ Descargar reporte'),
+    el('button',{class:'btn',onclick:()=>openNuevoContracargoManual(fecha)},'+ Nuevo contracargo'),
+    el('span',{},' '),
+    el('button',{class:'btn secondary sm',onclick:async()=>{
+      try{
+        const r = await withBusy('Sincronizando desde Disputas…', ()=>api('POST','/api/contracargos/resync-disputas'));
+        toast(`Revisados: ${r.revisados} · Creados: ${r.creados} · Actualizados: ${r.actualizados}`, 'ok');
+        render();
+      }catch(e){ toast(errMsg(e),'err'); }
+    }},'🔁 Sincronizar Disputas'),
+    el('span',{},' '),
+    el('button',{class:'btn ghost sm',onclick:()=>descargar('/api/contracargos/xlsx?fecha='+fecha,'Contracargos_a_Retener_'+fecha+'.xlsx')},'⬇ Descargar reporte'),
     el('span',{},' '),
     el('button',{class:'btn ghost sm',onclick:async()=>{
       try{ const r = await api('GET','/api/contracargos/diagnostico?fecha='+fecha);
@@ -712,42 +722,44 @@ async function vContracargos(v){
       }catch(e){ toast(errMsg(e),'err'); }
     }},'🔍 Diagnóstico'),
     el('span',{},' '),
-    el('button',{class:'btn ghost sm',onclick:async()=>{
-      if(!confirm('Re-homologar el "Grupo de cliente" de todos los contracargos Pendientes contra el catálogo de grupos.\n\nSirve cuando ya cargaste reportes antes con nombres distintos y ahora quieres normalizarlos.')) return;
-      try{ const r = await api('POST','/api/contracargos/homologar-grupos');
-        toast(`Revisados: ${r.revisados} · Renombrados: ${r.cambios}`, r.cambios?'ok':'ok');
-        if(r.grupos_sin_match && r.grupos_sin_match.length) setTimeout(()=>toast('⚠ Sin match: '+r.grupos_sin_match.join(', '),'err'), 800);
-        render();
-      }catch(e){ toast(errMsg(e),'err'); }
-    }},'🔁 Homologar grupos'),
-    el('span',{},' '),
-    el('button',{class:'btn',onclick:()=>openCargarContracargos(fecha)},'Cargar reporte del día'),
+    el('button',{class:'btn ghost sm',onclick:()=>openCargarContracargos(fecha)},'⬆ Cargar reporte'),
   );
   const d = await api('GET','/api/contracargos?fecha='+fecha);
-  const huerfanos = await api('GET','/api/contracargos/huerfanos?antes_de='+fecha);
+  const huerfanos = await api('GET','/api/contracargos/huerfanos');
   v.innerHTML='';
   // filtro por fecha
   const filtro=el('div',{class:'filters'});
   const inp=el('input',{type:'date',value:fecha,onchange:e=>{_ccFecha=e.target.value; render();}});
-  filtro.append(el('label',{class:'field',style:'margin:0'},'Fecha del reporte',inp));
+  filtro.append(el('label',{class:'field',style:'margin:0'},'Fecha de retención',inp));
   filtro.append(el('button',{class:'btn ghost sm',onclick:()=>{_ccFecha=hoyMx(); render();}},'Hoy'));
   v.append(filtro);
   // semáforo del día
   const p=el('div',{class:'panel'});
   const rep=d.reporte;
   if(!rep){
-    p.append(el('h3',{},'Reporte de contracargos del '+fecha,el('span',{class:'right'},el('span',{class:'badge d'},'FALTANTE'))));
-    p.append(el('div',{class:'banner err',html:`⛔ <b>No se ha cargado el reporte de este día.</b> El corte del ${fecha} está bloqueado hasta que subas el reporte (aunque venga sin registros).`}));
+    p.append(el('h3',{},'Retenciones programadas para el '+fecha,el('span',{class:'right'},el('span',{class:'badge d'},'FALTA CONSTANCIA'))));
+    p.append(el('div',{class:'banner err',html:`⛔ <b>Falta la constancia de contracargos de este día.</b> Sube el reporte del día (aunque venga vacío) o registra un contracargo manual — el corte del ${fecha} está bloqueado hasta entonces.`}));
   } else {
-    p.append(el('h3',{},'Reporte de contracargos del '+fecha,el('span',{class:'right'},el('span',{class:'badge ok'},'CARGADO'))));
-    p.append(el('div',{class:'banner ok',html:`✓ <b>${rep.n_contracargos}</b> contracargos cargados · monto ${mxn(Number(rep.monto_total))} · por ${esc(rep.cargado_por)} (${new Date(rep.cargado_at).toLocaleString('es-MX')})`}));
+    p.append(el('h3',{},'Retenciones programadas para el '+fecha,el('span',{class:'right'},el('span',{class:'badge ok'},'CONSTANCIA OK'))));
+    p.append(el('div',{class:'banner ok',html:`✓ <b>${rep.n_contracargos}</b> contracargos en constancia · monto ${mxn(Number(rep.monto_total))} · por ${esc(rep.cargado_por)} (${new Date(rep.cargado_at).toLocaleString('es-MX')})`}));
   }
   v.append(p);
-  // huérfanos
-  if(huerfanos.length){
-    const hp=el('div',{class:'panel'}); hp.append(el('h3',{},'⚠ Contracargos huérfanos de fechas anteriores'));
-    hp.append(el('div',{class:'banner warn',html:'Los siguientes días tienen contracargos <b>Pendientes</b> que no se aplicaron a su corte. No se aplicarán automáticamente al corte del '+fecha+'. Ábrelos por su fecha para revisar.'}));
-    hp.append(tableWrap(['Fecha del reporte',{t:'#'},{t:'Monto pendiente'},''],huerfanos.map(h=>{const r=[fmtISO(h.fecha),{num:h.n},{num:mxn(h.monto)},el('button',{class:'btn ghost sm',onclick:()=>{_ccFecha=h.fecha; render();}},'Abrir')];return r;})));
+  // huérfanos (tabla plana, reprogramar por fila)
+  if(huerfanos.total){
+    const hp=el('div',{class:'panel'}); hp.append(el('h3',{},`⚠ Huérfanos: ${huerfanos.total} contracargos sin corte (${mxn(huerfanos.total_monto)})`));
+    hp.append(el('div',{class:'banner warn',html:'Estos contracargos quedaron Pendientes en fechas ya cerradas. Reprograma su fecha de retención al próximo día hábil sin corte, o elimínalos.'}));
+    const hRows = huerfanos.filas.map(h => {
+      const bl = h.bloque==='AMEX' ? '<span class="badge g">AMEX</span>' : '<span class="badge b">DOM</span>';
+      const acts = [];
+      if(can('ingesta')){
+        acts.push(el('button',{class:'btn sm',onclick:(e)=>{e.stopPropagation(); openReprogramarContracargo(h);}}, '📅 Reprogramar'));
+        acts.push(el('span',{},' '));
+        acts.push(el('button',{class:'btn danger sm',onclick:async(e)=>{e.stopPropagation(); if(confirm('¿Eliminar contracargo '+h.origen_folio+'?')){try{await api('DELETE','/api/contracargos/'+h.id); toast('Eliminado','ok'); render();}catch(err){toast(errMsg(err),'err');}}}},'Eliminar'));
+      }
+      const acc = el('div',{}, ...acts);
+      return [fmtISO(h.cargado_en_fecha), esc(h.origen_folio||''), esc(h.grupo_cliente||''), `<span class="mono">${esc(h.numero_afiliacion||'')}</span>`, bl, {num: mxn(h.monto)}, acc];
+    });
+    hp.append(tableWrap(['Fecha original','Folio','Grupo','Afiliación','Bloque',{t:'Monto'},''], hRows));
     v.append(hp);
   }
   // tabla del día
@@ -755,15 +767,109 @@ async function vContracargos(v){
   const rows=d.items.map(it=>{
     const bl = it.bloque==='AMEX' ? '<span class="badge g">AMEX</span>' : '<span class="badge b">DOM</span>';
     const st = it.estatus==='Aplicado' ? `<span class="badge ok">Aplicado</span> <small class="muted">corte #${it.aplicado_en_corte_id}</small>` : it.estatus==='Cancelado' ? '<span class="badge d">Cancelado</span>' : '<span class="badge w">Pendiente</span>';
-    const r=[esc(it.origen_folio),esc(it.fecha_registro),esc(it.grupo_cliente),`<span class="mono">${esc(it.numero_afiliacion)}</span>`,esc(it.marca),bl,{num:mxn(it.monto)},st];
+    const origen = String(it.origen_folio||'').startsWith('CB-') ? `<span class="mono" title="Auto-sincronizado desde Disputas">🔗 ${esc(it.origen_folio)}</span>`
+                : String(it.origen_folio||'').startsWith('MAN-') ? `<span class="mono" title="Alta manual">✍ ${esc(it.origen_folio)}</span>`
+                : esc(it.origen_folio||'');
+    const r=[origen,esc(it.fecha_registro),esc(it.grupo_cliente),`<span class="mono">${esc(it.numero_afiliacion)}</span>`,esc(it.marca),bl,{num:mxn(it.monto)},st];
     if(can('ingesta') && it.estatus==='Pendiente') r.push(el('button',{class:'btn danger sm',onclick:async(e)=>{e.stopPropagation();if(confirm('¿Eliminar contracargo '+it.origen_folio+'?')){try{await api('DELETE','/api/contracargos/'+it.id);toast('Eliminado','ok');render();}catch(err){toast(errMsg(err),'err');}}}},'Eliminar'));
     else if(can('ingesta')) r.push(el('span',{class:'muted',style:'font-size:11px'},'—'));
     return r;
   });
-  const head=['Folio','Fecha registro','Grupo','Afiliación','Marca','Bloque',{t:'Monto'},'Estatus'];
+  const head=['Folio / Origen','Fecha registro','Grupo','Afiliación','Marca','Bloque',{t:'Monto'},'Estatus'];
   if(can('ingesta'))head.push('');
-  pt.append(tableWrap(head,rows,{empty:'No hay contracargos cargados para este día. Sube el reporte con el botón de arriba.'}));
+  pt.append(tableWrap(head,rows,{empty:'No hay contracargos programados para este día. Registra uno con "+ Nuevo contracargo" o espera a que Disputas propague los suyos.'}));
   v.append(pt);
+}
+
+async function openNuevoContracargoManual(fechaDefault){
+  let cat;
+  try { cat = await api('GET','/api/catalogo/grupos-full'); }
+  catch(e){ toast('No pude cargar el catálogo: '+errMsg(e),'err'); return; }
+  const body = el('div',{});
+  body.append(el('div',{class:'banner',html:'Alta manual de contracargo. La fecha se ajusta al <b>siguiente corte no generado</b> — si el día elegido ya tiene corte, el sistema mueve el contracargo al próximo día hábil.'}));
+  // Grupo → Afiliación en cascada
+  const grupoSel = el('select',{});
+  grupoSel.append(el('option',{value:''},'— Selecciona —'));
+  for(const g of cat.grupos) grupoSel.append(el('option',{value:String(g.id_grupo)}, g.nombre_cliente));
+  const afilSel = el('select',{}); afilSel.append(el('option',{value:''},'— Elige un grupo primero —'));
+  grupoSel.addEventListener('change', ()=>{
+    const idg = grupoSel.value;
+    afilSel.innerHTML=''; afilSel.append(el('option',{value:''},'— Selecciona —'));
+    if(!idg) return;
+    const propias = cat.afilGrupo.filter(a=>String(a.id_grupo)===idg);
+    for(const a of propias){
+      const meta = cat.afiliaciones.find(x=>String(x.numero_afiliacion)===String(a.numero_afiliacion));
+      afilSel.append(el('option',{value:String(a.numero_afiliacion)}, `${a.numero_afiliacion}${meta?' — '+esc(meta.nombre_comercial||''):''}`));
+    }
+  });
+  const bloque = el('select',{}); ['DOM','AMEX'].forEach(b=>bloque.append(el('option',{value:b},b)));
+  const monto = el('input',{type:'number',step:'0.01',min:'0.01',placeholder:'0.00'});
+  const fecha = el('input',{type:'date',value:fechaDefault||hoyMx()});
+  const marca = el('select',{}); ['VISA','MASTERCARD','AMEX','CARNET'].forEach(m=>marca.append(el('option',{value:m},m)));
+  const codigo = el('input',{type:'text',placeholder:'Ej. 4863, 10.4, MANUAL',value:'MANUAL'});
+  const categoria = el('input',{type:'text',placeholder:'Ej. Servicio no entregado',value:'Manual'});
+  body.append(
+    el('div',{style:'display:grid;grid-template-columns:1fr 1fr;gap:10px'},
+      el('label',{class:'field'},'Grupo *',grupoSel),
+      el('label',{class:'field'},'Afiliación *',afilSel),
+    ),
+    el('div',{style:'display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px'},
+      el('label',{class:'field'},'Bloque *',bloque),
+      el('label',{class:'field'},'Marca',marca),
+      el('label',{class:'field'},'Monto (MXN) *',monto),
+    ),
+    el('div',{style:'display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px'},
+      el('label',{class:'field'},'Fecha de retención *',fecha),
+      el('label',{class:'field'},'Código de razón',codigo),
+      el('label',{class:'field'},'Categoría',categoria),
+    ),
+    el('div',{class:'req-note'},'La fecha se autocorrige al siguiente día hábil sin corte generado. Ejemplo: si eliges 2026-09-01 y ese día ya tiene corte, el contracargo se retendrá el próximo día hábil disponible.'),
+  );
+  const foot = el('div',{});
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'), el('button',{class:'btn',onclick:async()=>{
+    if(!grupoSel.value) return toast('Elige un grupo','err');
+    if(!afilSel.value) return toast('Elige una afiliación','err');
+    const m = Number(monto.value); if(!m || m<=0) return toast('Monto inválido','err');
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(fecha.value)) return toast('Fecha inválida','err');
+    const grupoNom = cat.grupos.find(g=>String(g.id_grupo)===grupoSel.value).nombre_cliente;
+    const payload = {
+      grupo_cliente: grupoNom,
+      numero_afiliacion: afilSel.value,
+      bloque: bloque.value,
+      monto: m,
+      cargado_en_fecha: fecha.value,
+      marca: marca.value,
+      codigo_razon: codigo.value.trim() || 'MANUAL',
+      categoria: categoria.value.trim() || 'Manual',
+    };
+    try{
+      const r = await api('POST','/api/contracargos', payload);
+      closeModal();
+      if(r.movido) toast(`Contracargo ${r.folio} programado para ${r.cargado_en_fecha} (movido desde ${r.fecha_pedida} porque ya había corte).`,'ok');
+      else toast(`Contracargo ${r.folio} programado para ${r.cargado_en_fecha}.`,'ok');
+      _ccFecha = r.cargado_en_fecha; render();
+    }catch(e){ toast(errMsg(e),'err'); }
+  }},'Registrar contracargo'));
+  modal('Nuevo contracargo (manual)', body, foot, true);
+}
+
+function openReprogramarContracargo(h){
+  const body = el('div',{});
+  body.append(el('div',{class:'banner',html:`Reprogramar el contracargo <b>${esc(h.origen_folio||'#'+h.id)}</b> — ${esc(h.grupo_cliente||'')} · afil <span class="mono">${esc(h.numero_afiliacion||'')}</span> · ${h.bloque} · ${mxn(h.monto)}.<br/>La fecha se ajusta al siguiente día hábil sin corte generado.`}));
+  const fecha = el('input',{type:'date',value:hoyMx()});
+  body.append(el('label',{class:'field'},'Nueva fecha de retención',fecha));
+  const foot = el('div',{});
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'), el('button',{class:'btn',onclick:async()=>{
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(fecha.value)) return toast('Fecha inválida','err');
+    try{
+      const r = await api('PATCH','/api/contracargos/'+h.id+'/reprogramar',{ cargado_en_fecha: fecha.value });
+      closeModal();
+      if(r.movido) toast(`Reprogramado a ${r.cargado_en_fecha} (movido desde ${r.fecha_pedida}).`,'ok');
+      else toast(`Reprogramado a ${r.cargado_en_fecha}.`,'ok');
+      _ccFecha = r.cargado_en_fecha; render();
+    }catch(e){ toast(errMsg(e),'err'); }
+  }},'Reprogramar'));
+  modal('Reprogramar contracargo', body, foot, true);
 }
 function openCargarContracargos(fechaDefault){
   const body=el('div',{});
