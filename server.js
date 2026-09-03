@@ -44,6 +44,7 @@ const WORM = require('./lib/worm.js');
 const D = require('./lib/disputas.js');
 const mountDisputasRoutes = require('./lib/disputas-routes.js');
 const CCS = require('./lib/contracargos-sync.js');
+const LP = require('./lib/layout-polipay.js');
 if (!C.ready()) console.warn('⚠  Cifrado app-layer NO configurado (falta ENCRYPTION_KEY_V1 o HMAC_PEPPER). Dual-write escribirá "plain:" en las columnas cifradas.');
 
 const app = express();
@@ -1071,24 +1072,11 @@ app.get('/api/cortes/:id/layout.xlsx', auth, async (req, res) => {
   const pz = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: '2-digit', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
   const gp = t => (pz.find(p => p.type === t) || {}).value || '';
   const referencia = Number(`1${gp('day')}${gp('month')}${gp('year')}`);
-  // Layout SPEI plano — sin banda POLIPAY, sin colores. Solo encabezado + filas.
-  // Formato exacto que espera el dispersor bancario.
-  const headL = [
-    'Concepto',
-    'Cuenta clabe del beneficiario',
-    'Código del banco del beneficiario',
-    'Nombre del beneficiario',
-    'RFC o CURP del beneficiario',
-    'Cantidad',
-    'Referencia numérica',
-    'Fecha de pago (Opcional, solo para transacciones futuras) Formato YYYY-mm-dd HH:mm',
-  ];
-  const rowsL = orders.map(o => [o.concepto, String(o.clabe || ''), Number(o.cod) || o.cod, o.razon, '', o.cant, referencia, '']);
-  const buf = X.buildXLSX([{
-    name: 'LAYOUT',
-    aoa: [headL, ...rowsL],
-    cols: [{ wch: 26 }, { wch: 24 }, { wch: 20 }, { wch: 32 }, { wch: 22 }, { wch: 16 }, { wch: 20 }, { wch: 40 }],
-  }]);
+  // Layout SPEI usando el template oficial Polipay Layout 2025. El helper conserva
+  // el archivo tal cual (fórmulas, formato, hojas BASE BANCOS y Layout para pagos)
+  // y sólo rellena las 5 columnas de datos: CUENTA_BENEFICIARIO, NOMBRE_BENEFICIARIO,
+  // MONTO, CONCEPTO_PAGO, REFERENCIA_NUMERICA en la hoja "Archivo de dispersion".
+  const buf = await LP.buildLayoutPolipay(orders, referencia);
   await bit(req, 'layout', `exportó layout corte #${c.id_corte} (${orders.length} órdenes: ${dom.length} dom + ${amex.length} AMEX)`);
   enviarXLSX(res, `layout_spei_corte_${c.id_corte}_${c.fli}.xlsx`, buf);
 });
@@ -3219,23 +3207,8 @@ async function armarAdjuntosCorte(idCorte) {
   const pz = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: '2-digit', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
   const gp = t => (pz.find(p => p.type === t) || {}).value || '';
   const referencia = Number(`1${gp('day')}${gp('month')}${gp('year')}`);
-  // Layout SPEI plano — mismo formato que el endpoint público, sin banda POLIPAY.
-  const headL = [
-    'Concepto',
-    'Cuenta clabe del beneficiario',
-    'Código del banco del beneficiario',
-    'Nombre del beneficiario',
-    'RFC o CURP del beneficiario',
-    'Cantidad',
-    'Referencia numérica',
-    'Fecha de pago (Opcional, solo para transacciones futuras) Formato YYYY-mm-dd HH:mm',
-  ];
-  const rowsL = orders.map(o => [o.concepto, String(o.clabe || ''), Number(o.cod) || o.cod, o.razon, '', o.cant, referencia, '']);
-  const layoutBuf = X.buildXLSX([{
-    name: 'LAYOUT',
-    aoa: [headL, ...rowsL],
-    cols: [{ wch: 26 }, { wch: 24 }, { wch: 20 }, { wch: 32 }, { wch: 22 }, { wch: 16 }, { wch: 20 }, { wch: 40 }],
-  }]);
+  // Layout SPEI usando el template oficial (mismo helper que el endpoint público).
+  const layoutBuf = await LP.buildLayoutPolipay(orders, referencia);
   // Reporte por cliente (con estilos de la plantilla)
   const reporteBuf = await buildReporteXLSX(c, cal);
   const adj = [
