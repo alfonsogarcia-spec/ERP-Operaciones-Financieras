@@ -1123,7 +1123,7 @@ async function vGrupos(v){
   });
 }
 function editGrupo(ag,af,co){const isNew=!ag;ag=ag||{};af=af||{};co=co||{};const body=el('div',{});
-  const I=(v='')=>el('input',{value:v});const NN=(v='',s='0.0001')=>el('input',{type:'number',step:s});
+  const I=(v='')=>el('input',{value:v});const NN=(v='',s='0.0001')=>el('input',{type:'number',step:s,value:(v===''||v==null)?'':v});
   const idg=el('input',{type:'number',value:ag.id_grupo||''}),nom=I(ag._nombre||(af&&af._n)||'');
   // nombre del grupo: lo tomamos de la fila; si no viene, vacío
   const nomInput=I(ag.nombre_cliente||''); const afil=I(ag.numero_afiliacion||''),razon=I(af.razon_social||'');
