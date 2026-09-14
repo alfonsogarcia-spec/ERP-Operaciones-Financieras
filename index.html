@@ -1938,6 +1938,18 @@ async function openCBNuevo(){
     const canalSel=el('select');
     const canalMap=[['ECOMMERCE','E-commerce'],['POS','POS'],['MOTO','MOTO'],['RECURRING','Recurrente'],['OTHER','Otro']];
     canalMap.forEach(([v,l])=>canalSel.append(el('option',{value:v},l)));canalSel.value='ECOMMERCE';
+    const modSel=el('select');
+    [['CARD_NOT_PRESENT','Tarjeta no presente'],['CARD_PRESENT','Tarjeta presente'],['AMBOS','Ambos']]
+      .forEach(([v,l])=>modSel.append(el('option',{value:v},l)));
+    modSel.value='CARD_NOT_PRESENT';
+    // Autoajuste: POS → tarjeta presente; ECOMMERCE/MOTO/RECURRING → no presente.
+    // El usuario puede sobrescribir si tras auto-ajustar cambia manualmente el select.
+    let modTouched=false;
+    modSel.addEventListener('change',()=>{ modTouched=true; });
+    canalSel.addEventListener('change',()=>{
+      if(modTouched) return;
+      modSel.value = canalSel.value==='POS' ? 'CARD_PRESENT' : 'CARD_NOT_PRESENT';
+    });
     const cicloSel=el('select');
     const cicloMap=[['FIRST_CHARGEBACK','1er contracargo'],['REPRESENTMENT','Representación'],['PRE_ARBITRATION','Pre-arbitraje'],['ARBITRATION','Arbitraje'],['RETRIEVAL','Solicitud de información']];
     cicloMap.forEach(([v,l])=>cicloSel.append(el('option',{value:v},l)));cicloSel.value='FIRST_CHARGEBACK';
@@ -1961,7 +1973,8 @@ async function openCBNuevo(){
       fld('Comercio (nombre)',merchantNombre),fld('Número de afiliación',afil),
       fld('Grupo de cliente (a notificar)',grupoSel),fld('Proveedor / origen',provSel),
       fld('Marca',brandSel),fld('Canal de la transacción',canalSel),
-      fld('Ciclo',cicloSel),fld('Código de razón (catálogo)',rcSel),
+      fld('Modalidad',modSel),fld('Ciclo',cicloSel),
+      fld('Código de razón (catálogo)',rcSel),
       fld('Monto en disputa',monto),fld('Moneda',moneda),
       fld('Fecha del contracargo',fEv),fld('Fecha límite (opcional, se autocalcula)',fLim),
       fld('Nº de caso',caso),fld('ARN',arn),
@@ -1996,6 +2009,7 @@ async function openCBNuevo(){
           client_group_id:grupoSel.value?Number(grupoSel.value):null,
           provider_id:provSel.value?Number(provSel.value):null,
           brand:brandSel.value,channel:canalSel.value,cycle:cicloSel.value,
+          card_presence:modSel.value,
           reason_code_id:rcSel.value?Number(rcSel.value):null,
           disputed_amount:monto.value?Number(monto.value):null,
           currency_code:moneda.value||'MXN',
