@@ -179,6 +179,14 @@ create table if not exists contracargos (
   creado_at             timestamptz default now(),
   creado_por            text
 );
+-- `origen` del ledger que corresponde a esta fila, GUARDADO explícitamente
+-- (no inferido por prefijo de origen_folio). El folio de un reporte real de
+-- contracargos también puede empezar con "CB-" (ej. CB-2026-000030), igual
+-- que el origen_ref interno que genera el sync de Disputas ('CB-'+id) — usar
+-- el prefijo como heurística clasificaba mal los reportes reales como si
+-- vinieran de Disputas. Nullable por compatibilidad con filas viejas
+-- (backfill las infiere una sola vez al migrar).
+alter table contracargos add column if not exists ledger_origen text;
 create index if not exists idx_cc_fecha on contracargos(cargado_en_fecha, estatus);
 create index if not exists idx_cc_afil on contracargos(numero_afiliacion, cargado_en_fecha);
 
@@ -470,6 +478,62 @@ create table if not exists financiamientos (
 );
 create index if not exists idx_fin_fecha on financiamientos(cargado_en_fecha, estatus);
 create index if not exists idx_fin_afil  on financiamientos(numero_afiliacion, cargado_en_fecha);
+
+-- ============================================================================
+-- LEDGER DE COMERCIO (rediseño de retenciones — "opción 2: cuenta corriente")
+-- Reemplaza el gating por `cargado_en_fecha` (que producía huérfanos cuando el
+-- corte de esa fecha ya existía) por un modelo de deuda persistente: cada
+-- contracargo/retención es un CARGO contra el comercio que se cobra por FIFO
+-- (el más antiguo primero) en CADA corte hasta agotarse — sin importar cuántos
+-- cortes tome ni si algún corte no alcanza a cubrirlo completo (aplicación
+-- parcial). Nunca prescribe: se cobra hasta agotarse (decisión del negocio).
+--
+-- `contracargos` y `financiamientos` (arriba) se conservan como tablas legacy
+-- para no romper las vistas existentes — cada alta ahí también crea/actualiza
+-- un cargo aquí (dual-write), y el estatus de vuelta se espeja hacia ellas
+-- después de cada corte (ver lib/ledger.js: mirrorLegacyEstatus).
+-- ============================================================================
+create table if not exists comercio_ledger_cargos (
+  id                    serial primary key,
+  origen                text not null,               -- 'disputa' | 'reporte_xlsx' | 'manual' | 'financiamiento_legacy'
+  origen_ref            text not null,                -- 'CB-123' | folio contracargo/financiamiento — dedup
+  numero_afiliacion     text not null,
+  grupo_cliente         text,                         -- informativo (NO se usa para matchear con el corte)
+  bloque                text not null check (bloque in ('DOM','AMEX')),
+  tipo                  text not null default 'contracargo'
+                        check (tipo in ('contracargo','financiamiento','revenue_share','ajuste_manual')),
+  monto_original        numeric not null check (monto_original > 0),
+  monto_retenido        numeric not null default 0 check (monto_retenido >= 0),
+  estatus               text not null default 'Pendiente'
+                        check (estatus in ('Pendiente','Parcial','Aplicado','Cancelado')),
+  -- No cobrar antes de esta fecha (p.ej. dar el T+1 hábil de cortesía al alta).
+  -- A diferencia del modelo viejo, NO es una fecha límite ni se pierde si pasa:
+  -- simplemente el primer corte elegible para intentarlo.
+  fecha_retencion_desde date,
+  -- Congelado al alta: lo que necesita el correo/reportes para no depender de
+  -- JOINs a catálogos que puedan cambiar después (grupo renombrado, etc.).
+  snapshot_correo       jsonb not null default '{}'::jsonb,
+  motivo_cancelacion    text,
+  creado_por            text,
+  creado_at             timestamptz not null default now(),
+  actualizado_at        timestamptz not null default now(),
+  unique (origen, origen_ref)
+);
+create index if not exists idx_ledger_afil_bloque on comercio_ledger_cargos(numero_afiliacion, bloque, estatus);
+create index if not exists idx_ledger_pendientes on comercio_ledger_cargos(estatus) where estatus in ('Pendiente','Parcial');
+
+-- Qué corte aplicó qué cargo y por cuánto (permite reversión exacta al borrar un corte).
+create table if not exists corte_aplicaciones (
+  id             serial primary key,
+  corte_id       integer not null references cortes(id_corte) on delete cascade,
+  cargo_id       integer not null references comercio_ledger_cargos(id),
+  bloque         text not null check (bloque in ('DOM','AMEX')),
+  monto_aplicado numeric not null check (monto_aplicado > 0),
+  creado_at      timestamptz not null default now(),
+  unique (corte_id, cargo_id)
+);
+create index if not exists idx_corteapl_corte on corte_aplicaciones(corte_id);
+create index if not exists idx_corteapl_cargo on corte_aplicaciones(cargo_id);
 
 -- ============================================================================
 -- ENTREGABLES · Portal de solicitudes internas hacia Operaciones (fase 5)

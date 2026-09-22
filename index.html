@@ -712,17 +712,17 @@ async function vContracargos(v){
         body.append(el('div',{class:'banner',html:`Contracargos del ${fecha}: <b>${r.total_contracargos}</b> · Pendientes: <b>${r.pendientes}</b> · Van al corte: <b style="color:#059669">${r.matcheables}</b> · No matchean: <b style="color:#dc2626">${r.no_matchean}</b> · Txns aprobadas: <b>${r.transacciones_del_dia}</b>`}));
         const noMatch = r.detalle.filter(d => !d.matchea);
         if(noMatch.length){
-          body.append(el('h3',{style:'font-size:13px;color:var(--brand);margin:14px 0 6px'},`Contracargos que NO se aplicarán (${noMatch.length})`));
+          body.append(el('h3',{style:'font-size:13px;color:var(--brand);margin:14px 0 6px'},`No se cobrarán en el corte de este día (${noMatch.length}) — seguirán pendientes para el siguiente`));
           const rows = noMatch.map(d => [esc(d.folio||''), esc(d.grupo||''), esc(d.afil||''), esc(d.bloque||''), {num: mxn(d.monto)}, esc(d.motivo || '—')]);
           body.append(tableWrap(['Folio','Grupo','Afiliación','Bloque',{t:'Monto'},'Motivo'], rows));
         } else if (r.pendientes > 0) {
-          body.append(el('div',{class:'banner ok',html:'✅ Todos los contracargos pendientes van a aplicarse al corte.'}));
+          body.append(el('div',{class:'banner ok',html:'✅ Todos los contracargos pendientes son candidatos a cobrarse en el corte de este día (si la bolsa alcanza).'}));
         }
         modal('Diagnóstico de aplicación al corte', body, el('div',{},el('button',{class:'btn',onclick:closeModal},'Cerrar')), true);
       }catch(e){ toast(errMsg(e),'err'); }
     }},'🔍 Diagnóstico'),
     el('span',{},' '),
-    el('button',{class:'btn ghost sm',onclick:()=>openCargarContracargos(fecha)},'⬆ Cargar reporte'),
+    el('button',{class:'btn ghost sm',onclick:()=>openCargarRetencion(fecha)},'⬆ Cargar archivo'),
   );
   const d = await api('GET','/api/contracargos?fecha='+fecha);
   const huerfanos = await api('GET','/api/contracargos/huerfanos');
@@ -744,22 +744,23 @@ async function vContracargos(v){
     p.append(el('div',{class:'banner ok',html:`✓ <b>${rep.n_contracargos}</b> contracargos en constancia · monto ${mxn(Number(rep.monto_total))} · por ${esc(rep.cargado_por)} (${new Date(rep.cargado_at).toLocaleString('es-MX')})`}));
   }
   v.append(p);
-  // huérfanos (tabla plana, reprogramar por fila)
+  // Cargos con saldo pendiente en el ledger (no son "huérfanos perdidos": el
+  // sistema los retoma solo en cada corte, sin fecha límite, hasta agotarlos).
   if(huerfanos.total){
-    const hp=el('div',{class:'panel'}); hp.append(el('h3',{},`⚠ Huérfanos: ${huerfanos.total} contracargos sin corte (${mxn(huerfanos.total_monto)})`));
-    hp.append(el('div',{class:'banner warn',html:'Estos contracargos quedaron Pendientes en fechas ya cerradas. Reprograma su fecha de retención al próximo día hábil sin corte, o elimínalos.'}));
+    const hp=el('div',{class:'panel'}); hp.append(el('h3',{},`Saldo pendiente de cobro: ${huerfanos.total} contracargo(s) (${mxn(huerfanos.total_monto)})`));
+    hp.append(el('div',{class:'banner',html:'No requieren acción: el sistema los cobra <b>automáticamente</b> en el primer corte con bolsa disponible para esa afiliación, y si un corte no alcanza a cubrirlos completos, retoma el resto en el siguiente. "Piso de cobro" solo lo puedes posponer si quieres darle más plazo al comercio antes del primer intento.'}));
     const hRows = huerfanos.filas.map(h => {
       const bl = h.bloque==='AMEX' ? '<span class="badge g">AMEX</span>' : '<span class="badge b">DOM</span>';
       const acts = [];
       if(can('ingesta')){
-        acts.push(el('button',{class:'btn sm',onclick:(e)=>{e.stopPropagation(); openReprogramarContracargo(h);}}, '📅 Reprogramar'));
+        acts.push(el('button',{class:'btn sm',onclick:(e)=>{e.stopPropagation(); openReprogramarContracargo(h);}}, '⏳ Posponer'));
         acts.push(el('span',{},' '));
         acts.push(el('button',{class:'btn danger sm',onclick:async(e)=>{e.stopPropagation(); if(confirm('¿Eliminar contracargo '+h.origen_folio+'?')){try{await api('DELETE','/api/contracargos/'+h.id); toast('Eliminado','ok'); render();}catch(err){toast(errMsg(err),'err');}}}},'Eliminar'));
       }
       const acc = el('div',{}, ...acts);
       return [fmtISO(h.cargado_en_fecha), esc(h.origen_folio||''), esc(h.grupo_cliente||''), `<span class="mono">${esc(h.numero_afiliacion||'')}</span>`, bl, {num: mxn(h.monto)}, acc];
     });
-    hp.append(tableWrap(['Fecha original','Folio','Grupo','Afiliación','Bloque',{t:'Monto'},''], hRows));
+    hp.append(tableWrap(['Piso de cobro','Folio','Grupo','Afiliación','Bloque',{t:'Monto pendiente'},''], hRows));
     v.append(hp);
   }
   // tabla del día
@@ -786,7 +787,7 @@ async function openNuevoContracargoManual(fechaDefault){
   try { cat = await api('GET','/api/catalogo/grupos-full'); }
   catch(e){ toast('No pude cargar el catálogo: '+errMsg(e),'err'); return; }
   const body = el('div',{});
-  body.append(el('div',{class:'banner',html:'Alta manual de contracargo. La fecha se ajusta al <b>siguiente corte no generado</b> — si el día elegido ya tiene corte, el sistema mueve el contracargo al próximo día hábil.'}));
+  body.append(el('div',{class:'banner',html:'Alta manual de contracargo. La fecha es el <b>piso de cobro</b> (no antes de ese día) — el sistema lo cobra en el primer corte que tenga bolsa disponible para esa afiliación, y si un solo corte no alcanza a cubrirlo completo, retoma el resto automáticamente en el siguiente. Nunca expira ni se pierde.'}));
   // Grupo → Afiliación en cascada
   const grupoSel = el('select',{});
   grupoSel.append(el('option',{value:''},'— Selecciona —'));
@@ -819,11 +820,11 @@ async function openNuevoContracargoManual(fechaDefault){
       el('label',{class:'field'},'Monto (MXN) *',monto),
     ),
     el('div',{style:'display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px'},
-      el('label',{class:'field'},'Fecha de retención *',fecha),
+      el('label',{class:'field'},'Piso de cobro (no antes de) *',fecha),
       el('label',{class:'field'},'Código de razón',codigo),
       el('label',{class:'field'},'Categoría',categoria),
     ),
-    el('div',{class:'req-note'},'La fecha se autocorrige al siguiente día hábil sin corte generado. Ejemplo: si eliges 2026-09-01 y ese día ya tiene corte, el contracargo se retendrá el próximo día hábil disponible.'),
+    el('div',{class:'req-note'},'No es una fecha límite: es el primer día en que el sistema puede empezar a cobrarlo. Se aplica en el corte de ese día si hay bolsa disponible; si no, sigue pendiente y se retoma solo en el siguiente corte, sin importar cuántos días pasen.'),
   );
   const foot = el('div',{});
   foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'), el('button',{class:'btn',onclick:async()=>{
@@ -845,8 +846,7 @@ async function openNuevoContracargoManual(fechaDefault){
     try{
       const r = await api('POST','/api/contracargos', payload);
       closeModal();
-      if(r.movido) toast(`Contracargo ${r.folio} programado para ${r.cargado_en_fecha} (movido desde ${r.fecha_pedida} porque ya había corte).`,'ok');
-      else toast(`Contracargo ${r.folio} programado para ${r.cargado_en_fecha}.`,'ok');
+      toast(`Contracargo ${r.folio} registrado — piso de cobro ${r.cargado_en_fecha}.`,'ok');
       _ccFecha = r.cargado_en_fecha; render();
     }catch(e){ toast(errMsg(e),'err'); }
   }},'Registrar contracargo'));
@@ -855,49 +855,62 @@ async function openNuevoContracargoManual(fechaDefault){
 
 function openReprogramarContracargo(h){
   const body = el('div',{});
-  body.append(el('div',{class:'banner',html:`Reprogramar el contracargo <b>${esc(h.origen_folio||'#'+h.id)}</b> — ${esc(h.grupo_cliente||'')} · afil <span class="mono">${esc(h.numero_afiliacion||'')}</span> · ${h.bloque} · ${mxn(h.monto)}.<br/>La fecha se ajusta al siguiente día hábil sin corte generado.`}));
+  body.append(el('div',{class:'banner',html:`Posponer el piso de cobro de <b>${esc(h.origen_folio||'#'+h.id)}</b> — ${esc(h.grupo_cliente||'')} · afil <span class="mono">${esc(h.numero_afiliacion||'')}</span> · ${h.bloque} · ${mxn(h.monto)}.<br/>Esto NO es necesario para que se cobre — el sistema ya lo reintenta solo en cada corte. Úsalo solo si quieres darle más plazo antes del primer intento (ej. un acuerdo con el comercio).`}));
   const fecha = el('input',{type:'date',value:hoyMx()});
-  body.append(el('label',{class:'field'},'Nueva fecha de retención',fecha));
+  body.append(el('label',{class:'field'},'No cobrar antes de',fecha));
   const foot = el('div',{});
   foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'), el('button',{class:'btn',onclick:async()=>{
     if(!/^\d{4}-\d{2}-\d{2}$/.test(fecha.value)) return toast('Fecha inválida','err');
     try{
       const r = await api('PATCH','/api/contracargos/'+h.id+'/reprogramar',{ cargado_en_fecha: fecha.value });
       closeModal();
-      if(r.movido) toast(`Reprogramado a ${r.cargado_en_fecha} (movido desde ${r.fecha_pedida}).`,'ok');
-      else toast(`Reprogramado a ${r.cargado_en_fecha}.`,'ok');
+      toast(`Piso de cobro pospuesto a ${r.cargado_en_fecha}.`,'ok');
       _ccFecha = r.cargado_en_fecha; render();
     }catch(e){ toast(errMsg(e),'err'); }
-  }},'Reprogramar'));
-  modal('Reprogramar contracargo', body, foot, true);
+  }},'Posponer'));
+  modal('Posponer piso de cobro', body, foot, true);
 }
-function openCargarContracargos(fechaDefault){
+// Modal ÚNICO de carga, compartido por las vistas Contracargos y Retenciones.
+// El usuario sube CUALQUIERA de los dos formatos (reporte de contracargos o
+// layout de retenciones/financiamiento) y el servidor detecta cuál es — el
+// selector de fecha solo aplica si resulta ser un reporte de contracargos
+// (constancia del día); si es un layout de retenciones, cada fila trae su
+// propia fecha y el selector se ignora.
+function openCargarRetencion(fechaDefault){
   const body=el('div',{});
-  body.append(el('div',{class:'banner',html:'Sube el reporte del sistema de contracargos. <b>Aunque venga sin registros</b>, hay que subirlo — el corte del día no se puede generar si no. El sistema extrae automáticamente la fecha del reporte del nombre del archivo si sigue el formato <code>contracargos_a_retener_YYYY-MM-DD.xlsx</code>.'}));
+  body.append(el('div',{class:'banner',html:'Sube el <b>reporte de contracargos</b> o el <b>layout de retenciones</b> — el sistema detecta cuál es. Si es un reporte de contracargos, aunque venga sin registros hay que subirlo (el corte del día no se puede generar si no). El sistema extrae la fecha del nombre del archivo si sigue el formato <code>contracargos_a_retener_YYYY-MM-DD.xlsx</code>.'}));
   const fecha=el('input',{type:'date',value:fechaDefault||hoyMx()});
   const file=el('input',{type:'file',accept:'.xlsx,.xls'});
   const info=el('div',{class:'req-note'});
   file.addEventListener('change',()=>{ if(!file.files[0]){info.textContent='';return;}
     const m=String(file.files[0].name).match(/(\d{4}-\d{2}-\d{2})/);
-    if(m){ fecha.value=m[1]; info.innerHTML='Fecha detectada del nombre del archivo: <b>'+m[1]+'</b> (editable arriba).'; }
-    else info.innerHTML='Archivo: '+esc(file.files[0].name)+' (usando fecha del selector).';
+    if(m){ fecha.value=m[1]; info.innerHTML='Fecha detectada del nombre del archivo: <b>'+m[1]+'</b> (editable arriba — solo aplica si es un reporte de contracargos).'; }
+    else info.innerHTML='Archivo: '+esc(file.files[0].name)+' (la fecha de arriba solo aplica si es un reporte de contracargos).';
   });
-  body.append(el('label',{class:'field'},'Fecha del reporte',fecha),el('label',{class:'field'},'Archivo Excel (.xlsx)',file),info);
+  body.append(el('label',{class:'field'},'Fecha del reporte (solo contracargos)',fecha),el('label',{class:'field'},'Archivo Excel (.xlsx)',file),info);
   const foot=el('div',{});
   foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
     if(!file.files[0]){toast('Selecciona un archivo','err');return;}
     if(!/^\d{4}-\d{2}-\d{2}$/.test(fecha.value)){toast('Fecha inválida','err');return;}
     const fd=new FormData(); fd.append('archivo',file.files[0]); fd.append('fecha',fecha.value);
     try{
-      const res=await withBusy('Procesando reporte en el servidor…',()=>api('POST','/api/contracargos/ingesta',fd));
-      closeModal(); _ccFecha=res.fecha; render();
-      toast(`Reporte del ${res.fecha}: ${res.filas} filas · ${res.insertados} nuevos · ${res.actualizados} actualizados · ${mxn(res.monto_total)}`,'ok');
-      if(res.grupos_sin_match && res.grupos_sin_match.length){
-        setTimeout(()=>toast('⚠ Grupos NO encontrados en catálogo (el corte podría fallar): '+res.grupos_sin_match.join(', '),'err'), 800);
+      const res=await withBusy('Procesando archivo en el servidor…',()=>api('POST','/api/retenciones/ingesta',fd));
+      closeModal();
+      if(res.tipo_detectado==='contracargos'){
+        _ccFecha=res.fecha; render();
+        toast(`Reporte de contracargos del ${res.fecha}: ${res.filas} filas · ${res.insertados} nuevos · ${res.actualizados} actualizados · ${mxn(res.monto_total)}`,'ok');
+        if(res.grupos_sin_match && res.grupos_sin_match.length){
+          setTimeout(()=>toast('⚠ Grupos NO encontrados en catálogo (el corte podría fallar): '+res.grupos_sin_match.join(', '),'err'), 800);
+        }
+      } else {
+        render();
+        let msg = `Layout de retenciones: procesados ${res.procesados} · creados ${res.creados}`;
+        if(res.errores && res.errores.length) msg += ` · ${res.errores.length} errores`;
+        toast(msg, res.errores && res.errores.length ? 'err' : 'ok');
       }
     }catch(e){toast('Error: '+errMsg(e),'err');}
   }},'Procesar'));
-  modal('Cargar reporte de contracargos',body,foot,true);
+  modal('Cargar contracargos o retenciones',body,foot,true);
 }
 
 async function vCortes(v){
@@ -925,9 +938,12 @@ async function openNuevoCorte(){
     try{
       const res = await withBusy('Generando corte en el servidor…',()=>api('POST','/api/cortes',{fecha_liq:sel.value}));
       closeModal();
+      if(res.ledger_aplicaciones){
+        setTimeout(()=>toast(`✓ Ledger: ${res.ledger_aplicaciones} cargo(s) aplicados por ${mxn(res.ledger_monto_aplicado)}.`, 'ok'), 300);
+      }
       if(res.contracargos_no_aplicados && res.contracargos_no_aplicados.length){
         const suma = res.contracargos_no_aplicados.reduce((s,x)=>s+Number(x.monto||0),0);
-        setTimeout(()=>toast(`⚠ ${res.contracargos_no_aplicados.length} contracargo(s) no se aplicaron al corte (${mxn(suma)}). Usa 🔍 Diagnóstico para ver por qué.`, 'err'), 500);
+        setTimeout(()=>toast(`ℹ ${res.contracargos_no_aplicados.length} cargo(s) quedan con saldo pendiente (${mxn(suma)}) — se retomarán automáticamente en el siguiente corte. Usa 🔍 Diagnóstico para ver el detalle.`, 'ok'), 800);
       }
       abrirCorte(res.id_corte);
     }catch(e){toast('Error: '+errMsg(e),'err');}
@@ -1645,8 +1661,8 @@ async function vDispCB(v){
     const p=el('div',{class:'panel'});
     p.append(el('h3',{},'Contracargos',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},`${r.total} casos · viendo ${r.rows.length}`))));
     if(!r.rows.length){p.append(el('div',{class:'empty'},'Sin resultados con esos filtros.'));}
-    else p.append(tableWrap(['Folio','Marca','Canal','Comercio','ARN','Ciclo','Estado','Monto','Vence','Días'],r.rows.map(x=>{
-      const row=[esc(x.folio),`<span class="pill">${esc(x.brand)}</span>`,`<span class="pill">${esc(x.channel)}</span>`,esc(x.merchant_name_out||'—'),esc(x.arn||'—'),`<span class="pill">${esc(x.cycle)}</span>`,badgeEstadoDisp(x.status),{num:x.disputed_amount!=null?mxn(x.disputed_amount):'—'},esc(x.fecha_limite_comercio||'—'),semDias(x.dias_para_vencer)];
+    else p.append(tableWrap(['Folio','Fecha registro','Marca','Canal','Comercio','ARN','Ciclo','Estado','Monto','Vence','Días'],r.rows.map(x=>{
+      const row=[esc(x.folio),x.fecha_recepcion?fmtISO(x.fecha_recepcion):'—',`<span class="pill">${esc(x.brand)}</span>`,`<span class="pill">${esc(x.channel)}</span>`,esc(x.merchant_name_out||'—'),esc(x.arn||'—'),`<span class="pill">${esc(x.cycle)}</span>`,badgeEstadoDisp(x.status),{num:x.disputed_amount!=null?mxn(x.disputed_amount):'—'},esc(x.fecha_limite_comercio||'—'),semDias(x.dias_para_vencer)];
       row._onclick=()=>abrirDispCB(x.id);
       return row;
     })));
@@ -2803,21 +2819,11 @@ boot();
    ========================================================================= */
 async function vRetenciones(v){
   if(can('ingesta')){
-    $('#pageAction').append(el('button',{class:'btn ghost sm',onclick:()=>descargar('/api/financiamientos/plantilla.xlsx','plantilla_retenciones.xlsx').catch(e=>toast(errMsg(e),'err'))},'⬇ Descargar plantilla'));
-    const fileInp = el('input',{type:'file',accept:'.xlsx,.xls,.csv',style:'display:none',onchange:async(e)=>{
-      const f=e.target.files && e.target.files[0]; if(!f) return;
-      const fd=new FormData(); fd.append('archivo',f);
-      try{
-        const r=await withBusy('Cargando retenciones…',()=>api('POST','/api/financiamientos/ingesta',fd));
-        let msg = `Procesados ${r.procesados} · Creados ${r.creados}`;
-        if(r.errores && r.errores.length) msg += ` · ${r.errores.length} errores`;
-        toast(msg, r.errores && r.errores.length ? 'err' : 'ok');
-        render();
-      }catch(ex){ toast(errMsg(ex),'err'); }
-      fileInp.value='';
-    }});
-    v.append(fileInp);
-    $('#pageAction').append(el('button',{class:'btn',onclick:()=>fileInp.click()},'⬆ Cargar layout'));
+    $('#pageAction').append(
+      el('button',{class:'btn ghost sm',onclick:()=>descargar('/api/financiamientos/plantilla.xlsx','plantilla_retenciones.xlsx').catch(e=>toast(errMsg(e),'err'))},'⬇ Descargar plantilla'),
+      el('span',{},' '),
+      el('button',{class:'btn',onclick:()=>openCargarRetencion()},'⬆ Cargar archivo'),
+    );
   }
   const [rows,kpis] = await Promise.all([ api('GET','/api/financiamientos').catch(()=>[]), api('GET','/api/financiamientos/kpis').catch(()=>({pendientes:{n:0,monto:0},aplicados_mes:{n:0,monto:0},cancelados_mes:{n:0,monto:0}})) ]);
   v.innerHTML='';
