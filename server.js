@@ -466,26 +466,48 @@ app.get('/api/catalogo/grupos-full.xlsx', auth, async (req, res) => {
   const costoPor = n  => costos.find(c => String(c.numero_afiliacion) === String(n));
   const HEAD = ['id_grupo', 'nombre_cliente', 'numero_afiliacion', 'razon_social',
     'tasa_pac_tdd', 'tasa_pac_tdc', 'tasa_pac_amex', 'tasa_pac_int',
-    'costo_x_trx', 'pct_banca', 'int_tdd', 'int_tdc', 'int_amex', 'int_int', 'fee_broxel'];
+    'costo_x_trx', 'pct_banca', 'int_tdd', 'int_tdc', 'int_amex', 'int_int', 'fee_broxel',
+    // Tasa de descuento = intercambio del producto + fee Broxel (costo total del
+    // adquirente por esa transacción, antes del margen sobre la tasa pactada).
+    'tasa_descuento_tdd', 'tasa_descuento_tdc', 'tasa_descuento_amex', 'tasa_descuento_int'];
   const filas = afilGrupo.map(ag => {
     const g = grupoPor(ag.id_grupo) || {};
     const af = afilPor(ag.numero_afiliacion) || {};
     const co = costoPor(ag.numero_afiliacion) || {};
+    const intTdd  = co.int_tdd  == null ? null : Number(co.int_tdd);
+    const intTdc  = co.int_tdc  == null ? null : Number(co.int_tdc);
+    const intAmex = co.int_amex == null ? null : Number(co.int_amex);
+    const intInt  = co.int_int  == null ? null : Number(co.int_int);
+    const feeBroxel = co.fee_broxel == null ? null : Number(co.fee_broxel);
+    // OJO: E.round2 redondea a centésimas del NÚMERO (pensado para pesos), no
+    // sirve para tasas fraccionarias como 0.0028 (se volvería 0.00). Aquí
+    // necesitamos 4 decimales — equivalen a 2 decimales al mostrarse como %.
+    const round4 = n => Math.round(n * 10000) / 10000;
+    const descuento = intX => (intX == null || feeBroxel == null) ? '' : round4(intX + feeBroxel);
     return [
       ag.id_grupo, g.nombre_cliente || '', ag.numero_afiliacion, af.razon_social || '',
       Number(ag.tasa_pac_tdd || 0), Number(ag.tasa_pac_tdc || 0),
       Number(ag.tasa_pac_amex || 0), Number(ag.tasa_pac_int || 0),
       Number(ag.costo_x_trx || 0), Number(ag.pct_banca || 0),
-      co.int_tdd == null ? '' : Number(co.int_tdd),
-      co.int_tdc == null ? '' : Number(co.int_tdc),
-      co.int_amex == null ? '' : Number(co.int_amex),
-      co.int_int == null ? '' : Number(co.int_int),
-      co.fee_broxel == null ? '' : Number(co.fee_broxel),
+      intTdd == null ? '' : intTdd, intTdc == null ? '' : intTdc,
+      intAmex == null ? '' : intAmex, intInt == null ? '' : intInt,
+      feeBroxel == null ? '' : feeBroxel,
+      descuento(intTdd), descuento(intTdc), descuento(intAmex), descuento(intInt),
     ];
   });
   filas.sort((a, b) => String(a[1]).localeCompare(String(b[1])) || String(a[2]).localeCompare(String(b[2])));
   const iso = new Date().toISOString().slice(0, 10);
-  const sheet = { name: 'Grupos', aoa: [HEAD, ...filas] };
+  // Todas las columnas de tasa se guardan como fracción (0.025) pero se
+  // MUESTRAN como porcentaje (2.50%) vía formato de Excel — el valor sigue
+  // siendo el número real para poder sumar/operar sobre él en la hoja.
+  // Índices 0-based: 4-9 (tasas pactadas + costo_x_trx + %banca), 10-14
+  // (intercambio + fee Broxel), 15-18 (tasa de descuento calculada).
+  // costo_x_trx (col 8) es un MONTO en MXN, no una tasa — se excluye del %.
+  const colsPct = [4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+  const sheet = {
+    name: 'Grupos', aoa: [HEAD, ...filas],
+    fmt: { z: '0.00%', cols: colsPct, rowFrom: 1 },
+  };
   await bit(req, 'catalogo', `descargó grupos-full: ${filas.length} relaciones`);
   enviarXLSX(res, `catalogo_grupos_${iso}.xlsx`, X.buildXLSX([sheet]));
 });
