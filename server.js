@@ -2199,6 +2199,21 @@ app.post('/api/ledger/backlog/congelar', auth, requiereRol('admin'), async (req,
   res.json(resultado);
 });
 
+// Reactiva (Pendiente) cargos previamente congelados, con una nueva
+// fecha_retencion_desde -- el ledger los vuelve a cobrar automatico por
+// FIFO a partir de esa fecha. Solo toca cargos que sigan Cancelado.
+app.post('/api/ledger/backlog/reprogramar', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const ids = Array.isArray((req.body || {}).ids) ? req.body.ids.map(Number).filter(Number.isFinite) : [];
+  const fecha = String((req.body || {}).fecha_retencion_desde || '').slice(0, 10);
+  if (!ids.length) return res.status(400).json({ error: 'ids_requeridos', mensaje: 'Envía { ids: [...], fecha_retencion_desde: "YYYY-MM-DD" }' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return res.status(400).json({ error: 'fecha_requerida', mensaje: 'Envía fecha_retencion_desde en formato YYYY-MM-DD' });
+  const motivo = (req.body || {}).motivo || null;
+  const resultado = await L.reprogramarCargos(db, { ids, fecha_retencion_desde: fecha, motivo, actor: req.user.nombre });
+  await bit(req, 'ledger_backlog_reprogramar', `reprogramó ${resultado.reprogramados} cargo(s) a partir de ${fecha}: ${JSON.stringify(ids)}`);
+  res.json(resultado);
+});
+
 /* ============================================================================
    RETENCIONES POR FINANCIAMIENTO / REVENUE SHARE
    Se sube un layout xlsx con las retenciones del día. Al generar el corte,
