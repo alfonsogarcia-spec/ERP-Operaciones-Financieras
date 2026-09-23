@@ -141,6 +141,7 @@
 
     .filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;align-items:center}
     input,select,textarea{padding:9px 12px;border:1px solid var(--line);border-radius:10px;font-size:13px;font-family:inherit;background:#fff;color:var(--ink);width:100%;max-width:100%;box-sizing:border-box;min-width:0}
+    input[type=checkbox],input[type=radio]{width:16px;height:16px;padding:0;flex:none;accent-color:var(--accent)}
     input:focus,select:focus,textarea:focus{outline:3px solid #E8EAF5;border-color:var(--accent)}
     textarea{resize:vertical;min-height:74px;width:100%;font-family:ui-monospace,Menlo,monospace;font-size:12px}
     select{text-overflow:ellipsis}
@@ -956,7 +957,8 @@ async function abrirCorte(id){
   VIEW='cortes';renderNav();$('#viewTitle').textContent='Cortes y liquidación';
   const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
   let data;try{data=await api('GET','/api/cortes/'+id);}catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},errMsg(e)));return;}
-  const c=data.corte, cal=data.calculos;
+  const c=data.corte, cal=data.calculos.map(x=>({...x, calc: typeof x.calc==='string'?JSON.parse(x.calc):x.calc}));
+  const falt=await api('GET','/api/cortes/'+id+'/faltantes').catch(()=>({propios:[],pendientes_anteriores:[]}));
   $('#viewSub').textContent=`Corte #${c.id_corte} · liquidación ${c.fecha_liq}`;
   $('#pageAction').innerHTML='';$('#pageAction').append(el('button',{class:'btn ghost sm',onclick:()=>go('cortes')},'← Cortes'));
   v.innerHTML='';
@@ -972,6 +974,14 @@ async function abrirCorte(id){
   acc.append(el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/cortes/'+id+'/layout.xlsx','layout_corte_'+id+'.xlsx').catch(e=>toast(e.status===409?'Layout bloqueado: hay órdenes sin CLABE/banco':errMsg(e),'err'))},'⬇ Layout SPEI'));
   acc.append(el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/cortes/'+id+'/reporte.xlsx','reporte_corte_'+id+'.xlsx')},'⬇ Reporte por cliente'));
   acc.append(el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/cortes/'+id+'/detalle-transaccional.xlsx','detalle_transaccional_corte_'+id+'.xlsx')},'⬇ Detalle transaccional'));
+  if(falt.propios && falt.propios.length){
+    acc.append(el('button',{class:'btn secondary sm',style:'color:#B45309',onclick:()=>descargar('/api/cortes/'+id+'/layout-no-dispersado.xlsx','layout_NO_DISPERSADO_corte_'+id+'.xlsx')},'⬇ Registro no dispersado'));
+    acc.append(el('button',{class:'btn secondary sm',style:'color:#B45309',onclick:()=>descargar('/api/cortes/'+id+'/reporte-no-dispersado.xlsx','reporte_FALTANTE_corte_'+id+'.xlsx')},'⬇ Reporte cliente faltante'));
+  }
+  if(falt.pendientes_anteriores && falt.pendientes_anteriores.length){
+    const sumaPend=falt.pendientes_anteriores.reduce((s,p)=>s+Number(p.monto||0),0);
+    acc.append(el('button',{class:'btn sm',style:'background:#7C3AED;color:#fff',onclick:()=>descargar('/api/cortes/'+id+'/layout-pendientes.xlsx','layout_RECUPERACION_corte_'+id+'.xlsx').catch(e=>toast(e.status===409?'Layout bloqueado: hay órdenes sin CLABE/banco':errMsg(e),'err'))},`↺ Layout recuperación (${mxn(sumaPend)})`));
+  }
   const trans=async(a,label)=>{try{await api('POST','/api/cortes/'+id+'/'+a);toast(label,'ok');abrirCorte(id);}catch(e){toast(errMsg(e),'err');}};
   if(c.estado==='Borrador'&&can('validar'))acc.append(el('button',{class:'btn ok sm',disabled:(!c.cuadra||c.bloqueos)?true:null,onclick:()=>trans('validar','Corte validado')},'Validar corte'));
   // Botón Notificar (envía el informe por correo). Disponible a admin/tesorería/bancos en cualquier estado.
@@ -1003,7 +1013,7 @@ async function abrirCorte(id){
       else toast('Error: '+(d.mensaje||errMsg(e)),'err');
     }
   }},'📤 Enviar a clientes'));
-  if(c.estado==='Validado'&&can('dispersar'))acc.append(el('button',{class:'btn sm',style:'background:var(--violet);color:#fff',onclick:()=>trans('dispersar','Marcado como dispersado')},'Marcar dispersado'));
+  if(c.estado==='Validado'&&can('dispersar'))acc.append(el('button',{class:'btn sm',style:'background:var(--violet);color:#fff',onclick:()=>openMarcarDispersion(id,cal,falt.pendientes_anteriores||[])},'Marcar dispersado'));
   if(c.estado==='Dispersado'&&can('cerrar'))acc.append(el('button',{class:'btn sm',onclick:()=>trans('cerrar','Corte cerrado')},'Cerrar corte (inmutable)'));
   pa.append(acc);
   pa.append(el('div',{class:'foot-links'},`Creado por ${esc(c.creado_por||'—')}`,c.validado_por?`· Validado por ${esc(c.validado_por)}`:'',c.dispersado_por?`· Dispersado por ${esc(c.dispersado_por)}`:''));
@@ -1014,6 +1024,51 @@ async function abrirCorte(id){
   pt.append(el('div',{class:'muted',style:'margin-top:8px'},'Clic en un grupo para ver el desglose completo.'));
   v.append(pt);
 }
+
+// Modal de revisión antes de marcar el corte como Dispersado. Muestra CADA
+// bloque (DOM/AMEX es una orden SPEI independiente) con checkbox "se
+// dispersó" — default marcado. Lo que se desmarque queda registrado como
+// pendiente y se recupera en el siguiente corte con actividad para esa
+// afiliación, vía un layout separado (nunca se pierde ni expira).
+function openMarcarDispersion(id,cal,pendientesAnteriores){
+  const body=el('div',{});
+  body.append(el('div',{class:'banner',html:'Revisa qué se dispersó realmente. Desmarca los bloques que <b>NO</b> se pagaron (ej. SPEI rechazado) — el monto queda pendiente y se recupera automáticamente en el siguiente corte de esa afiliación, en un layout separado.'}));
+  const filas=[]; // {chk, motivoInp, tipo, id, bloque}
+  const tbl=el('div',{});
+  const addFila=(label,monto,tipo,refId,bloque)=>{
+    const chk=el('input',{type:'checkbox'}); chk.checked=true;
+    const motivoInp=el('input',{placeholder:'Motivo (opcional)',style:'display:none;margin-top:4px;width:100%'});
+    chk.addEventListener('change',()=>{ motivoInp.style.display=chk.checked?'none':'block'; });
+    const row=el('div',{style:'display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)'});
+    row.append(chk,el('div',{style:'flex:1'},el('div',{},label),motivoInp),el('div',{style:'font-variant-numeric:tabular-nums;font-weight:600'},mxn(monto)));
+    tbl.append(row);
+    filas.push({chk,motivoInp,tipo,id:refId,bloque});
+  };
+  for(const cc of cal){
+    const r=cc.calc;
+    if(Math.abs(r.disp_dom)>0.005) addFila(`${cc.razon} · Afil ${cc.afil} · DOM`, r.disp_dom, 'calculo', cc.id, 'DOM');
+    if(Math.abs(r.disp_amex)>0.005) addFila(`${cc.razon} · Afil ${cc.afil} · AMEX`, r.disp_amex, 'calculo', cc.id, 'AMEX');
+  }
+  if(pendientesAnteriores.length){
+    tbl.append(el('h3',{style:'font-size:13px;color:var(--brand);margin:14px 0 6px'},'Pendientes de cortes anteriores (recuperación)'));
+    for(const p of pendientesAnteriores) addFila(`${p.grupo_cliente||''} · Afil ${p.numero_afiliacion} · ${p.bloque} · desde corte #${p.origen_corte_id||'—'}`, p.monto, 'pendiente', p.id, p.bloque);
+  }
+  body.append(tbl);
+  const foot=el('div',{});
+  const btnConfirmar=el('button',{class:'btn',style:'background:var(--violet);color:#fff',onclick:async()=>{
+    btnConfirmar.disabled=true;
+    const items=filas.map(f=>({tipo:f.tipo,id:f.id,bloque:f.bloque,dispersado:f.chk.checked,motivo:f.motivoInp.value.trim()||undefined}));
+    try{
+      const r=await api('POST','/api/cortes/'+id+'/dispersar',{items});
+      closeModal();
+      toast(`Corte marcado como Dispersado${r.no_dispersados?` · ${r.no_dispersados} bloque(s) pendiente(s)`:''}${r.pendientes_asentadas?` · ${r.pendientes_asentadas} recuperación(es) saldada(s)`:''}`,'ok');
+      abrirCorte(id);
+    }catch(e){toast(errMsg(e),'err'); btnConfirmar.disabled=false;}
+  }},'Confirmar dispersión');
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),btnConfirmar);
+  modal('Marcar dispersado',body,foot,true);
+}
+
 function detalleCalculo(cc){const r=cc.calc;const body=el('div',{});
   body.append(el('div',{class:'banner',html:`<b>${esc(cc.razon)}</b> · Afiliación ${esc(cc.afil)} · ${esc(cc.concepto||'—')} · ${r.num_trx} trx`}));
   const kv=(k,val,strong)=>el('div',{class:'testline'},el('span',{style:'flex:1'},k),el('span',{class:strong?'flagok':'',style:'font-variant-numeric:tabular-nums'},val));

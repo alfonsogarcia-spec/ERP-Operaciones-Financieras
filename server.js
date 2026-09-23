@@ -45,6 +45,7 @@ const D = require('./lib/disputas.js');
 const mountDisputasRoutes = require('./lib/disputas-routes.js');
 const CCS = require('./lib/contracargos-sync.js');
 const L = require('./lib/ledger.js');
+const DP = require('./lib/dispersion-pendiente.js');
 const LP = require('./lib/layout-polipay.js');
 if (!C.ready()) console.warn('⚠  Cifrado app-layer NO configurado (falta ENCRYPTION_KEY_V1 o HMAC_PEPPER). Dual-write escribirá "plain:" en las columnas cifradas.');
 
@@ -1011,17 +1012,49 @@ app.post('/api/cortes/:id/:accion', auth, async (req, res, next) => {
     // NOTA: el ledger ya aplicó los cargos (FIFO, con espejo a legacy) al
     // CREAR el corte (Borrador) — no hay nada más que marcar aquí.
   }
-  if (accion === 'dispersar') await db.query('update cortes set estado=$1,dispersado_por=$2 where id_corte=$3', ['Dispersado', req.user.nombre, c.id_corte]);
+  let noDispersados = 0, pendientesAsentadas = 0;
+  if (accion === 'dispersar') {
+    // items: [{tipo:'calculo', id, bloque:'DOM'|'AMEX', dispersado:bool, motivo?},
+    //         {tipo:'pendiente', id, dispersado:bool}]
+    // Por defecto (sin items) se asume TODO dispersado, igual que antes.
+    const items = Array.isArray((req.body || {}).items) ? req.body.items : [];
+    const cal = (await db.query('select * from calculos where corte_id=$1', [c.id_corte])).rows
+      .map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc }));
+    for (const it of items) {
+      if (it.tipo === 'pendiente') {
+        if (it.dispersado) { await DP.marcarAplicado(db, parseInt(it.id, 10), c.id_corte); pendientesAsentadas++; }
+        continue; // si dispersado===false, se queda Pendiente tal cual (nada que hacer)
+      }
+      if (it.tipo !== 'calculo' || it.dispersado) continue; // default true: no tocar
+      const fila = cal.find(x => x.id === parseInt(it.id, 10));
+      if (!fila) continue;
+      const bloque = String(it.bloque || '').toUpperCase();
+      const monto = bloque === 'AMEX' ? fila.calc.disp_amex : fila.calc.disp_dom;
+      if (!(Math.abs(monto) > 0.005)) continue; // nada que registrar si no había monto en ese bloque
+      const col = bloque === 'AMEX' ? 'dispersado_amex' : 'dispersado_dom';
+      await db.query(`update calculos set ${col}=false, motivo_no_dispersado=$1 where id=$2`, [it.motivo || null, fila.id]);
+      await DP.registrar(db, {
+        origen_corte_id: c.id_corte, origen_calculo_id: fila.id,
+        numero_afiliacion: fila.afil, grupo_cliente: fila.cliente, id_grupo: fila.id_grupo,
+        bloque, monto, motivo: it.motivo || null, creado_por: req.user.nombre,
+      });
+      noDispersados++;
+    }
+    await db.query('update cortes set estado=$1,dispersado_por=$2 where id_corte=$3', ['Dispersado', req.user.nombre, c.id_corte]);
+  }
   if (accion === 'cerrar') await db.query('update cortes set estado=$1 where id_corte=$2', ['Cerrado', c.id_corte]);
-  await bit(req, 'corte_' + accion, `estado→${accion === 'validar' ? 'Validado' : accion === 'dispersar' ? 'Dispersado' : 'Cerrado'}`, { resource_type: 'corte', resource_id: c.id_corte });
-  res.json({ ok: true });
+  await bit(req, 'corte_' + accion, `estado→${accion === 'validar' ? 'Validado' : accion === 'dispersar' ? 'Dispersado' : 'Cerrado'}${noDispersados ? `, ${noDispersados} bloque(s) marcados no dispersados` : ''}${pendientesAsentadas ? `, ${pendientesAsentadas} pendiente(s) anterior(es) saldadas` : ''}`, { resource_type: 'corte', resource_id: c.id_corte });
+  res.json({ ok: true, no_dispersados: noDispersados, pendientes_asentadas: pendientesAsentadas });
 });
 app.delete('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res) => {
   if (!dbReady(res)) return;
   // Revertir en el ledger TODAS las aplicaciones de TODOS los cortes antes de
   // borrarlos (cascade borraría corte_aplicaciones sin darnos chance de leerlas).
   const ids = (await db.query('select id_corte from cortes')).rows.map(r => r.id_corte);
-  for (const id of ids) await L.revertirCorte(db, id);
+  for (const id of ids) { await L.revertirCorte(db, id); await DP.revertirCorte(db, id); }
+  // Las dispersiones_pendientes cuyo origen era uno de estos cortes pierden la
+  // referencia (FK on delete set null) pero SIGUEN vivas — el monto no
+  // dispersado no se pierde solo porque se borre el corte donde se originó.
   await db.query('delete from cortes'); await bit(req, 'corte', 'vació cortes'); res.json({ ok: true });
 });
 // Eliminar un corte individual (borra sus cálculos por FK cascade)
@@ -1032,6 +1065,7 @@ app.delete('/api/cortes/:id', auth, requiereRol('admin', 'operador'), async (req
   if (!c) return res.status(404).json({ error: 'no_existe' });
   // Revertir en el ledger ANTES de borrar (delete cascadea corte_aplicaciones).
   await L.revertirCorte(db, id);
+  await DP.revertirCorte(db, id);
   await db.query('delete from cortes where id_corte=$1', [id]);
   await bit(req, 'corte_baja', `estado ${c.estado}`, { resource_type: 'corte', resource_id: id });
   res.json({ ok: true });
@@ -1085,6 +1119,130 @@ app.get('/api/cortes/:id/layout.xlsx', auth, async (req, res) => {
   await bit(req, 'layout', `exportó layout corte #${c.id_corte} (${orders.length} órdenes: ${dom.length} dom + ${amex.length} AMEX)`);
   enviarXLSX(res, `layout_spei_corte_${c.id_corte}_${c.fli}.xlsx`, buf);
 });
+
+// Encabezado + anchos compartidos por los layouts SPEI derivados (no
+// dispersado / pendientes) — mismo formato que el layout principal.
+const HEAD_LAYOUT = ['Concepto', 'Cuenta clabe del beneficiario', 'Código del banco del beneficiario', 'Nombre del beneficiario', 'RFC o CURP del beneficiario', 'Cantidad', 'Referencia numérica', 'Fecha de pago (Opcional, solo para transacciones futuras) Formato YYYY-mm-dd HH:mm'];
+const COLS_LAYOUT = [{ wch: 26 }, { wch: 24 }, { wch: 20 }, { wch: 32 }, { wch: 22 }, { wch: 16 }, { wch: 20 }, { wch: 40 }];
+function referenciaHoy() {
+  const pz = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: '2-digit', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const gp = t => (pz.find(p => p.type === t) || {}).value || '';
+  return Number(`1${gp('day')}${gp('month')}${gp('year')}`);
+}
+
+// Faltantes de ESTE corte: bloques marcados dispersado_dom/amex=false, más
+// las pendientes de OTROS cortes anteriores que siguen sin pagarse para las
+// afiliaciones que participan aquí (candidatas al layout de recuperación).
+app.get('/api/cortes/:id/faltantes', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const idCorte = parseInt(req.params.id, 10);
+  const c = (await db.query('select id_corte from cortes where id_corte=$1', [idCorte])).rows[0];
+  if (!c) return res.status(404).json({ error: 'no_existe' });
+  const cal = (await db.query('select * from calculos where corte_id=$1', [idCorte])).rows
+    .map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc }));
+  const propios = [];
+  for (const x of cal) {
+    if (!x.dispersado_dom && Math.abs(x.calc.disp_dom) > 0.005) propios.push({ calculo_id: x.id, afil: x.afil, razon: x.razon, bloque: 'DOM', monto: E.round2(x.calc.disp_dom), motivo: x.motivo_no_dispersado });
+    if (!x.dispersado_amex && Math.abs(x.calc.disp_amex) > 0.005) propios.push({ calculo_id: x.id, afil: x.afil, razon: x.razon, bloque: 'AMEX', monto: E.round2(x.calc.disp_amex), motivo: x.motivo_no_dispersado });
+  }
+  const afiliaciones = [...new Set(cal.map(x => x.afil))];
+  const pendientesAnteriores = (await DP.pendientesDeAfiliaciones(db, afiliaciones)).filter(p => p.origen_corte_id !== idCorte);
+  res.json({ propios, pendientes_anteriores: pendientesAnteriores });
+});
+
+// Layout de REGISTRO/AUDITORÍA de lo que se marcó NO dispersado en este
+// corte. NO se sube al banco — el pago real sale en el layout de
+// "pendientes" del siguiente corte con actividad para esa afiliación.
+app.get('/api/cortes/:id/layout-no-dispersado.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const c = (await db.query('select *, fecha_liq_iso::text as fli from cortes where id_corte=$1', [parseInt(req.params.id, 10)])).rows[0];
+  if (!c) return res.status(404).json({ error: 'no_existe' });
+  const cal = (await db.query('select * from calculos where corte_id=$1', [c.id_corte])).rows
+    .map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc }));
+  const orders = [];
+  for (const x of cal) {
+    if (!x.dispersado_dom && Math.abs(x.calc.disp_dom) > 0.005) orders.push({ concepto: 'NO DISPERSADO: ' + x.concepto, clabe: x.clabe, cod: x.codigo_banco, benef: x.beneficiario, cant: E.round2(x.calc.disp_dom), razon: x.razon, afil: x.afil });
+    if (!x.dispersado_amex && Math.abs(x.calc.disp_amex) > 0.005) orders.push({ concepto: 'NO DISPERSADO: ' + `DISPERSION ${E.ult3(x.afil)}CPPXAMEX00${x.id_grupo}`, clabe: x.clabe, cod: x.codigo_banco, benef: x.beneficiario, cant: E.round2(x.calc.disp_amex), razon: x.razon, afil: x.afil });
+  }
+  const referencia = referenciaHoy();
+  const rowsL = orders.map(o => [o.concepto, String(o.clabe || ''), Number(o.cod) || o.cod, o.razon, '', o.cant, referencia, '']);
+  const buf = X.buildXLSX([{
+    name: 'REGISTRO NO DISPERSADO',
+    aoa: [['⚠ REGISTRO DE AUDITORÍA — NO REENVIAR AL BANCO. El pago real se recupera en el layout de "pendientes" del próximo corte con actividad de cada afiliación.'], [], HEAD_LAYOUT, ...rowsL],
+    cols: COLS_LAYOUT,
+    merges: [{ s: { r: 0, c: 0 }, e: { r: 0, c: 7 } }],
+  }]);
+  await bit(req, 'layout_no_dispersado', `exportó registro de no dispersado corte #${c.id_corte} (${orders.length} bloques)`);
+  enviarXLSX(res, `layout_NO_DISPERSADO_corte_${c.id_corte}_${c.fli}.xlsx`, buf);
+});
+
+// Reporte de cliente con SOLO los grupos/afiliaciones que quedaron con algún
+// bloque marcado no dispersado — para comunicar al cliente qué falta.
+app.get('/api/cortes/:id/reporte-no-dispersado.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const c = (await db.query('select *, fecha_liq_iso::text as fli from cortes where id_corte=$1', [parseInt(req.params.id, 10)])).rows[0];
+  if (!c) return res.status(404).json({ error: 'no_existe' });
+  const cal = (await db.query('select * from calculos where corte_id=$1', [c.id_corte])).rows
+    .map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc }))
+    .filter(x => !x.dispersado_dom || !x.dispersado_amex);
+  if (!cal.length) return res.status(404).json({ error: 'sin_faltantes', mensaje: 'Este corte no tiene bloques marcados como no dispersados.' });
+  await bit(req, 'reporte_no_dispersado', `exportó reporte de faltantes corte #${c.id_corte} (${cal.length} filas)`);
+  const buf = await buildReporteXLSX(c, cal);
+  enviarXLSX(res, `reporte_FALTANTE_corte_${c.id_corte}_${c.fli}.xlsx`, buf);
+});
+
+// Cancela manualmente un pendiente de dispersión (ej. comercio dado de baja).
+app.delete('/api/dispersiones-pendientes/:id', auth, requiereRol('admin', 'bancos'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const ok = await DP.cancelar(db, parseInt(req.params.id, 10), (req.body || {}).motivo);
+  if (!ok) return res.status(404).json({ error: 'no_existe_o_ya_resuelto' });
+  await bit(req, 'dispersion_pendiente_cancelar', `canceló pendiente #${req.params.id}`);
+  res.json({ ok: true });
+});
+
+// Layout SEPARADO de recuperación: pendientes de cortes ANTERIORES que
+// siguen sin pagarse, para las afiliaciones con actividad en ESTE corte.
+// Se sube al banco como un lote propio, distinto del layout normal del día
+// (así queda claro que es un pago de recuperación, no la dispersión ordinaria).
+// Construye el layout SEPARADO de recuperación para un corte: pendientes de
+// cortes ANTERIORES (Pendiente) para las afiliaciones con actividad en este
+// corte. Reusado por el endpoint de descarga y por el adjunto del correo.
+// Devuelve null si no hay pendientes o bloqueado:true si falta CLABE/banco.
+async function construirLayoutPendientes(idCorte) {
+  const cal = (await db.query('select * from calculos where corte_id=$1', [idCorte])).rows;
+  const afiliaciones = [...new Set(cal.map(x => x.afil))];
+  const pendientes = await DP.pendientesORecuperadasEnCorte(db, afiliaciones, idCorte);
+  if (!pendientes.length) return null;
+  const cuentaDeAfil = afil => cal.find(x => x.afil === afil);
+  const orders = pendientes.map(p => {
+    const fila = cuentaDeAfil(p.numero_afiliacion) || {};
+    const concepto = p.bloque === 'AMEX' ? `RECUPERACION ${E.ult3(p.numero_afiliacion)}CPPXAMEX00${p.id_grupo || fila.id_grupo || ''}` : 'RECUPERACION ' + (fila.concepto || '');
+    return { concepto, clabe: fila.clabe, cod: fila.codigo_banco, benef: fila.beneficiario, cant: p.monto, razon: p.grupo_cliente || fila.razon, afil: p.numero_afiliacion, id: p.id };
+  });
+  const bloqueadas = orders.filter(o => !o.clabe || !o.cod);
+  if (bloqueadas.length) return { bloqueado: true, detalle: bloqueadas.map(o => ({ razon: o.razon, afil: o.afil, importe: o.cant, falta: !o.clabe ? 'CLABE' : 'codigo_banco' })) };
+  const referencia = referenciaHoy();
+  const rowsL = orders.map(o => [o.concepto, String(o.clabe || ''), Number(o.cod) || o.cod, o.razon, '', o.cant, referencia, '']);
+  const buf = X.buildXLSX([{
+    name: 'RECUPERACION',
+    aoa: [HEAD_LAYOUT, ...rowsL],
+    cols: COLS_LAYOUT,
+  }]);
+  return { buf, count: orders.length };
+}
+
+app.get('/api/cortes/:id/layout-pendientes.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const idCorte = parseInt(req.params.id, 10);
+  const c = (await db.query('select *, fecha_liq_iso::text as fli from cortes where id_corte=$1', [idCorte])).rows[0];
+  if (!c) return res.status(404).json({ error: 'no_existe' });
+  const resultado = await construirLayoutPendientes(idCorte);
+  if (!resultado) return res.status(404).json({ error: 'sin_pendientes', mensaje: 'No hay montos pendientes de cortes anteriores para las afiliaciones de este corte.' });
+  if (resultado.bloqueado) return res.status(409).json({ error: 'bloqueado', detalle: resultado.detalle });
+  await bit(req, 'layout_pendientes', `exportó layout de recuperación corte #${c.id_corte} (${resultado.count} órdenes)`);
+  enviarXLSX(res, `layout_RECUPERACION_corte_${c.id_corte}_${c.fli}.xlsx`, resultado.buf);
+});
+
 app.get('/api/cortes/:id/reporte.xlsx', auth, async (req, res) => {
   if (!dbReady(res)) return;
   const c = (await db.query('select *, fecha_liq_iso::text as fli from cortes where id_corte=$1', [parseInt(req.params.id, 10)])).rows[0];
@@ -2174,8 +2332,8 @@ app.get('/api/ledger', auth, async (req, res) => {
 });
 
 // Backlog = cargos Pendiente/Parcial cuyo piso de cobro (o fecha de alta, si
-// no tiene piso) es ANTERIOR a `antes_de`. Solo lectura -- no cambia nada.
-// Usalo para revisar que se congelaria ANTES de confirmar con el POST de abajo.
+// no tiene piso) es ANTERIOR a `antes_de`. Solo lectura — no cambia nada.
+// Úsalo para revisar qué se congelaría ANTES de confirmar con el POST de abajo.
 app.get('/api/ledger/backlog', auth, async (req, res) => {
   if (!dbReady(res)) return;
   const antesDe = String(req.query.antes_de || '').slice(0, 10);
@@ -2184,18 +2342,18 @@ app.get('/api/ledger/backlog', auth, async (req, res) => {
   res.json(resultado);
 });
 
-// Congela (Cancelado) el backlog anterior a `antes_de` -- deja de sumarse
-// automaticamente a los cortes futuros. No borra nada ni toca lo ya
+// Congela (Cancelado) el backlog anterior a `antes_de` — deja de sumarse
+// automáticamente a los cortes futuros. No borra nada ni toca lo ya
 // Aplicado; solo el saldo Pendiente/Parcial de cargos viejos. Espeja el
 // Cancelado a las tablas legacy (Contracargos/Retenciones) para que esas
 // vistas dejen de mostrarlos como pendientes de cobro.
 app.post('/api/ledger/backlog/congelar', auth, requiereRol('admin'), async (req, res) => {
   if (!dbReady(res)) return;
   const antesDe = String((req.body || {}).antes_de || '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(antesDe)) return res.status(400).json({ error: 'antes_de_requerido', mensaje: 'Envia { antes_de: \"YYYY-MM-DD\" }' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(antesDe)) return res.status(400).json({ error: 'antes_de_requerido', mensaje: 'Envía { antes_de: "YYYY-MM-DD" }' });
   const motivo = (req.body || {}).motivo || null;
   const resultado = await L.congelarBacklog(db, { antesDe, motivo, actor: req.user.nombre });
-  await bit(req, 'ledger_backlog_congelar', `congelo backlog anterior a ${antesDe}: ${resultado.congelados} cargo(s) por ${resultado.monto_congelado}`);
+  await bit(req, 'ledger_backlog_congelar', `congeló backlog anterior a ${antesDe}: ${resultado.congelados} cargo(s) por ${resultado.monto_congelado}`);
   res.json(resultado);
 });
 
@@ -2416,6 +2574,16 @@ async function armarInformeHTML(idCorte, opts) {
   const tCC  = cal.reduce((s, x) => s + (Number(x.ajustes.contracargo_solo_dom  || 0) + Number(x.ajustes.contracargo_solo_amex  || 0)), 0);
   const tFin = cal.reduce((s, x) => s + (Number(x.ajustes.financiamiento_dom    || 0) + Number(x.ajustes.financiamiento_amex    || 0)), 0);
   const tUtil = cal.reduce((s, x) => s + Number(x.calc.utilidad || 0), 0);
+  // Dispersiones que faltaron en un corte ANTERIOR y se recuperan en ESTE
+  // (el correo se manda en el corte donde el pago realmente sale, no en el
+  // corte donde falló — ahí solo queda el registro de auditoría interno).
+  const razonPorAfil = new Map(cal.map(x => [String(x.afil), x.razon]));
+  const afiliacionesCorte = [...new Set(cal.map(x => String(x.afil)))];
+  const pendientesRecuperadas = (await DP.pendientesORecuperadasEnCorte(db, afiliacionesCorte, idCorte))
+    .map(p => ({ razon: razonPorAfil.get(String(p.numero_afiliacion)) || p.grupo_cliente, afil: p.numero_afiliacion, bloque: p.bloque, monto: p.monto, motivo: p.motivo, origenCorteId: p.origen_corte_id }));
+  const totalNoDispersado = pendientesRecuperadas.reduce((s, x) => s + Number(x.monto || 0), 0);
+  const layoutPendAdjunto = pendientesRecuperadas.length ? await construirLayoutPendientes(idCorte) : null;
+  const hayLayoutRecuperacionAdjunto = !!(layoutPendAdjunto && !layoutPendAdjunto.bloqueado);
   const cuadra = c.cuadra;
   const marca = cuadra ? '✓' : '✗';
   const estadoBadge = { Borrador: '#707070', Validado: '#157BF6', Dispersado: '#7C5CE6', Cerrado: '#4BB543' }[c.estado] || '#707070';
@@ -2435,6 +2603,17 @@ async function armarInformeHTML(idCorte, opts) {
       <div style="font:600 11px/1.2 Montserrat,Arial,sans-serif;color:${muted};letter-spacing:.06em;text-transform:uppercase">${label}</div>
       <div style="font:700 20px/1.2 Montserrat,Arial,sans-serif;color:${ink};margin-top:6px;font-variant-numeric:tabular-nums">${value}</div>
     </td>`;
+
+  // Fila de una dispersión recuperada (faltó en un corte anterior, se paga
+  // en éste) — misma disposición que topRow, con el origen en vez de la
+  // descripción y el monto en color de aviso.
+  const noDispRow = (t, i) => `
+    <tr>
+      <td style="padding:10px 16px;background:${i%2?'#FFF9F2':'#fff'};font:700 13px/1.4 Montserrat,Arial,sans-serif;color:${ink}">${escapeHtml(t.razon)}</td>
+      <td style="padding:10px 16px;background:${i%2?'#FFF9F2':'#fff'};font:400 13px/1.4 Montserrat,Arial,sans-serif;color:${ink};font-variant-numeric:tabular-nums">${escapeHtml(t.afil)} · ${t.bloque}</td>
+      <td style="padding:10px 16px;background:${i%2?'#FFF9F2':'#fff'};font:400 13px/1.4 Montserrat,Arial,sans-serif;color:${muted}">Corte #${t.origenCorteId ?? '—'}${t.motivo ? ' · ' + escapeHtml(t.motivo) : ''}</td>
+      <td align="right" style="padding:10px 16px;background:${i%2?'#FFF9F2':'#fff'};font:700 13px/1.4 Montserrat,Arial,sans-serif;color:#B45309;font-variant-numeric:tabular-nums">${fmtMXN(t.monto)}</td>
+    </tr>`;
 
   // Fila del top 5 (fondo alternado como en el PDF)
   const topRow = (t, i) => `
@@ -2489,6 +2668,25 @@ async function armarInformeHTML(idCorte, opts) {
       </table>
     </td></tr>
 
+    ${pendientesRecuperadas.length ? `
+    <!-- Dispersiones que faltaron en un corte anterior y se pagan en éste -->
+    <tr><td style="padding:22px 32px 0">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #F3D9B1;border-collapse:collapse">
+        <tr><td style="background:#B45309;padding:10px 16px;font:700 12px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">⚠ Dispersiones faltantes del corte anterior</td></tr>
+        <tr style="background:#FDECD8">
+          <th align="left"  style="padding:10px 16px;font:700 11px/1 Montserrat,Arial,sans-serif;color:${ink};letter-spacing:.06em;text-transform:uppercase">Comercio</th>
+          <th align="left"  style="padding:10px 16px;font:700 11px/1 Montserrat,Arial,sans-serif;color:${ink};letter-spacing:.06em;text-transform:uppercase">Afiliación / Bloque</th>
+          <th align="left"  style="padding:10px 16px;font:700 11px/1 Montserrat,Arial,sans-serif;color:${ink};letter-spacing:.06em;text-transform:uppercase">Origen</th>
+          <th align="right" style="padding:10px 16px;font:700 11px/1 Montserrat,Arial,sans-serif;color:${ink};letter-spacing:.06em;text-transform:uppercase">Importe</th>
+        </tr>
+        ${pendientesRecuperadas.map((t,i)=>noDispRow(t,i)).join('')}
+        <tr>
+          <td colspan="3" style="padding:10px 16px;background:#FDECD8;font:700 12px/1.4 Montserrat,Arial,sans-serif;color:${ink};text-transform:uppercase;letter-spacing:.04em">Total</td>
+          <td align="right" style="padding:10px 16px;background:#FDECD8;font:700 13px/1.4 Montserrat,Arial,sans-serif;color:#B45309;font-variant-numeric:tabular-nums">${fmtMXN(totalNoDispersado)}</td>
+        </tr>
+      </table>
+    </td></tr>` : ''}
+
     <!-- Información financiera -->
     <tr><td style="padding:22px 32px 0">
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid ${line};border-collapse:collapse">
@@ -2529,6 +2727,7 @@ async function armarInformeHTML(idCorte, opts) {
       <table role="presentation" cellspacing="0" cellpadding="0" style="margin-top:10px">
         <tr><td style="padding:4px 8px 4px 0;vertical-align:middle"><span style="display:inline-block;width:8px;height:8px;background:${accent};border-radius:1px"></span></td><td style="font:400 13px/1.5 Montserrat,Arial,sans-serif;color:${ink}">layout_spei_corte_${c.id_corte}_${c.fli}.xlsx</td></tr>
         <tr><td style="padding:4px 8px 4px 0;vertical-align:middle"><span style="display:inline-block;width:8px;height:8px;background:${accent};border-radius:1px"></span></td><td style="font:400 13px/1.5 Montserrat,Arial,sans-serif;color:${ink}">reporte_cliente_corte_${c.id_corte}_${c.fli}.xlsx</td></tr>
+        ${hayLayoutRecuperacionAdjunto ? `<tr><td style="padding:4px 8px 4px 0;vertical-align:middle"><span style="display:inline-block;width:8px;height:8px;background:#B45309;border-radius:1px"></span></td><td style="font:400 13px/1.5 Montserrat,Arial,sans-serif;color:${ink}">layout_RECUPERACION_corte_${c.id_corte}_${c.fli}.xlsx</td></tr>` : ''}
       </table>
     </td></tr>
 
@@ -3382,6 +3581,16 @@ async function armarAdjuntosCorte(idCorte) {
     { filename: `layout_spei_corte_${c.id_corte}_${c.fli}.xlsx`, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: layoutBuf },
     { filename: `reporte_cliente_corte_${c.id_corte}_${c.fli}.xlsx`, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: reporteBuf },
   ];
+  // Layout SEPARADO de recuperación: si hay montos que faltaron dispersar en
+  // un corte anterior y se pagan en éste, se adjunta un lote SPEI aparte del
+  // layout normal (nunca se mezclan). Si está bloqueado (falta CLABE/banco)
+  // se omite el adjunto — el correo sale igual, sin ese archivo.
+  try {
+    const layoutPend = await construirLayoutPendientes(idCorte);
+    if (layoutPend && !layoutPend.bloqueado) {
+      adj.push({ filename: `layout_RECUPERACION_corte_${c.id_corte}_${c.fli}.xlsx`, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: layoutPend.buf });
+    }
+  } catch (_e) { /* si falla, el correo sigue sin este adjunto */ }
   // Reporte de contracargos del día — se adjunta TAL CUAL fue subido (sin modificar).
   // Preferimos archivo_bytes_cifrado (v0.7+); fallback a archivo_bytes plaintext (legacy).
   const rep = (await db.query('select archivo_origen, archivo_bytes, archivo_bytes_cifrado, archivo_mime from contracargos_reporte_dia where fecha=$1', [c.fli])).rows[0];
@@ -3441,6 +3650,17 @@ async function armarAdjuntosCorte(idCorte) {
 
   return adj;
 }
+
+// Vista previa del HTML del correo de "Notificar" SIN enviarlo — útil para
+// revisar el contenido antes de mandarlo a los destinatarios reales.
+app.get('/api/cortes/:id/notificar/preview.html', auth, requiereRol('admin', 'tesoreria', 'bancos'), async (req, res) => {
+  if (!dbReady(res)) return;
+  try {
+    const { html } = await armarInformeHTML(parseInt(req.params.id, 10), {});
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (e) { res.status(404).send('No se pudo generar la vista previa: ' + e.message); }
+});
 
 app.post('/api/cortes/:id/notificar', auth, requiereRol('admin', 'tesoreria', 'bancos'), async (req, res) => {
   if (!dbReady(res)) return;

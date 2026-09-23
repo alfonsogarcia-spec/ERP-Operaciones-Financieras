@@ -149,7 +149,38 @@ create table if not exists calculos (
   contracargos_ids jsonb           -- ids de conciliacion.contracargos aplicados a esta fila
 );
 alter table calculos add column if not exists contracargos_ids jsonb;
+-- Dispersión parcial: al marcar el corte como Dispersado, el usuario puede
+-- desmarcar bloques específicos (DOM y/o AMEX de un mismo grupo/afiliación
+-- son órdenes SPEI independientes) que NO se pagaron. El monto de un bloque
+-- desmarcado se registra en `dispersiones_pendientes` para recuperarse en
+-- el siguiente corte de esa afiliación — nunca se pierde ni expira.
+alter table calculos add column if not exists dispersado_dom boolean not null default true;
+alter table calculos add column if not exists dispersado_amex boolean not null default true;
+alter table calculos add column if not exists motivo_no_dispersado text;
 create index if not exists idx_calc_corte on calculos(corte_id);
+
+-- Montos que se marcaron "NO dispersados" en algún corte y siguen
+-- pendientes de pagarse. Se recuperan en un layout SEPARADO (no se mezclan
+-- con el layout normal del día) del siguiente corte que tenga actividad
+-- para esa afiliación — así el banco/ops distingue claramente un pago de
+-- recuperación de la dispersión ordinaria del día.
+create table if not exists dispersiones_pendientes (
+  id                   serial primary key,
+  origen_corte_id      integer references cortes(id_corte) on delete set null,
+  origen_calculo_id    integer references calculos(id) on delete set null,
+  numero_afiliacion    text not null,
+  grupo_cliente        text,
+  id_grupo             integer,
+  bloque               text not null check (bloque in ('DOM','AMEX')),
+  monto                numeric not null check (monto > 0),
+  motivo               text,
+  estatus              text not null default 'Pendiente'
+                       check (estatus in ('Pendiente','Aplicado','Cancelado')),
+  aplicado_en_corte_id integer references cortes(id_corte) on delete set null,
+  creado_at            timestamptz not null default now(),
+  creado_por           text
+);
+create index if not exists idx_disppend_afil on dispersiones_pendientes(numero_afiliacion, bloque, estatus);
 
 create table if not exists contracargos (
   id                    serial primary key,
