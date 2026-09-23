@@ -2173,6 +2173,32 @@ app.get('/api/ledger', auth, async (req, res) => {
   res.json({ total: rows.length, filas: rows, aplicaciones });
 });
 
+// Backlog = cargos Pendiente/Parcial cuyo piso de cobro (o fecha de alta, si
+// no tiene piso) es ANTERIOR a `antes_de`. Solo lectura -- no cambia nada.
+// Usalo para revisar que se congelaria ANTES de confirmar con el POST de abajo.
+app.get('/api/ledger/backlog', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const antesDe = String(req.query.antes_de || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(antesDe)) return res.status(400).json({ error: 'antes_de_requerido', mensaje: 'Pasa ?antes_de=YYYY-MM-DD' });
+  const resultado = await L.listarBacklog(db, antesDe);
+  res.json(resultado);
+});
+
+// Congela (Cancelado) el backlog anterior a `antes_de` -- deja de sumarse
+// automaticamente a los cortes futuros. No borra nada ni toca lo ya
+// Aplicado; solo el saldo Pendiente/Parcial de cargos viejos. Espeja el
+// Cancelado a las tablas legacy (Contracargos/Retenciones) para que esas
+// vistas dejen de mostrarlos como pendientes de cobro.
+app.post('/api/ledger/backlog/congelar', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const antesDe = String((req.body || {}).antes_de || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(antesDe)) return res.status(400).json({ error: 'antes_de_requerido', mensaje: 'Envia { antes_de: \"YYYY-MM-DD\" }' });
+  const motivo = (req.body || {}).motivo || null;
+  const resultado = await L.congelarBacklog(db, { antesDe, motivo, actor: req.user.nombre });
+  await bit(req, 'ledger_backlog_congelar', `congelo backlog anterior a ${antesDe}: ${resultado.congelados} cargo(s) por ${resultado.monto_congelado}`);
+  res.json(resultado);
+});
+
 /* ============================================================================
    RETENCIONES POR FINANCIAMIENTO / REVENUE SHARE
    Se sube un layout xlsx con las retenciones del día. Al generar el corte,
