@@ -284,6 +284,43 @@ create table if not exists destinatarios_contabilidad (
   unique(email_hash)
 );
 
+-- Alertas de caída de transaccionalidad: correos que reciben el aviso
+-- automático cuando el monto de un grupo de cliente cae >30% vs su
+-- promedio (mismo tipo de día: lunes liquida fin de semana, se compara
+-- aparte de los días hábiles normales).
+create table if not exists destinatarios_alertas (
+  id             serial primary key,
+  email          text,
+  email_cifrado  text,
+  email_hash     text,
+  nombre         text,
+  nombre_cifrado text,
+  tipo           text not null default 'to',   -- 'to' | 'cc' | 'bcc'
+  activo         boolean not null default true,
+  creado_at      timestamptz default now(),
+  creado_por     text,
+  unique(email_hash)
+);
+
+-- Registro/auditoría de cada caída detectada (una fila por corte+grupo).
+-- Sirve también para no reenviar el mismo aviso dos veces.
+create table if not exists alertas_transaccionalidad (
+  id              serial primary key,
+  corte_id        integer references cortes(id_corte) on delete cascade,
+  id_grupo        integer,
+  nombre_cliente  text,
+  fecha_liq       text,
+  tipo_dia        text check (tipo_dia in ('lunes','habil')),
+  monto_esperado  numeric,
+  monto_real      numeric,
+  pct_caida       numeric,
+  muestras        integer,
+  notificado_at   timestamptz,
+  creado_at       timestamptz not null default now(),
+  unique(corte_id, id_grupo)
+);
+create index if not exists idx_alertrans_grupo on alertas_transaccionalidad(id_grupo);
+
 -- Destinatarios por grupo de cliente: reciben el detalle transaccional de SU
 -- grupo cuando se dispara "Notificar clientes" en un corte. Independientes de
 -- los destinatarios generales del corte (la tabla anterior).

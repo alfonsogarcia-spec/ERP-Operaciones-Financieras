@@ -1021,6 +1021,266 @@ async function computeCorte(fechaLiqIso) {
   return { calculos, total_comp: E.round2(total_comp), total_disp: E.round2(total_disp), total_monto: E.round2(total_monto), n_trx: txs.length, cuadra, bloqueos, cc_no_aplicados: ccNoAplicados, aplicaciones };
 }
 
+/* ============================================================================
+   ALERTAS DE CAÍDA DE TRANSACCIONALIDAD
+   Al generar cada corte, compara el monto de cada grupo de cliente contra su
+   propio promedio histórico — separando lunes (liquida fin de semana) de
+   días hábiles normales, para no comparar peras con manzanas. Si cae más del
+   30%, se registra la alerta y se notifica por correo a los destinatarios
+   configurados. No bloquea ni retrasa la generación del corte si algo falla.
+   ========================================================================= */
+const UMBRAL_CAIDA_TRANS = 0.30;
+const VENTANA_CORTES_TRANS = 4;
+const MIN_MUESTRA_TRANS = 3;
+
+function tipoDiaDeFecha(iso) {
+  const [y, m, d] = String(iso).split('-').map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=domingo, 1=lunes...
+  return dow === 1 ? 'lunes' : 'habil';
+}
+function montoDeCalc(calc) {
+  return Number(calc.m_tdd || 0) + Number(calc.m_tdc || 0) + Number(calc.m_amex || 0) + Number(calc.m_int || 0);
+}
+
+async function evaluarAlertasTransaccionalidad(idCorte, calculosActuales, fechaLiqIso) {
+  const tipoDia = tipoDiaDeFecha(fechaLiqIso);
+  // Agregado por grupo del corte actual (una afiliación puede repetirse en varios grupos).
+  const porGrupo = new Map();
+  for (const cc of calculosActuales) {
+    if (!cc.id_grupo) continue; // solo grupos homologados del catálogo
+    const cur = porGrupo.get(cc.id_grupo) || { id_grupo: cc.id_grupo, nombre_cliente: cc.razon, monto: 0 };
+    cur.monto += montoDeCalc(cc.calc);
+    porGrupo.set(cc.id_grupo, cur);
+  }
+  const disparadas = [];
+  for (const g of porGrupo.values()) {
+    const hist = (await db.query(`
+      select c.id_corte, c.fecha_liq_iso::text as fecha_liq_iso, cal.calc
+        from calculos cal
+        join cortes c on c.id_corte = cal.corte_id
+       where cal.id_grupo = $1 and c.id_corte <> $2
+       order by c.fecha_liq_iso desc
+    `, [g.id_grupo, idCorte])).rows;
+    const porCorte = new Map();
+    for (const h of hist) {
+      if (tipoDiaDeFecha(h.fecha_liq_iso) !== tipoDia) continue;
+      const calc = typeof h.calc === 'string' ? JSON.parse(h.calc) : h.calc;
+      const cur = porCorte.get(h.id_corte) || { fecha: h.fecha_liq_iso, monto: 0 };
+      cur.monto += montoDeCalc(calc);
+      porCorte.set(h.id_corte, cur);
+    }
+    const muestras = [...porCorte.values()].sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, VENTANA_CORTES_TRANS);
+    if (muestras.length < MIN_MUESTRA_TRANS) continue;
+    const promedio = muestras.reduce((s, m) => s + m.monto, 0) / muestras.length;
+    if (promedio <= 0) continue;
+    const caida = (promedio - g.monto) / promedio;
+    if (caida > UMBRAL_CAIDA_TRANS) {
+      disparadas.push({ id_grupo: g.id_grupo, nombre_cliente: g.nombre_cliente, monto_esperado: E.round2(promedio), monto_real: E.round2(g.monto), pct_caida: E.round2(caida * 100), muestras: muestras.length });
+    }
+  }
+  if (!disparadas.length) return [];
+  for (const a of disparadas) {
+    await db.query(
+      `insert into alertas_transaccionalidad(corte_id, id_grupo, nombre_cliente, fecha_liq, tipo_dia, monto_esperado, monto_real, pct_caida, muestras)
+       values($1,$2,$3,$4,$5,$6,$7,$8,$9) on conflict (corte_id, id_grupo) do nothing`,
+      [idCorte, a.id_grupo, a.nombre_cliente, fechaLiqIso, tipoDia, a.monto_esperado, a.monto_real, a.pct_caida, a.muestras]
+    );
+  }
+  try { await enviarAlertaTransaccionalidad({ idCorte, fechaLiqIso, disparadas, tipoDia }); }
+  catch (e) { console.error('[alertas_transaccionalidad] no se pudo enviar correo:', e.message); }
+  return disparadas;
+}
+
+function armarAlertaTransaccionalidadHTML({ idCorte, fechaLiqIso, disparadas, tipoDia }, logoSrc) {
+  const logo = logoSrc || 'cid:polipay-logo';
+  // Misma paleta de marca que el correo de corte (armarInformeHTML).
+  const brand = '#04003A', accent = '#157BF6', line = '#E4E6E7', ink = '#04003A', muted = '#707070', bg = '#F5F7FA', softBlue = '#EDF3FE', warn = '#B45309', crit = '#CC0000';
+  const banda = titulo => `<tr><td style="background:${accent};padding:10px 16px;font:700 12px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">${titulo}</td></tr>`;
+  const kpi = (label, value, sub) => `
+    <td style="padding:14px 16px;background:#fff;border-right:1px solid ${line};vertical-align:top;width:25%">
+      <div style="font:600 11px/1.2 Montserrat,Arial,sans-serif;color:${muted};letter-spacing:.06em;text-transform:uppercase">${label}</div>
+      <div style="font:700 20px/1.2 Montserrat,Arial,sans-serif;color:${ink};margin-top:6px;font-variant-numeric:tabular-nums">${value}</div>
+      ${sub ? `<div style="font:400 11px/1.3 Montserrat,Arial,sans-serif;color:${muted};margin-top:2px">${sub}</div>` : ''}
+    </td>`;
+
+  const totalEsperado = disparadas.reduce((s, a) => s + Number(a.monto_esperado), 0);
+  const totalReal = disparadas.reduce((s, a) => s + Number(a.monto_real), 0);
+  const caidaProm = disparadas.reduce((s, a) => s + Number(a.pct_caida), 0) / disparadas.length;
+
+  // "Gráfica" de barras horizontales — segura para correo (sin imágenes ni
+  // SVG): la barra de Promedio es la referencia (100%), la de Real se dibuja
+  // proporcional a ella, así se ve de un vistazo qué tan grande fue la caída.
+  const barra = (pct, color) => `
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="height:10px"><tr>
+      <td style="width:${Math.max(pct, 1.5)}%;background:${color};border-radius:4px;height:10px;font-size:0;line-height:0">&nbsp;</td>
+      <td style="background:${softBlue};height:10px;border-radius:4px;font-size:0;line-height:0">&nbsp;</td>
+    </tr></table>`;
+
+  const filas = disparadas.map((a, i) => {
+    const caida = Number(a.pct_caida);
+    const color = caida >= 60 ? crit : warn;
+    const nivel = caida >= 60 ? 'Crítico' : 'Atención';
+    const pctReal = Number(a.monto_esperado) > 0 ? Math.min(100, (Number(a.monto_real) / Number(a.monto_esperado)) * 100) : 0;
+    return `
+      <tr><td style="padding:${i ? '18px' : '4px'} 16px 4px;background:${i % 2 ? '#FAFBFC' : '#fff'}${i ? `;border-top:1px solid ${line}` : ''}">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+          <td style="font:700 14px/1.3 Montserrat,Arial,sans-serif;color:${ink}">${escapeHtml(a.nombre_cliente)}</td>
+          <td align="right"><span style="display:inline-block;padding:4px 10px;border-radius:6px;background:${color};color:#fff;font:700 11px/1 Montserrat,Arial,sans-serif;letter-spacing:.04em">-${caida.toFixed(1)}% · ${nivel}</span></td>
+        </tr></table>
+      </td></tr>
+      <tr><td style="padding:6px 16px 4px;background:${i % 2 ? '#FAFBFC' : '#fff'}">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+          <td style="width:70px;font:400 11px/1.4 Montserrat,Arial,sans-serif;color:${muted}">Promedio</td>
+          <td style="padding:0 10px">${barra(100, accent)}</td>
+          <td align="right" style="width:110px;font:700 13px/1.4 Montserrat,Arial,sans-serif;color:${ink};font-variant-numeric:tabular-nums">${fmtMXN(a.monto_esperado)}</td>
+        </tr></table>
+      </td></tr>
+      <tr><td style="padding:2px 16px 14px;background:${i % 2 ? '#FAFBFC' : '#fff'}${i === disparadas.length - 1 ? '' : ''}">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+          <td style="width:70px;font:400 11px/1.4 Montserrat,Arial,sans-serif;color:${muted}">Real</td>
+          <td style="padding:0 10px">${barra(pctReal, color)}</td>
+          <td align="right" style="width:110px;font:700 13px/1.4 Montserrat,Arial,sans-serif;color:${color};font-variant-numeric:tabular-nums">${fmtMXN(a.monto_real)}</td>
+        </tr></table>
+      </td></tr>`;
+  }).join('');
+
+  const subject = `⚠ Caída de transaccionalidad — corte #${idCorte} (${disparadas.length} grupo${disparadas.length > 1 ? 's' : ''})`;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(subject)}</title></head>
+<body style="margin:0;padding:24px 12px;background:${bg};font-family:Montserrat,-apple-system,BlinkMacSystemFont,Arial,sans-serif;color:${ink}">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;margin:0 auto;background:#fff">
+
+    <!-- Encabezado -->
+    <tr><td style="padding:22px 32px 14px;border-bottom:3px solid ${brand}">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+        <td><img src="${logo}" alt="Polipay" height="34" style="display:block;height:34px;width:auto;border:0;outline:none;text-decoration:none"/></td>
+        <td align="right" style="line-height:1.35">
+          <div style="font:700 12px/1.2 Montserrat,Arial,sans-serif;color:${accent};letter-spacing:.09em;text-transform:uppercase">Polipay POS Settlement</div>
+          <div style="font:400 11px/1.2 Montserrat,Arial,sans-serif;color:${muted};letter-spacing:.02em;text-transform:uppercase;margin-top:3px">Alerta automática</div>
+        </td>
+      </tr></table>
+    </td></tr>
+
+    <!-- Título -->
+    <tr><td style="padding:28px 32px 4px;font:800 26px/1.2 Montserrat,Arial,sans-serif;color:${ink}">⚠ Caída de transaccionalidad</td></tr>
+    <tr><td style="padding:8px 32px 22px;font:400 13px/1.5 Montserrat,Arial,sans-serif;color:${muted}">
+      Corte #${idCorte} · Liquidación ${escapeHtml(fechaLiqIso)} · ${tipoDia === 'lunes' ? 'Lunes (liquida fin de semana)' : 'Día hábil'}
+    </td></tr>
+
+    <!-- KPIs -->
+    <tr><td style="padding:0 32px">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid ${line};border-collapse:collapse">
+        ${banda('Resumen')}
+        <tr><td style="padding:0">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+            ${kpi('Grupos afectados', String(disparadas.length))}
+            ${kpi('Caída promedio', '-' + caidaProm.toFixed(1) + '%')}
+            ${kpi('Monto esperado', fmtMXN(totalEsperado))}
+            ${kpi('Monto real', fmtMXN(totalReal))}
+          </tr></table>
+        </td></tr>
+      </table>
+    </td></tr>
+
+    <!-- Detalle por grupo -->
+    <tr><td style="padding:22px 32px 0">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid ${line};border-collapse:collapse">
+        ${banda('Detalle por grupo')}
+        ${filas}
+      </table>
+    </td></tr>
+
+    <!-- Nota metodológica -->
+    <tr><td style="padding:16px 32px 0;font:400 12px/1.6 Montserrat,Arial,sans-serif;color:${muted}">
+      Promedio calculado con los últimos ${disparadas[0].muestras} corte(s) del mismo tipo de día (lunes se compara aparte de los días hábiles, por liquidar fin de semana). Umbral de alerta: ${(UMBRAL_CAIDA_TRANS * 100).toFixed(0)}%.
+    </td></tr>
+
+    <!-- Pie -->
+    <tr><td style="padding:22px 32px 26px;border-top:1px solid ${line};margin-top:16px;font:400 12px/1.6 Montserrat,Arial,sans-serif;color:${muted}">
+      Este correo se envía automáticamente al generar cada corte. Sistema: polipay-conciliacion-liquidacion.onrender.com
+    </td></tr>
+    <tr><td style="background:${brand};padding:14px 32px">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+        <td style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">Polipay POS Settlement</td>
+        <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:#fff;letter-spacing:.09em;text-transform:uppercase">ops.agregador@polipay.io</td>
+      </tr></table>
+    </td></tr>
+  </table>
+</body></html>`;
+  return { subject, html };
+}
+
+async function enviarAlertaTransaccionalidad({ idCorte, fechaLiqIso, disparadas, tipoDia }) {
+  if (!sesEnabled()) return null;
+  const destRaw = (await db.query("select email,email_cifrado,nombre,nombre_cifrado,tipo from destinatarios_alertas where activo=true")).rows;
+  const dest = destRaw.map(d => ({ email: descifraTexto(d.email_cifrado, d.email), nombre: descifraTexto(d.nombre_cifrado, d.nombre), tipo: d.tipo }));
+  const fmt = d => d.nombre ? `"${d.nombre}" <${d.email}>` : d.email;
+  const to = dest.filter(d => (d.tipo || 'to') === 'to').map(fmt);
+  const cc = dest.filter(d => (d.tipo || 'to') === 'cc').map(fmt);
+  const bcc = dest.filter(d => (d.tipo || 'to') === 'bcc').map(fmt);
+  if (!to.length) return null;
+  const { subject, html } = armarAlertaTransaccionalidadHTML({ idCorte, fechaLiqIso, disparadas, tipoDia });
+  const logoBuf = require('fs').readFileSync(path.join(__dirname, 'public', 'logo.png'));
+  const messageId = await sendSES({ to, cc, bcc, subject, html, textFallback: `Caída de transaccionalidad en ${disparadas.length} grupo(s) — corte #${idCorte}`, inlineImages: [{ cid: 'polipay-logo', filename: 'polipay-logo.png', contentType: 'image/png', content: logoBuf }] });
+  await db.query('update alertas_transaccionalidad set notificado_at=now() where corte_id=$1', [idCorte]);
+  return messageId;
+}
+
+// Preview sin enviar — arma el mismo HTML con las alertas ya registradas de
+// un corte (o las más recientes si no se especifica corte_id).
+app.get('/api/alertas/transaccionalidad/preview.html', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const corteId = req.query.corte_id ? parseInt(req.query.corte_id, 10) : null;
+  const rows = (await db.query(
+    corteId
+      ? 'select * from alertas_transaccionalidad where corte_id=$1 order by pct_caida desc'
+      : 'select * from alertas_transaccionalidad where corte_id = (select corte_id from alertas_transaccionalidad order by creado_at desc limit 1) order by pct_caida desc'
+    , corteId ? [corteId] : []
+  )).rows;
+  if (!rows.length) return res.status(404).send('<p style="font-family:sans-serif">No hay alertas registradas' + (corteId ? ' para el corte #' + corteId : '') + ' todavía.</p>');
+  const disparadas = rows.map(r => ({ nombre_cliente: r.nombre_cliente, monto_esperado: Number(r.monto_esperado), monto_real: Number(r.monto_real), pct_caida: Number(r.pct_caida), muestras: r.muestras }));
+  const { html } = armarAlertaTransaccionalidadHTML({ idCorte: rows[0].corte_id, fechaLiqIso: rows[0].fecha_liq, disparadas, tipoDia: rows[0].tipo_dia }, '/public/logo.png');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
+
+app.get('/api/alertas/transaccionalidad', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const rows = (await db.query(`
+    select * from alertas_transaccionalidad order by creado_at desc limit 30
+  `)).rows.map(r => ({ ...r, monto_esperado: Number(r.monto_esperado), monto_real: Number(r.monto_real), pct_caida: Number(r.pct_caida) }));
+  res.json(rows);
+});
+
+/* --- Destinatarios de alertas de transaccionalidad --- */
+app.get('/api/destinatarios-alertas', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const rows = (await db.query('select * from destinatarios_alertas order by activo desc, email')).rows;
+  res.json(rows.map(d => ({ ...d, email: descifraTexto(d.email_cifrado, d.email), nombre: descifraTexto(d.nombre_cifrado, d.nombre) })));
+});
+app.post('/api/destinatarios-alertas', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const b = req.body || {};
+  const email = String(b.email || '').trim().toLowerCase();
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'email_invalido' });
+  const tipo = ['to', 'cc', 'bcc'].includes(String(b.tipo || '').toLowerCase()) ? String(b.tipo).toLowerCase() : 'to';
+  const nombreD = String(b.nombre || '').trim();
+  const eHash = C.hmacEmail(email), eCif = C.encrypt(email), nCif = C.encrypt(nombreD);
+  if (b.id) {
+    await db.query('update destinatarios_alertas set email=$1,nombre=$2,tipo=$3,activo=$4,email_hash=$5,email_cifrado=$6,nombre_cifrado=$7 where id=$8', [email, nombreD, tipo, !!b.activo, eHash, eCif, nCif, b.id]);
+  } else {
+    await db.query('insert into destinatarios_alertas(email,nombre,tipo,activo,creado_por,email_hash,email_cifrado,nombre_cifrado) values($1,$2,$3,$4,$5,$6,$7,$8) on conflict(email_hash) do update set nombre=excluded.nombre, tipo=excluded.tipo, activo=excluded.activo, email_cifrado=excluded.email_cifrado, nombre_cifrado=excluded.nombre_cifrado',
+      [email, nombreD, tipo, b.activo !== false, req.user.nombre, eHash, eCif, nCif]);
+  }
+  await bit(req, b.id ? 'destinatario_alertas_editar' : 'destinatario_alertas_alta', `${email} (${tipo})`, { resource_type: 'destinatario_alertas', resource_id: b.id });
+  res.json({ ok: true });
+});
+app.delete('/api/destinatarios-alertas/:id', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  await db.query('delete from destinatarios_alertas where id=$1', [parseInt(req.params.id, 10)]);
+  await bit(req, 'destinatario_alertas_baja', '', { resource_type: 'destinatario_alertas', resource_id: req.params.id });
+  res.json({ ok: true });
+});
+
 app.get('/api/cortes/fechas', auth, async (req, res) => {
   if (!dbReady(res)) return;
   const rows = (await db.query("select fecha_liq::text as fecha_liq, count(*)::int n from transacciones where fecha_liq is not null and upper(estatus)='APROBADO' group by fecha_liq order by fecha_liq")).rows;
@@ -1044,8 +1304,12 @@ app.post('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res)
   await L.aplicarEnCorte(db, idCorte, c.aplicaciones);
   const aplicadas = c.aplicaciones.length;
   const montoAplicado = E.round2(c.aplicaciones.reduce((s, a) => s + a.monto_aplicado, 0));
-  await bit(req, 'corte_generar', `${E.fmtFecha(E.parseFecha(iso))}, ${c.calculos.length} grupos${aplicadas?`, ledger: ${aplicadas} aplicaciones por ${montoAplicado}`:''}`, { resource_type: 'corte', resource_id: idCorte });
-  res.json({ id_corte: idCorte, contracargos_no_aplicados: c.cc_no_aplicados, ledger_aplicaciones: aplicadas, ledger_monto_aplicado: montoAplicado });
+  // ALERTAS: compara cada grupo contra su promedio histórico (mismo tipo de
+  // día) y notifica si algo cayó >30%. Best-effort — nunca debe tumbar la
+  // generación del corte.
+  const alertasTrans = await evaluarAlertasTransaccionalidad(idCorte, c.calculos, iso).catch(e => { console.error('[alertas_transaccionalidad]', e.message); return []; });
+  await bit(req, 'corte_generar', `${E.fmtFecha(E.parseFecha(iso))}, ${c.calculos.length} grupos${aplicadas?`, ledger: ${aplicadas} aplicaciones por ${montoAplicado}`:''}${alertasTrans.length?`, ⚠ ${alertasTrans.length} caída(s) de transaccionalidad`:''}`, { resource_type: 'corte', resource_id: idCorte });
+  res.json({ id_corte: idCorte, contracargos_no_aplicados: c.cc_no_aplicados, ledger_aplicaciones: aplicadas, ledger_monto_aplicado: montoAplicado, alertas_transaccionalidad: alertasTrans });
 });
 
 app.get('/api/cortes', auth, async (req, res) => {
