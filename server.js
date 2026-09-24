@@ -853,6 +853,79 @@ async function construirDiagnostico() {
 }
 
 /* ============================================================================
+   INVENTARIO DE TERMINALES
+   Inventario "al día" de terminales POS, derivado directo de las
+   transacciones ya ingestadas — no requiere carga aparte. Se recalcula en
+   vivo en cada consulta (siempre refleja el estado actual). Agrupado por
+   grupo de cliente homologado (mismo catálogo/lógica que Cortes, ya que una
+   misma afiliación puede compartirse entre varios grupos) y afiliación.
+   ========================================================================= */
+async function construirInventarioTerminales() {
+  const rows = (await db.query(`
+    select cliente, numero_afiliacion, terminal,
+           count(*)::int as n_trx,
+           min(fecha_liq)::text as primera,
+           max(fecha_liq)::text as ultima
+      from transacciones
+     where terminal is not null and terminal <> ''
+     group by cliente, numero_afiliacion, terminal
+  `)).rows;
+  const grupos = await getGrupos();
+  const grupoPorNombre = nombre => grupos.find(g => nrm(g.nombre_cliente) === nrm(nombre));
+  const porGrupo = new Map();
+  for (const r of rows) {
+    const g = grupoPorNombre(r.cliente);
+    const idGrupo = g ? g.id_grupo : 0;
+    const nombreGrupo = g ? g.nombre_cliente : (r.cliente || '(sin homologar)');
+    if (!porGrupo.has(idGrupo)) porGrupo.set(idGrupo, { id_grupo: idGrupo, nombre_cliente: nombreGrupo, afiliaciones: new Map() });
+    const grupoObj = porGrupo.get(idGrupo);
+    if (!grupoObj.afiliaciones.has(r.numero_afiliacion)) grupoObj.afiliaciones.set(r.numero_afiliacion, { numero_afiliacion: r.numero_afiliacion, terminales: [] });
+    grupoObj.afiliaciones.get(r.numero_afiliacion).terminales.push({ terminal: r.terminal, n_trx: r.n_trx, primera: r.primera, ultima: r.ultima });
+  }
+  return [...porGrupo.values()].map(g => {
+    const afiliaciones = [...g.afiliaciones.values()].map(a => ({
+      ...a,
+      terminales: a.terminales.sort((x, y) => y.n_trx - x.n_trx),
+      n_terminales: a.terminales.length,
+    })).sort((x, y) => y.n_terminales - x.n_terminales);
+    return {
+      id_grupo: g.id_grupo, nombre_cliente: g.nombre_cliente, afiliaciones,
+      n_terminales: afiliaciones.reduce((s, a) => s + a.n_terminales, 0),
+      n_afiliaciones: afiliaciones.length,
+    };
+  }).sort((x, y) => y.n_terminales - x.n_terminales);
+}
+
+app.get('/api/inventario/terminales', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const grupos = await construirInventarioTerminales();
+  res.json({ grupos, total_terminales: grupos.reduce((s, g) => s + g.n_terminales, 0), total_grupos: grupos.length });
+});
+
+app.get('/api/inventario/terminales.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const idGrupo = req.query.id_grupo != null && req.query.id_grupo !== '' ? Number(req.query.id_grupo) : null;
+  const afilFiltro = req.query.afil ? String(req.query.afil) : null;
+  const grupos = await construirInventarioTerminales();
+  const filtrados = idGrupo != null ? grupos.filter(g => g.id_grupo === idGrupo) : grupos;
+  const rowsL = [];
+  for (const g of filtrados) {
+    for (const a of g.afiliaciones) {
+      if (afilFiltro && a.numero_afiliacion !== afilFiltro) continue;
+      for (const t of a.terminales) rowsL.push([g.nombre_cliente, a.numero_afiliacion, t.terminal, t.n_trx, t.primera, t.ultima]);
+    }
+  }
+  const head = ['Grupo de cliente', 'Afiliación', 'Número de serie (terminal)', 'Transacciones', 'Primera transacción', 'Última transacción'];
+  const buf = X.buildXLSX([{
+    name: 'INVENTARIO',
+    aoa: [head, ...rowsL],
+    cols: [{ wch: 28 }, { wch: 16 }, { wch: 24 }, { wch: 14 }, { wch: 16 }, { wch: 16 }],
+  }]);
+  await bit(req, 'inventario_terminales', `exportó inventario de terminales${idGrupo != null ? ' grupo #' + idGrupo : ''}${afilFiltro ? ' afil ' + afilFiltro : ''} (${rowsL.length} terminales)`);
+  enviarXLSX(res, `inventario_terminales${idGrupo != null ? '_grupo' + idGrupo : ''}${afilFiltro ? '_' + afilFiltro : ''}.xlsx`, buf);
+});
+
+/* ============================================================================
    CORTES
    ========================================================================= */
 async function computeCorte(fechaLiqIso) {

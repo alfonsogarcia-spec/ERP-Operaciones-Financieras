@@ -411,13 +411,15 @@ const NAV_CONCILIACION=[
   {id:'cortes',t:'Cortes y liquidación',ic:'ic_06'},
   {sec:'Contabilidad'},
   {id:'contable',t:'Registro contable',ic:'ic_15'},
-  {sec:'Disputas',cap:'disputas_ver'},
-  {id:'disp_chargebacks',t:'Contracargos (disputas)',ic:'ic_05',cap:'disputas_ver'},
+  {sec:'Aclaraciones',cap:'disputas_ver'},
+  {id:'disp_chargebacks',t:'Disputas',ic:'ic_05',cap:'disputas_ver'},
   {id:'disp_refunds',t:'Devoluciones sospechosas',ic:'ic_17',cap:'disputas_ver'},
   {id:'disp_duplicates',t:'Transacciones duplicadas',ic:'ic_04',cap:'disputas_ver'},
   {id:'disp_reasoncodes',t:'Catálogo reason codes',ic:'ic_13',cap:'disputas_ver'},
   {id:'disp_providers',t:'Proveedores / API',ic:'ic_12',cap:'disputas_ver'},
   {id:'disp_reports',t:'Reportes de disputas',ic:'ic_15',cap:'disputas_ver'},
+  {sec:'Administración'},
+  {id:'inventario',t:'Inventario de terminales',ic:'ic_14'},
   {sec:'Catálogos',col:true},
   {id:'grupos',t:'Grupos y afiliaciones',ic:'ic_09'},
   {id:'cuentas',t:'Cuentas de liquidación',ic:'ic_11'},
@@ -482,9 +484,9 @@ function renderNav(){
     (curBody || nav).append(link);
   }
 }
-const TITLES={dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],retenciones:['Retenciones','Retenciones por financiamiento y revenue share aplicadas al monto a dispersar'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],destinatarios:['Destinatarios','Correos que reciben el aviso automático de corte'],usuarios:['Usuarios','Quién tiene acceso a la plataforma y con qué rol'],bitacora:['Bitácora','Trazabilidad de acciones'],
+const TITLES={dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],inventario:['Inventario de terminales','Terminales POS activas por grupo de cliente y afiliación, derivado de las transacciones ya ingestadas'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],retenciones:['Retenciones','Retenciones por financiamiento y revenue share aplicadas al monto a dispersar'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],destinatarios:['Destinatarios','Correos que reciben el aviso automático de corte'],usuarios:['Usuarios','Quién tiene acceso a la plataforma y con qué rol'],bitacora:['Bitácora','Trazabilidad de acciones'],
 disp_dashboard:['Panel de disputas','KPIs de contracargos, devoluciones y duplicados'],
-disp_chargebacks:['Contracargos (disputas)','Ciclo completo de disputa: 1er contracargo → representación → arbitraje'],
+disp_chargebacks:['Disputas','Ciclo completo de disputa: 1er contracargo → representación → arbitraje'],
 disp_refunds:['Devoluciones sospechosas','Notificación al comercio y respuesta procede / no procede'],
 disp_duplicates:['Transacciones duplicadas','Comparación de posibles dobles cobros'],
 disp_merchants:['Comercios y contactos','Merchants, contactos por comercio y agrupación'],
@@ -531,7 +533,7 @@ async function render(){renderNav();
   }
   const[t,s]=TITLES[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
   const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
-  try{await ({dashboard:vDashboard,ingesta:vIngesta,contracargos:vContracargos,retenciones:vRetenciones,cortes:vCortes,contable:vContabilidadCortes,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,destinatarios:vDestinatarios,usuarios:vUsuarios,bitacora:vBitacora,
+  try{await ({dashboard:vDashboard,ingesta:vIngesta,inventario:vInventario,contracargos:vContracargos,retenciones:vRetenciones,cortes:vCortes,contable:vContabilidadCortes,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,destinatarios:vDestinatarios,usuarios:vUsuarios,bitacora:vBitacora,
     disp_dashboard:vDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC,disp_providers:vDispProviders,disp_reports:vDispReports,
     dest_liquidacion:vDestinatariosCorte,dest_liquidacion_cli:vDestinatariosCliente,dest_contabilidad:vDestinatariosContabilidad,dest_disputas:vDestDisputas,
     tar_mis_rutinas:vTarMisRutinas,tar_mis_tareas:vTarMisTareas,tar_tablero:vTarTablero,tar_emisor:vTarPorProducto,tar_spei:vTarPorProducto,tar_agregador:vTarPorProducto,tar_calendario:vTarCalendario,tar_entregables:vEntregables,tar_reportes:vTarReportes,tar_miembros:vTarMiembros}[VIEW]||vDashboard)(v);}
@@ -1294,6 +1296,40 @@ async function vFeriados(v){
     if(can('catalogos'))r._onclick=async()=>{if(confirm('¿Quitar feriado '+fmtISO(f)+'?')){await api('DELETE','/api/catalogo/feriado/'+f);render();}};return r;});
   p.append(tableWrap(can('catalogos')?['Fecha','Día','']:['Fecha','Día'],rows,{empty:'Sin feriados. Carga “Feriados MX 2026”.'}));
   v.append(p);
+}
+
+/* ---------- INVENTARIO DE TERMINALES ---------- */
+async function vInventario(v){
+  $('#pageAction').append(el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/inventario/terminales.xlsx','inventario_terminales.xlsx').catch(e=>toast(errMsg(e),'err'))},'⬇ Descargar todo'));
+  const data=await api('GET','/api/inventario/terminales');v.innerHTML='';
+  v.append(cards([
+    ['Terminales activas',data.total_terminales,'Distintas · histórico completo'],
+    ['Grupos de cliente',data.total_grupos,''],
+  ]));
+  const p=el('div',{class:'panel'});p.append(el('h3',{},'Terminales por grupo de cliente'));
+  const rows=data.grupos.map(g=>{
+    const tr=[g.nombre_cliente,{num:g.n_afiliaciones},{num:g.n_terminales},'<span class="badge b">ver detalle</span>'];
+    tr._onclick=()=>abrirDetalleInventario(g);
+    return tr;
+  });
+  p.append(tableWrap(['Grupo de cliente',{t:'Afiliaciones'},{t:'Terminales'},''],rows,{empty:'Sin transacciones con número de terminal todavía.'}));
+  p.append(el('div',{class:'muted',style:'margin-top:8px'},'Clic en un grupo para ver el desglose por afiliación y los números de serie.'));
+  v.append(p);
+}
+function abrirDetalleInventario(g){
+  const body=el('div',{});
+  g.afiliaciones.forEach(a=>{
+    const sec=el('div',{style:'margin-bottom:18px'});
+    sec.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'},
+      el('div',{},el('b',{},'Afiliación '+esc(a.numero_afiliacion)),el('span',{class:'muted',style:'margin-left:8px'},a.n_terminales+' terminal(es)')),
+      el('button',{class:'btn ghost sm',onclick:()=>descargar('/api/inventario/terminales.xlsx?id_grupo='+g.id_grupo+'&afil='+encodeURIComponent(a.numero_afiliacion),'inventario_'+g.nombre_cliente.replace(/\W+/g,'_')+'_'+a.numero_afiliacion+'.xlsx').catch(e=>toast(errMsg(e),'err'))},'⬇ Descargar')
+    ));
+    const rowsA=a.terminales.map(t=>[t.terminal,{num:t.n_trx},fmtISO(t.primera||''),fmtISO(t.ultima||'')]);
+    sec.append(tableWrap(['Número de serie',{t:'Transacciones'},'Primera','Última'],rowsA));
+    body.append(sec);
+  });
+  const foot=el('button',{class:'btn secondary',onclick:()=>descargar('/api/inventario/terminales.xlsx?id_grupo='+g.id_grupo,'inventario_'+g.nombre_cliente.replace(/\W+/g,'_')+'.xlsx').catch(e=>toast(errMsg(e),'err'))},'⬇ Descargar todo el grupo');
+  modal(g.nombre_cliente+' · Terminales',body,foot,true);
 }
 
 /* ---------- PARÁMETROS ---------- */
