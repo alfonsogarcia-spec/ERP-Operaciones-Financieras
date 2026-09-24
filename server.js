@@ -958,9 +958,6 @@ app.get('/api/cortes/fechas', auth, async (req, res) => {
 app.post('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res) => {
   if (!dbReady(res)) return;
   const iso = (req.body || {}).fecha_liq; if (!iso) return res.status(400).json({ error: 'fecha_liq' });
-  // BLINDAJE: el reporte de contracargos del día debe estar cargado (aunque venga vacío).
-  const rep = (await db.query('select fecha, n_contracargos, monto_total from contracargos_reporte_dia where fecha=$1', [iso])).rows[0];
-  if (!rep) return res.status(409).json({ error: 'reporte_contracargos_faltante', fecha: iso, mensaje: 'Debes cargar el reporte de contracargos de ' + iso + ' antes de generar el corte (aunque venga sin registros).' });
   const c = await computeCorte(iso);
   const ins = (await db.query('insert into cortes(fecha_liq,fecha_liq_iso,estado,creado_por,total_monto,total_comp,total_disp,n_trx,cuadra,bloqueos) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id_corte',
     [E.fmtFecha(E.parseFecha(iso)), iso, 'Borrador', req.user.nombre, c.total_monto, c.total_comp, c.total_disp, c.n_trx, c.cuadra, c.bloqueos])).rows[0];
@@ -974,7 +971,7 @@ app.post('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res)
   await L.aplicarEnCorte(db, idCorte, c.aplicaciones);
   const aplicadas = c.aplicaciones.length;
   const montoAplicado = E.round2(c.aplicaciones.reduce((s, a) => s + a.monto_aplicado, 0));
-  await bit(req, 'corte_generar', `${E.fmtFecha(E.parseFecha(iso))}, ${c.calculos.length} grupos, contracargos cargados=${rep.n_contracargos||0}${aplicadas?`, ledger: ${aplicadas} aplicaciones por ${montoAplicado}`:''}`, { resource_type: 'corte', resource_id: idCorte });
+  await bit(req, 'corte_generar', `${E.fmtFecha(E.parseFecha(iso))}, ${c.calculos.length} grupos${aplicadas?`, ledger: ${aplicadas} aplicaciones por ${montoAplicado}`:''}`, { resource_type: 'corte', resource_id: idCorte });
   res.json({ id_corte: idCorte, contracargos_no_aplicados: c.cc_no_aplicados, ledger_aplicaciones: aplicadas, ledger_monto_aplicado: montoAplicado });
 });
 

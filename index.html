@@ -313,12 +313,20 @@ async function initLogin(){
   try{ cfg=await fetch('/api/config-publica').then(r=>r.json()); }catch(_e){}
   GOOGLE_CLIENT_ID=cfg.googleClientId||'';
   // DEV mode: server local sin Google Client ID → auto-login como admin bootstrap.
+  // Reintenta unas veces (el servidor local puede tardar un instante en levantar
+  // la BD justo después de arrancar) antes de darse por vencido.
   if(cfg.devMode || !GOOGLE_CLIENT_ID){
-    try{
-      const r=await fetch('/api/login/dev',{method:'POST'}).then(x=>x.json());
-      if(r.token){ localStorage.setItem('cl_token',r.token); localStorage.setItem('cl_user',JSON.stringify(r.user)); SES=r.user; mountApp(); return; }
-    }catch(_e){}
-    $('#lgErr').textContent='Sistema no configurado: falta GOOGLE_CLIENT_ID en el servidor.';$('#lgErr').className='login-err show';return;
+    for(let intento=0;intento<5;intento++){
+      try{
+        const r=await fetch('/api/login/dev',{method:'POST'}).then(x=>x.json());
+        if(r.token){ localStorage.setItem('cl_token',r.token); localStorage.setItem('cl_user',JSON.stringify(r.user)); SES=r.user; mountApp(); return; }
+      }catch(_e){}
+      if(intento<4) await new Promise(res=>setTimeout(res,600));
+    }
+    $('#lgErr').innerHTML='Sistema no configurado o el servidor local no respondió a tiempo. <a href="#" id="lgRetry" style="color:inherit;text-decoration:underline">Reintentar</a>';
+    $('#lgErr').className='login-err show';
+    $('#lgRetry').onclick=(e)=>{e.preventDefault();$('#lgErr').className='login-err';initLogin();};
+    return;
   }
   renderGoogleBtn();
 }
@@ -375,7 +383,7 @@ function tableWrap(head,rows,opts){const w=el('div',{class:'tablewrap'});const t
   t.append(tb);w.append(t);return w;}
 const badgeEstado=e=>{const m={'Borrador':'g','Validado':'b','Dispersado':'v','Cerrado':'ok'};return `<span class="badge ${m[e]||'g'}">${esc(e)}</span>`;};
 const badgeProd=p=>{const m={'Débito':'b','Crédito':'v','American Express':'g','Internacional':'w'};return `<span class="badge ${m[p]||'d'}">${esc(p||'—')}</span>`;};
-function errMsg(e){const d=e&&e.data||{};if(e.status===403)return'No tienes permiso para esta acción ('+SES.rol+')';if(d.error==='no_cuadra_o_bloqueado')return'El corte no cuadra o tiene órdenes sin CLABE';if(d.error==='corte_inmutable')return'El corte ya está '+d.estado+' (inmutable)';if(d.error==='transicion_invalida')return'Transición no válida (estado '+d.estado+')';if(d.error==='reporte_contracargos_faltante')return'Debes cargar primero el reporte de contracargos del '+d.fecha+' (ve a Operación → Contracargos).';if(d.error==='ya_aplicado')return'Este contracargo ya fue aplicado a un corte. Elimina el corte para poder borrarlo.';return d.error||e.message||'Error';}
+function errMsg(e){const d=e&&e.data||{};if(e.status===403)return'No tienes permiso para esta acción ('+SES.rol+')';if(d.error==='no_cuadra_o_bloqueado')return'El corte no cuadra o tiene órdenes sin CLABE';if(d.error==='corte_inmutable')return'El corte ya está '+d.estado+' (inmutable)';if(d.error==='transicion_invalida')return'Transición no válida (estado '+d.estado+')';if(d.error==='ya_aplicado')return'Este contracargo ya fue aplicado a un corte. Elimina el corte para poder borrarlo.';return d.error||e.message||'Error';}
 
 /* ============================================================================
    NAV / ROUTER
