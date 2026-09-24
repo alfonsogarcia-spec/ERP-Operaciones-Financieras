@@ -2369,6 +2369,19 @@ app.post('/api/ledger/backlog/reprogramar', auth, requiereRol('admin'), async (r
   res.json(resultado);
 });
 
+// Cancela cargos específicos del ledger por id (ej. un duplicado real entre
+// dos orígenes distintos del mismo contracargo). No borra historial ni toca
+// lo ya Aplicado.
+app.post('/api/ledger/cargos/cancelar', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const ids = Array.isArray((req.body || {}).ids) ? req.body.ids.map(Number).filter(Number.isFinite) : [];
+  if (!ids.length) return res.status(400).json({ error: 'ids_requeridos', mensaje: 'Envía { ids: [...], motivo? }' });
+  const motivo = (req.body || {}).motivo || null;
+  const resultado = await L.cancelarPorIds(db, { ids, motivo, actor: req.user.nombre });
+  await bit(req, 'ledger_cargo_cancelar', `canceló ${resultado.cancelados} cargo(s) por ${resultado.monto_cancelado}: ${JSON.stringify(ids)}${motivo ? ' · motivo: ' + motivo : ''}`);
+  res.json(resultado);
+});
+
 /* ============================================================================
    RETENCIONES POR FINANCIAMIENTO / REVENUE SHARE
    Se sube un layout xlsx con las retenciones del día. Al generar el corte,
