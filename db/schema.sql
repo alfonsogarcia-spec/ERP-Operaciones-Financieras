@@ -79,9 +79,14 @@ create table if not exists params (
   tasa_int_amex numeric not null default 0.0247,
   tasa_int_int  numeric not null default 0.0302,
   fee_broxel    numeric not null default 0.0028,
-  prodparams    jsonb not null default '{"nacional":{"n":1,"corte":"23:00"},"amex":{"n":3,"corte":"23:00"}}'
+  prodparams    jsonb not null default '{"nacional":{"n":1,"corte":"23:00"},"amex":{"n":3,"corte":"23:00"},"internacional":{"n":1,"corte":"23:00"}}'
 );
 insert into params (id) values (1) on conflict (id) do nothing;
+-- Internacional pasó de compartir la parametrización de Nacional a tener la
+-- suya propia (desfase/corte independientes) — backfill para filas ya
+-- existentes que fueron creadas antes de este cambio.
+update params set prodparams = prodparams || '{"internacional":{"n":1,"corte":"23:00"}}'::jsonb
+  where not (prodparams ? 'internacional');
 -- Umbral de monto por transacción para el KPI de PLD ("operación relevante" /
 -- inusual) en el dashboard de Cumplimiento. Editable en Sistema →
 -- Parametrización de umbrales.

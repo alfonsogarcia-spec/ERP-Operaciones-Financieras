@@ -63,8 +63,12 @@ function nEsimoDiaHabil(base,n,fset){ let d=new Date(base),c=0,guard=0;
   while(c<n && guard++<3660){ d=addDays(d,1); if(esHabil(d,fset)) c++; } return d; }
 function fechaLiquidacion(fecha,hora,producto,params,feriados){
   const pk=prodKey(producto);
-  const esAmex = pk==='amex';
-  const pp = esAmex ? params.prodParams.amex : params.prodParams.nacional;
+  // 'internacional' es una parametrización propia (desfase/corte independientes de
+  // Nacional). Si params viene de un registro guardado antes de que existiera esta
+  // separación, cae de vuelta a 'nacional' para no romper el cálculo.
+  const pp = pk==='amex' ? params.prodParams.amex
+    : pk==='int' ? (params.prodParams.internacional || params.prodParams.nacional)
+    : params.prodParams.nacional;
   const fset=feriadoSet(feriados);
   let base=parseFecha(fecha); if(!base) return null;
   if(parseHoraSeg(hora) > parseHoraSeg(pp.corte)) base=addDays(base,1);
@@ -124,7 +128,7 @@ function calcularCompensacion(txs,cat,params,ajustes){
 
 /* ---------- parámetros por defecto del ciclo ---------- */
 const PARAMS_DEF=()=>({IVA:0.16,tasa_int_amex:0.0247,tasa_int_int:0.0302,fee_broxel:0.0028,
-  prodParams:{nacional:{n:1,corte:'23:00'},amex:{n:3,corte:'23:00'}}});
+  prodParams:{nacional:{n:1,corte:'23:00'},amex:{n:3,corte:'23:00'},internacional:{n:1,corte:'23:00'}}});
 
 module.exports={
   round2, parseFecha, fmtFecha, isoFecha, addDays, parseHoraSeg, horaStr,

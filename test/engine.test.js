@@ -22,6 +22,20 @@ casoFecha('AMEX 28/04 con feriado 01/05 → 04/05','28/04/2026','10:00','America
 // Precisión de segundos: 23:00:06 pasa el corte, 23:00:00 no
 casoFecha('AMEX 30/07 23:00:06 (post) → 05/08','30/07/2026','23:00:06','American Express','05/08/2026');
 
+// Internacional ahora es una parametrización propia, independiente de Nacional.
+const Pint = { ...P, prodParams: { ...P.prodParams, internacional: { n: 3, corte: '18:00' } } };
+out.push((() => {
+  const got = E.fmtFecha(E.fechaLiquidacion('03/08/2026','19:00','Internacional',Pint,[]));
+  const esperado = '07/08/2026'; // post-corte 18:00 → base martes 04, T+3 hábiles → viernes 07
+  return { desc:'Internacional con su propio desfase (T+3, corte 18:00) diverge de Nacional', got, esperado, pass: got===esperado };
+})());
+out.push((() => {
+  // Débito (Nacional) con los MISMOS params.prodParams.internacional modificados no debe verse afectado.
+  const got = E.fmtFecha(E.fechaLiquidacion('03/08/2026','19:00','Débito',Pint,[]));
+  const esperado = '04/08/2026';
+  return { desc:'Nacional no se ve afectado al cambiar solo Internacional', got, esperado, pass: got===esperado };
+})());
+
 // Anexo 13.3 — control DEAL/afiliación solo TDD
 const tasas={pac_tdd:0.025,pac_tdc:0,pac_amex:0,pac_int:0,costo_x_trx:0,pct_banca:0};
 const costos={int_tdd:0.011,int_tdc:0,int_amex:0.0247,int_int:0.0302,fee_broxel:0.0028};

@@ -768,7 +768,7 @@ async function vIngesta(v){
     ['Monto aprobado',mxn(d.montoAprobado)],
     ['Cancelaciones',dg.cancelaciones||0,mxn(dg.montoCancel||0)],
   ]));
-  v.append(el('div',{class:'banner',html:`<b>Fecha de liquidación</b> (la calcula el servidor): Nacional/INT → T+${P.prodParams.nacional.n} corte ${P.prodParams.nacional.corte} · AMEX → T+${P.prodParams.amex.n} corte ${P.prodParams.amex.corte}. Cámbialo en Parámetros.`}));
+  v.append(el('div',{class:'banner',html:`<b>Fecha de liquidación</b> (la calcula el servidor): Nacional → T+${P.prodParams.nacional.n} corte ${P.prodParams.nacional.corte} · Internacional → T+${(P.prodParams.internacional||P.prodParams.nacional).n} corte ${(P.prodParams.internacional||P.prodParams.nacional).corte} · AMEX → T+${P.prodParams.amex.n} corte ${P.prodParams.amex.corte}. Cámbialo en Parámetros.`}));
   if(d.total)diagIngesta(v,dg);
   // Cargas recientes (lotes)
   await renderCargasRecientes(v);
@@ -1478,15 +1478,24 @@ async function vParametros(v){
   const p=el('div',{class:'panel'});p.append(el('h3',{},'Parámetros del ciclo',ro?el('span',{class:'right'},el('span',{class:'pill'},'solo lectura')):''));
   const iva=el('input',{type:'number',step:'0.01',value:P.IVA,disabled:ro?true:null}),amex=el('input',{type:'number',step:'0.0001',value:P.tasa_int_amex,disabled:ro?true:null}),int=el('input',{type:'number',step:'0.0001',value:P.tasa_int_int,disabled:ro?true:null}),fee=el('input',{type:'number',step:'0.0001',value:P.fee_broxel,disabled:ro?true:null});
   const g=el('div',{class:'form-grid c3'});g.append(fld('IVA',iva),fld('Interc. AMEX (default)',amex),fld('Interc. INT (default)',int),fld('Fee Broxel (default)',fee));p.append(g);v.append(p);
+  // 'internacional' puede no existir aún en registros guardados antes de esta separación
+  // (antes compartía la parametrización de Nacional) — cae de vuelta a Nacional como punto de partida.
+  const pInt=P.prodParams.internacional||P.prodParams.nacional;
   const p2=el('div',{class:'panel'});p2.append(el('h3',{},'Desfase y hora de corte por producto (RN-12)'));
-  const nN=el('input',{type:'number',value:P.prodParams.nacional.n,disabled:ro?true:null}),cN=el('input',{value:P.prodParams.nacional.corte,disabled:ro?true:null}),nA=el('input',{type:'number',value:P.prodParams.amex.n,disabled:ro?true:null}),cA=el('input',{value:P.prodParams.amex.corte,disabled:ro?true:null});
-  const g2=el('div',{class:'form-grid'});g2.append(fld('Nacional/INT · desfase (días hábiles)',nN),fld('Nacional/INT · hora de corte (HH:MM)',cN),fld('AMEX · desfase (días hábiles)',nA),fld('AMEX · hora de corte (HH:MM)',cA));p2.append(g2);
-  p2.append(el('div',{class:'req-note'},'Al guardar, el servidor recalcula la fecha de liquidación de las transacciones cargadas.'));
+  const nN=el('input',{type:'number',value:P.prodParams.nacional.n,disabled:ro?true:null}),cN=el('input',{value:P.prodParams.nacional.corte,disabled:ro?true:null});
+  const nI=el('input',{type:'number',value:pInt.n,disabled:ro?true:null}),cI=el('input',{value:pInt.corte,disabled:ro?true:null});
+  const nA=el('input',{type:'number',value:P.prodParams.amex.n,disabled:ro?true:null}),cA=el('input',{value:P.prodParams.amex.corte,disabled:ro?true:null});
+  const g2=el('div',{class:'form-grid c3'});
+  g2.append(fld('Nacional · desfase (días hábiles)',nN),fld('Nacional · hora de corte (HH:MM)',cN));
+  g2.append(fld('Internacional · desfase (días hábiles)',nI),fld('Internacional · hora de corte (HH:MM)',cI));
+  g2.append(fld('AMEX · desfase (días hábiles)',nA),fld('AMEX · hora de corte (HH:MM)',cA));
+  p2.append(g2);
+  p2.append(el('div',{class:'req-note'},'Internacional ahora tiene su propia parametrización, independiente de Nacional. Al guardar, el servidor recalcula la fecha de liquidación de las transacciones cargadas.'));
   v.append(p2);
   if(!ro)p2.append(el('button',{class:'btn',style:'margin-top:10px',onclick:async()=>{
     // Los umbrales (Sistema → Parametrización de umbrales) no se editan aquí,
     // pero deben reenviarse tal cual para no resetearlos a su default.
-    try{const r=await withBusy('Guardando y recalculando…',()=>api('PUT','/api/catalogo/params',{IVA:+iva.value||0.16,tasa_int_amex:+amex.value||0,tasa_int_int:+int.value||0,fee_broxel:+fee.value||0,prodParams:{nacional:{n:+nN.value||1,corte:cN.value||'23:00'},amex:{n:+nA.value||3,corte:cA.value||'23:00'}},umbral_pld:P.umbral_pld,umbral_caida_pct:P.umbral_caida_pct,umbral_contracargos_pct:P.umbral_contracargos_pct}));
+    try{const r=await withBusy('Guardando y recalculando…',()=>api('PUT','/api/catalogo/params',{IVA:+iva.value||0.16,tasa_int_amex:+amex.value||0,tasa_int_int:+int.value||0,fee_broxel:+fee.value||0,prodParams:{nacional:{n:+nN.value||1,corte:cN.value||'23:00'},internacional:{n:+nI.value||1,corte:cI.value||'23:00'},amex:{n:+nA.value||3,corte:cA.value||'23:00'}},umbral_pld:P.umbral_pld,umbral_caida_pct:P.umbral_caida_pct,umbral_contracargos_pct:P.umbral_contracargos_pct}));
       toast(`Parámetros guardados · ${r.recalculadas} fecha(s) recalculada(s)`,'ok');}catch(e){toast(errMsg(e),'err');}
   }},'Guardar parámetros'));
 }
