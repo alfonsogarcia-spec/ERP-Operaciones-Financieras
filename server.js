@@ -233,7 +233,7 @@ function evaluarAlertas(fila) {
 /* ---------- loaders de catálogo (coaccionan numeric→number) ---------- */
 async function getParams() {
   const r = (await db.query('select * from params where id=1')).rows[0];
-  return { IVA: Number(r.iva), tasa_int_amex: Number(r.tasa_int_amex), tasa_int_int: Number(r.tasa_int_int), fee_broxel: Number(r.fee_broxel), prodParams: r.prodparams };
+  return { IVA: Number(r.iva), tasa_int_amex: Number(r.tasa_int_amex), tasa_int_int: Number(r.tasa_int_int), fee_broxel: Number(r.fee_broxel), prodParams: r.prodparams, umbral_pld: Number(r.umbral_pld), umbral_caida_pct: Number(r.umbral_caida_pct), umbral_contracargos_pct: Number(r.umbral_contracargos_pct) };
 }
 async function getFeriados() { return (await db.query('select fecha::text as fecha from feriados order by fecha')).rows.map(r => r.fecha); }
 async function getGrupos() { return (await db.query('select * from grupos')).rows; }
@@ -571,8 +571,8 @@ app.get('/api/catalogo/:tipo', auth, async (req, res) => {
 app.put('/api/catalogo/params', auth, requiereRol('admin'), async (req, res) => {
   if (!dbReady(res)) return;
   const p = req.body || {};
-  await db.query('update params set iva=$1,tasa_int_amex=$2,tasa_int_int=$3,fee_broxel=$4,prodparams=$5 where id=1',
-    [p.IVA, p.tasa_int_amex, p.tasa_int_int, p.fee_broxel, JSON.stringify(p.prodParams)]);
+  await db.query('update params set iva=$1,tasa_int_amex=$2,tasa_int_int=$3,fee_broxel=$4,prodparams=$5,umbral_pld=$6,umbral_caida_pct=$7,umbral_contracargos_pct=$8 where id=1',
+    [p.IVA, p.tasa_int_amex, p.tasa_int_int, p.fee_broxel, JSON.stringify(p.prodParams), Number(p.umbral_pld) || 100000, Number(p.umbral_caida_pct) || 30, Number(p.umbral_contracargos_pct) || 1]);
   await bit(req, 'params', 'actualizó parámetros del ciclo');
   const n = await recalcularFechasLiq();
   res.json({ ok: true, recalculadas: n });
@@ -1039,7 +1039,6 @@ async function computeCorte(fechaLiqIso) {
    30%, se registra la alerta y se notifica por correo a los destinatarios
    configurados. No bloquea ni retrasa la generación del corte si algo falla.
    ========================================================================= */
-const UMBRAL_CAIDA_TRANS = 0.30;
 const VENTANA_CORTES_TRANS = 4;
 const MIN_MUESTRA_TRANS = 3;
 
@@ -1053,6 +1052,7 @@ function montoDeCalc(calc) {
 }
 
 async function evaluarAlertasTransaccionalidad(idCorte, calculosActuales, fechaLiqIso) {
+  const umbralCaida = (Number((await getParams()).umbral_caida_pct) || 30) / 100;
   const tipoDia = tipoDiaDeFecha(fechaLiqIso);
   // Agregado por grupo del corte actual (una afiliación puede repetirse en varios grupos).
   const porGrupo = new Map();
@@ -1084,7 +1084,7 @@ async function evaluarAlertasTransaccionalidad(idCorte, calculosActuales, fechaL
     const promedio = muestras.reduce((s, m) => s + m.monto, 0) / muestras.length;
     if (promedio <= 0) continue;
     const caida = (promedio - g.monto) / promedio;
-    if (caida > UMBRAL_CAIDA_TRANS) {
+    if (caida > umbralCaida) {
       disparadas.push({ id_grupo: g.id_grupo, nombre_cliente: g.nombre_cliente, monto_esperado: E.round2(promedio), monto_real: E.round2(g.monto), pct_caida: E.round2(caida * 100), muestras: muestras.length });
     }
   }
@@ -1096,12 +1096,12 @@ async function evaluarAlertasTransaccionalidad(idCorte, calculosActuales, fechaL
       [idCorte, a.id_grupo, a.nombre_cliente, fechaLiqIso, tipoDia, a.monto_esperado, a.monto_real, a.pct_caida, a.muestras]
     );
   }
-  try { await enviarAlertaTransaccionalidad({ idCorte, fechaLiqIso, disparadas, tipoDia }); }
+  try { await enviarAlertaTransaccionalidad({ idCorte, fechaLiqIso, disparadas, tipoDia, umbralCaidaPct: umbralCaida * 100 }); }
   catch (e) { console.error('[alertas_transaccionalidad] no se pudo enviar correo:', e.message); }
   return disparadas;
 }
 
-function armarAlertaTransaccionalidadHTML({ idCorte, fechaLiqIso, disparadas, tipoDia }, logoSrc) {
+function armarAlertaTransaccionalidadHTML({ idCorte, fechaLiqIso, disparadas, tipoDia, umbralCaidaPct }, logoSrc) {
   const logo = logoSrc || 'cid:polipay-logo';
   // Misma paleta de marca que el correo de corte (armarInformeHTML).
   const brand = '#04003A', accent = '#157BF6', line = '#E4E6E7', ink = '#04003A', muted = '#707070', bg = '#F5F7FA', softBlue = '#EDF3FE', warn = '#B45309', crit = '#CC0000';
@@ -1201,7 +1201,7 @@ function armarAlertaTransaccionalidadHTML({ idCorte, fechaLiqIso, disparadas, ti
 
     <!-- Nota metodológica -->
     <tr><td style="padding:16px 32px 0;font:400 12px/1.6 Montserrat,Arial,sans-serif;color:${muted}">
-      Promedio calculado con los últimos ${disparadas[0].muestras} corte(s) del mismo tipo de día (lunes se compara aparte de los días hábiles, por liquidar fin de semana). Umbral de alerta: ${(UMBRAL_CAIDA_TRANS * 100).toFixed(0)}%.
+      Promedio calculado con los últimos ${disparadas[0].muestras} corte(s) del mismo tipo de día (lunes se compara aparte de los días hábiles, por liquidar fin de semana). Umbral de alerta: ${Number(umbralCaidaPct || 30).toFixed(0)}%.
     </td></tr>
 
     <!-- Pie -->
@@ -1219,7 +1219,7 @@ function armarAlertaTransaccionalidadHTML({ idCorte, fechaLiqIso, disparadas, ti
   return { subject, html };
 }
 
-async function enviarAlertaTransaccionalidad({ idCorte, fechaLiqIso, disparadas, tipoDia }) {
+async function enviarAlertaTransaccionalidad({ idCorte, fechaLiqIso, disparadas, tipoDia, umbralCaidaPct }) {
   if (!sesEnabled()) return null;
   const destRaw = (await db.query("select email,email_cifrado,nombre,nombre_cifrado,tipo from destinatarios_alertas where activo=true")).rows;
   const dest = destRaw.map(d => ({ email: descifraTexto(d.email_cifrado, d.email), nombre: descifraTexto(d.nombre_cifrado, d.nombre), tipo: d.tipo }));
@@ -1228,7 +1228,7 @@ async function enviarAlertaTransaccionalidad({ idCorte, fechaLiqIso, disparadas,
   const cc = dest.filter(d => (d.tipo || 'to') === 'cc').map(fmt);
   const bcc = dest.filter(d => (d.tipo || 'to') === 'bcc').map(fmt);
   if (!to.length) return null;
-  const { subject, html } = armarAlertaTransaccionalidadHTML({ idCorte, fechaLiqIso, disparadas, tipoDia });
+  const { subject, html } = armarAlertaTransaccionalidadHTML({ idCorte, fechaLiqIso, disparadas, tipoDia, umbralCaidaPct });
   const logoBuf = require('fs').readFileSync(path.join(__dirname, 'public', 'logo.png'));
   const messageId = await sendSES({ to, cc, bcc, subject, html, textFallback: `Caída de transaccionalidad en ${disparadas.length} grupo(s) — corte #${idCorte}`, inlineImages: [{ cid: 'polipay-logo', filename: 'polipay-logo.png', contentType: 'image/png', content: logoBuf }] });
   await db.query('update alertas_transaccionalidad set notificado_at=now() where corte_id=$1', [idCorte]);
@@ -1248,7 +1248,8 @@ app.get('/api/alertas/transaccionalidad/preview.html', auth, async (req, res) =>
   )).rows;
   if (!rows.length) return res.status(404).send('<p style="font-family:sans-serif">No hay alertas registradas' + (corteId ? ' para el corte #' + corteId : '') + ' todavía.</p>');
   const disparadas = rows.map(r => ({ nombre_cliente: r.nombre_cliente, monto_esperado: Number(r.monto_esperado), monto_real: Number(r.monto_real), pct_caida: Number(r.pct_caida), muestras: r.muestras }));
-  const { html } = armarAlertaTransaccionalidadHTML({ idCorte: rows[0].corte_id, fechaLiqIso: rows[0].fecha_liq, disparadas, tipoDia: rows[0].tipo_dia }, '/public/logo.png');
+  const umbralCaidaPct = (await getParams()).umbral_caida_pct;
+  const { html } = armarAlertaTransaccionalidadHTML({ idCorte: rows[0].corte_id, fechaLiqIso: rows[0].fecha_liq, disparadas, tipoDia: rows[0].tipo_dia, umbralCaidaPct }, '/public/logo.png');
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 });
@@ -1289,6 +1290,171 @@ app.delete('/api/destinatarios-alertas/:id', auth, requiereRol('admin'), async (
   await db.query('delete from destinatarios_alertas where id=$1', [parseInt(req.params.id, 10)]);
   await bit(req, 'destinatario_alertas_baja', '', { resource_type: 'destinatario_alertas', resource_id: req.params.id });
   res.json({ ok: true });
+});
+
+/* ============================================================================
+   CUMPLIMIENTO (PLD + antifraude)
+   Dashboard mensual (con desglose diario) de KPIs de cumplimiento por grupo
+   de cliente y afiliación/razón social. Todo derivado de datos que ya
+   existen — sin ingesta nueva. PLD: monto procesado, operaciones sobre el
+   umbral configurado, variación vs. mes anterior. Antifraude: tasa de
+   contracargos (monto contracargos / monto transaccionado), transacciones
+   duplicadas y devoluciones sospechosas (módulos de Disputas).
+   ========================================================================= */
+function rangoMes(anio, mes) {
+  const pad = n => String(n).padStart(2, '0');
+  const desde = `${anio}-${pad(mes)}-01`;
+  const ultDia = new Date(anio, mes, 0).getDate();
+  const hasta = `${anio}-${pad(mes)}-${pad(ultDia)}`;
+  return { desde, hasta, ultDia };
+}
+async function construirCumplimiento(anio, mes) {
+  const { desde, hasta } = rangoMes(anio, mes);
+  const mesAnt = mes === 1 ? 12 : mes - 1;
+  const anioAnt = mes === 1 ? anio - 1 : anio;
+  const { desde: desdeAnt, hasta: hastaAnt } = rangoMes(anioAnt, mesAnt);
+
+  const [params, grupos, afiliaciones] = [await getParams(), await getGrupos(), await getAfiliaciones()];
+  const umbral = Number(params.umbral_pld) || 0;
+  const grupoPorNombre = nombre => grupos.find(g => nrm(g.nombre_cliente) === nrm(nombre));
+  const razonDe = afil => (afiliaciones.find(a => a.numero_afiliacion === afil) || {}).razon_social || '';
+
+  async function txPorGrupoAfil(desdeF, hastaF) {
+    const rows = (await db.query(
+      `select cliente, numero_afiliacion,
+              count(*)::int as n_trx, coalesce(sum(monto),0) as monto,
+              coalesce(sum(case when monto > $3 then 1 else 0 end),0)::int as n_umbral,
+              coalesce(sum(case when monto > $3 then monto else 0 end),0) as monto_umbral
+         from transacciones
+        where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'
+        group by cliente, numero_afiliacion`,
+      [desdeF, hastaF, umbral]
+    )).rows;
+    const m = new Map();
+    for (const r of rows) {
+      const g = grupoPorNombre(r.cliente); const idGrupo = g ? g.id_grupo : 0; const nombreGrupo = g ? g.nombre_cliente : (r.cliente || '(sin homologar)');
+      const key = idGrupo + '||' + r.numero_afiliacion;
+      const cur = m.get(key) || { id_grupo: idGrupo, nombre_cliente: nombreGrupo, numero_afiliacion: r.numero_afiliacion, n_trx: 0, monto: 0, n_umbral: 0, monto_umbral: 0 };
+      cur.n_trx += r.n_trx; cur.monto += Number(r.monto) || 0; cur.n_umbral += r.n_umbral; cur.monto_umbral += Number(r.monto_umbral) || 0;
+      m.set(key, cur);
+    }
+    return m;
+  }
+  const actual = await txPorGrupoAfil(desde, hasta);
+  const anterior = await txPorGrupoAfil(desdeAnt, hastaAnt);
+
+  // Detalle de cada operación individual sobre el umbral — con grupo
+  // homologado y razón social, para el reporte de "operación inusual" (PLD).
+  const opsUmbralRows = (await db.query(
+    `select fecha_liq::text as fecha, cliente, numero_afiliacion, monto, folio
+       from transacciones
+      where fecha_liq between $1 and $2 and upper(estatus)='APROBADO' and monto > $3
+      order by monto desc`,
+    [desde, hasta, umbral]
+  )).rows;
+  const operacionesUmbral = opsUmbralRows.map(r => {
+    const g = grupoPorNombre(r.cliente);
+    return { fecha: r.fecha, nombre_cliente: g ? g.nombre_cliente : (r.cliente || '(sin homologar)'), numero_afiliacion: r.numero_afiliacion, razon_social: razonDe(r.numero_afiliacion), monto: E.round2(Number(r.monto)), folio: r.folio || '' };
+  });
+
+  // Diario del mes (para la tendencia día a día).
+  const diarioRows = (await db.query(
+    `select fecha_liq::text as fecha, count(*)::int as n_trx, coalesce(sum(monto),0) as monto,
+            coalesce(sum(case when monto > $3 then 1 else 0 end),0)::int as n_umbral
+       from transacciones
+      where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'
+      group by fecha_liq order by fecha_liq`,
+    [desde, hasta, umbral]
+  )).rows.map(r => ({ fecha: r.fecha, n_trx: r.n_trx, monto: E.round2(Number(r.monto)), n_umbral: r.n_umbral }));
+
+  // Contracargos del mes (tabla legacy, monto plano — ya homologada por grupo/afil).
+  const ccRows = (await db.query(
+    `select grupo_cliente, numero_afiliacion, coalesce(sum(monto),0) as monto, count(*)::int as n
+       from contracargos
+      where cargado_en_fecha between $1 and $2
+      group by grupo_cliente, numero_afiliacion`,
+    [desde, hasta]
+  )).rows;
+  const ccPorKey = new Map();
+  for (const r of ccRows) {
+    const g = grupoPorNombre(r.grupo_cliente); const idGrupo = g ? g.id_grupo : 0;
+    const key = idGrupo + '||' + r.numero_afiliacion;
+    const cur = ccPorKey.get(key) || { monto: 0, n: 0 };
+    cur.monto += Number(r.monto) || 0; cur.n += r.n;
+    ccPorKey.set(key, cur);
+  }
+
+  // Duplicadas y devoluciones sospechosas del mes (módulo Disputas), homologadas por nombre de grupo.
+  async function disputaPorGrupoAfil(tabla) {
+    const rows = (await db.query(
+      `select cg.nombre as grupo_nombre, d.merchant_affiliation as afil, count(*)::int as n
+         from disputa.${tabla} d
+         left join disputa.client_groups cg on cg.id = d.client_group_id
+        where d.creado_at::date between $1 and $2
+        group by cg.nombre, d.merchant_affiliation`,
+      [desde, hasta]
+    )).rows;
+    const m = new Map();
+    for (const r of rows) {
+      const g = grupoPorNombre(r.grupo_nombre); const idGrupo = g ? g.id_grupo : 0;
+      const key = idGrupo + '||' + (r.afil || '');
+      m.set(key, (m.get(key) || 0) + r.n);
+    }
+    return m;
+  }
+  const dupPorKey = await disputaPorGrupoAfil('duplicates');
+  const refPorKey = await disputaPorGrupoAfil('refunds');
+
+  const keys = new Set([...actual.keys(), ...ccPorKey.keys(), ...dupPorKey.keys(), ...refPorKey.keys()]);
+  const detalle = [...keys].map(key => {
+    const a = actual.get(key) || { id_grupo: Number(key.split('||')[0]), nombre_cliente: '(sin actividad)', numero_afiliacion: key.split('||')[1], n_trx: 0, monto: 0, n_umbral: 0, monto_umbral: 0 };
+    const ant = anterior.get(key);
+    const cc = ccPorKey.get(key) || { monto: 0, n: 0 };
+    const variacion = ant && ant.monto > 0 ? E.round2(((a.monto - ant.monto) / ant.monto) * 100) : null;
+    const tasaCC = a.monto > 0 ? E.round2((cc.monto / a.monto) * 100) : (cc.monto > 0 ? 100 : 0);
+    return {
+      id_grupo: a.id_grupo, nombre_cliente: a.nombre_cliente, numero_afiliacion: a.numero_afiliacion, razon_social: razonDe(a.numero_afiliacion),
+      n_trx: a.n_trx, monto: E.round2(a.monto), monto_mes_anterior: ant ? E.round2(ant.monto) : 0, variacion_pct: variacion,
+      n_umbral: a.n_umbral, monto_umbral: E.round2(a.monto_umbral),
+      monto_contracargos: E.round2(cc.monto), n_contracargos: cc.n, tasa_contracargos_pct: tasaCC,
+      n_duplicadas: dupPorKey.get(key) || 0, n_devoluciones: refPorKey.get(key) || 0,
+    };
+  }).sort((x, y) => y.monto - x.monto);
+
+  const totales = detalle.reduce((s, d) => ({
+    monto: s.monto + d.monto, n_trx: s.n_trx + d.n_trx, n_umbral: s.n_umbral + d.n_umbral, monto_umbral: s.monto_umbral + d.monto_umbral,
+    monto_contracargos: s.monto_contracargos + d.monto_contracargos, n_duplicadas: s.n_duplicadas + d.n_duplicadas, n_devoluciones: s.n_devoluciones + d.n_devoluciones,
+  }), { monto: 0, n_trx: 0, n_umbral: 0, monto_umbral: 0, monto_contracargos: 0, n_duplicadas: 0, n_devoluciones: 0 });
+  totales.tasa_contracargos_pct = totales.monto > 0 ? E.round2((totales.monto_contracargos / totales.monto) * 100) : 0;
+
+  return { anio, mes, desde, hasta, umbral_pld: umbral, umbral_contracargos_pct: Number(params.umbral_contracargos_pct) || 1, umbral_caida_pct: Number(params.umbral_caida_pct) || 30, totales, diario: diarioRows, detalle, operaciones_umbral: operacionesUmbral };
+}
+
+app.get('/api/cumplimiento/mes', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const anio = parseInt(req.query.y, 10) || new Date().getFullYear();
+  const mes = parseInt(req.query.m, 10) || (new Date().getMonth() + 1);
+  res.json(await construirCumplimiento(anio, mes));
+});
+
+app.get('/api/cumplimiento/mes.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const anio = parseInt(req.query.y, 10) || new Date().getFullYear();
+  const mes = parseInt(req.query.m, 10) || (new Date().getMonth() + 1);
+  const data = await construirCumplimiento(anio, mes);
+  const headDet = ['Grupo de cliente', 'Afiliación', 'Razón social', 'Transacciones', 'Monto procesado', 'Monto mes anterior', 'Variación %', 'Trx sobre umbral', 'Monto sobre umbral', 'Monto contracargos', 'Tasa contracargos %', 'Duplicadas', 'Devoluciones sospechosas'];
+  const rowsDet = data.detalle.map(d => [d.nombre_cliente, d.numero_afiliacion, d.razon_social, d.n_trx, d.monto, d.monto_mes_anterior, d.variacion_pct, d.n_umbral, d.monto_umbral, d.monto_contracargos, d.tasa_contracargos_pct, d.n_duplicadas, d.n_devoluciones]);
+  const headDia = ['Fecha', 'Transacciones', 'Monto procesado', 'Trx sobre umbral'];
+  const rowsDia = data.diario.map(d => [d.fecha, d.n_trx, d.monto, d.n_umbral]);
+  const headUmb = ['Fecha', 'Grupo de cliente', 'Afiliación', 'Razón social', 'Monto', 'Folio'];
+  const rowsUmb = data.operaciones_umbral.map(o => [o.fecha, o.nombre_cliente, o.numero_afiliacion, o.razon_social, o.monto, o.folio]);
+  const buf = X.buildXLSX([
+    { name: 'Detalle por grupo', aoa: [headDet, ...rowsDet], cols: headDet.map(() => ({ wch: 18 })) },
+    { name: 'Operaciones sobre umbral', aoa: [headUmb, ...rowsUmb], cols: headUmb.map(() => ({ wch: 20 })) },
+    { name: 'Diario', aoa: [headDia, ...rowsDia], cols: headDia.map(() => ({ wch: 18 })) },
+  ]);
+  await bit(req, 'cumplimiento', `exportó reporte de cumplimiento ${anio}-${mes}`);
+  enviarXLSX(res, `cumplimiento_${anio}-${String(mes).padStart(2, '0')}.xlsx`, buf);
 });
 
 app.get('/api/cortes/fechas', auth, async (req, res) => {

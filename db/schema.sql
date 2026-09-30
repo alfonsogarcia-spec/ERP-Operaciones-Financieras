@@ -82,6 +82,16 @@ create table if not exists params (
   prodparams    jsonb not null default '{"nacional":{"n":1,"corte":"23:00"},"amex":{"n":3,"corte":"23:00"}}'
 );
 insert into params (id) values (1) on conflict (id) do nothing;
+-- Umbral de monto por transacción para el KPI de PLD ("operación relevante" /
+-- inusual) en el dashboard de Cumplimiento. Editable en Sistema →
+-- Parametrización de umbrales.
+alter table params add column if not exists umbral_pld numeric not null default 100000;
+-- % de caída de transaccionalidad (vs. promedio del mismo tipo de día) que
+-- dispara la alerta automática por correo.
+alter table params add column if not exists umbral_caida_pct numeric not null default 30;
+-- % de tasa de contracargos (monto contracargos / monto procesado) a partir
+-- del cual el grupo/afiliación se marca como "alto riesgo" en Cumplimiento.
+alter table params add column if not exists umbral_contracargos_pct numeric not null default 1;
 
 create table if not exists transacciones (
   id            serial primary key,
