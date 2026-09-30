@@ -294,7 +294,7 @@ async function descargar(path,filename){
 }
 
 /* ---------- roles ---------- */
-const ROLES={admin:'Administrador',operador:'Operador (Operaciones)',tesoreria:'Tesorería (valida)',bancos:'Bancos (dispersa y cierra)',consulta:'Consulta (solo lectura)'};
+const ROLES={admin:'Administrador',operador:'Operador (Operaciones)',tesoreria:'Tesorería (valida)',bancos:'Bancos (dispersa y cierra)',consulta:'Consulta (solo lectura)',inventario:'Inventario (solo esa sección)'};
 function can(cap){if(!SES)return false;const M={
   catalogos:['admin'],ingesta:['admin','operador'],corte:['admin','operador'],
   validar:['admin','tesoreria'],dispersar:['admin','bancos'],cerrar:['admin','bancos'],
@@ -393,8 +393,12 @@ let VIEW='dashboard';
    WORKSPACES: 'conciliacion' (todo lo original) | 'tareas' (microsistema)
    ========================================================================= */
 let WORKSPACE = localStorage.getItem('cl_workspace') || 'conciliacion';
-function toggleWorkspace(){ WORKSPACE = (WORKSPACE==='conciliacion') ? 'tareas' : 'conciliacion'; localStorage.setItem('cl_workspace', WORKSPACE); VIEW = (WORKSPACE==='tareas') ? 'tar_mis_rutinas' : 'dashboard'; renderWs(); render(); }
+function toggleWorkspace(){ if(SES&&SES.rol==='inventario')return; WORKSPACE = (WORKSPACE==='conciliacion') ? 'tareas' : 'conciliacion'; localStorage.setItem('cl_workspace', WORKSPACE); VIEW = (WORKSPACE==='tareas') ? 'tar_mis_rutinas' : 'dashboard'; renderWs(); render(); }
 function renderWs(){
+  const sw=document.getElementById('wsSwitch');
+  // Rol "inventario": no hay nada a lo que "cambiar" — se oculta el switch.
+  if(SES&&SES.rol==='inventario'){ if(sw)sw.style.display='none'; const sub=document.getElementById('wsSubtitle'); if(sub)sub.textContent='Polipay POS Settlement'; return; }
+  if(sw)sw.style.display='';
   const isTareas = WORKSPACE==='tareas';
   const nameEl=document.getElementById('wsName'); if(nameEl) nameEl.innerHTML = isTareas ? 'Tareas Ops<small>Cambiar a Conciliación →</small>' : 'Conciliación<small>Cambiar a Tareas Ops →</small>';
   const icon=document.getElementById('wsIcon'); if(icon){ icon.textContent = isTareas ? 'TQ' : 'CS'; icon.style.background = isTareas ? '#0f766e' : 'var(--capri)'; }
@@ -456,6 +460,12 @@ Object.defineProperty(window,'NAV',{ get(){ return WORKSPACE==='tareas' ? NAV_TA
 function navSecKey(name){ return 'cl_nav_'+String(name).toLowerCase().replace(/[^a-z0-9]+/g,'-'); }
 function renderNav(){
   const nav=$('#nav');nav.innerHTML='';
+  // Rol "inventario": nav mínimo, una sola opción — sin secciones, sin
+  // catálogos, sin nada más que pueda dar pie a explorar otras pantallas.
+  if(SES&&SES.rol==='inventario'){
+    nav.append(el('a',{class:VIEW==='inventario'?'active':'',onclick:()=>go('inventario')},el('img',{src:'/public/brand-icons/ic_14.png',alt:''}),el('span',{},'Inventario de terminales')));
+    return;
+  }
   // Agrupar items por sección. IIFE por sección para capturar secDiv/secKey por closure.
   let curBody=null, hidden=false;
   for(const item of NAV){
@@ -2941,6 +2951,9 @@ function openImport(tipo,title){
    ========================================================================= */
 function mountApp(){$('#loginScreen').style.display='none';$('#app').style.display='flex';
   $('#whoAv').textContent=(SES.nombre[0]||'?').toUpperCase();$('#whoName').textContent=SES.nombre;$('#whoRole').textContent=ROLES[SES.rol]||SES.rol;
+  // Rol "inventario": sin acceso a Tareas Ops ni al dashboard financiero —
+  // entra directo a su única sección permitida.
+  if(SES.rol==='inventario'){ WORKSPACE='conciliacion'; localStorage.setItem('cl_workspace','conciliacion'); renderWs(); VIEW='inventario'; render(); return; }
   renderWs();
   VIEW = (WORKSPACE==='tareas') ? 'tar_mis_rutinas' : 'dashboard';
   render();}

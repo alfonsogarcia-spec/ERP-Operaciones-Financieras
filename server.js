@@ -130,7 +130,7 @@ function validaArchivo(req, res, next) {
 const N = v => (v == null || v === '') ? null : Number(v);
 const nrm = s => String(s == null ? '' : s).trim().toLowerCase();
 const safeUser = u => ({ id: u.id, email: u.email, nombre: u.nombre, rol: u.rol, foto_url: u.foto_url || null });
-const ROLES = { admin: 'Administrador', operador: 'Operador (Operaciones)', tesoreria: 'Tesorería (valida)', bancos: 'Bancos (dispersa y cierra)', consulta: 'Consulta (solo lectura)' };
+const ROLES = { admin: 'Administrador', operador: 'Operador (Operaciones)', tesoreria: 'Tesorería (valida)', bancos: 'Bancos (dispersa y cierra)', consulta: 'Consulta (solo lectura)', inventario: 'Inventario (solo esa sección)' };
 const ROLES_VALIDOS = Object.keys(ROLES);
 
 // jti único por sesión — permite revocarla al cerrar sesión (blacklist en memoria).
@@ -139,6 +139,13 @@ function firmar(u) {
   const jti = crypto.randomBytes(12).toString('hex');
   return jwt.sign({ sub: u.id, rol: u.rol, nombre: u.nombre, email: u.email, jti }, JWT_SECRET, { expiresIn: '8h' });
 }
+// Rol "inventario": acceso restringido SOLO a Inventario de terminales (ver
+// y descargar) — se bloquea a nivel API, no solo ocultando el nav, para que
+// no baste con llamar el endpoint directo para saltarse la restricción.
+// /api/yo siempre pasa: lo llama el arranque de la app para toda sesión.
+function rutaPermitidaRolInventario(path) {
+  return path === '/api/yo' || path.startsWith('/api/inventario/');
+}
 function auth(req, res, next) {
   const h = req.headers.authorization || '';
   const tok = h.startsWith('Bearer ') ? h.slice(7) : (req.query.token || null);
@@ -146,6 +153,9 @@ function auth(req, res, next) {
   try {
     const p = jwt.verify(tok, JWT_SECRET);
     if (p.jti && REVOKED_JTI.has(p.jti)) return res.status(401).json({ error: 'sesion_revocada' });
+    if (p.rol === 'inventario' && !rutaPermitidaRolInventario(req.path)) {
+      return res.status(403).json({ error: 'rol_no_autorizado', mensaje: 'Este usuario solo tiene acceso a Inventario de terminales.' });
+    }
     req.user = p; next();
   }
   catch { return res.status(401).json({ error: 'token_invalido' }); }
