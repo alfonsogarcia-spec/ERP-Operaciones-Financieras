@@ -4522,11 +4522,15 @@ function agendaContabilidad() {
           catch (e) { console.warn('[contabilidad] mensual falló:', e.message); }
         }
       }
-      // Semanales: enviar el día hábil siguiente al cierre (11, 18, 25 y día 1 del mes siguiente).
+      // Semanales: enviar el día hábil siguiente al cierre (11, 18, 25...).
+      // Excepción: la última semana del mes (25-fin) cierra el mismo día que
+      // termina el mes, así que se notifica ESE mismo día — no un día después,
+      // que quedaría confundido con el resumen mensual del día 1 siguiente.
       // Aquí, para simplicidad y siendo cron horario, verificamos si toca alguna semana cerrada sin enviar.
       const semanas = semanasDelMes(ay, am);
       for (const s of semanas) {
-        if (s.hasta >= hoy) continue;                     // aún no cierra o cierra hoy
+        const esUltimaSemana = s.semana === 4;             // 25 → último día del mes
+        if (esUltimaSemana ? s.hasta > hoy : s.hasta >= hoy) continue; // aún no cierra (o, si no es la última, cierra hoy)
         const g = (await db.query('select id, estado from cortes_contables where anio=$1 and mes=$2 and semana=$3', [ay, am, s.semana])).rows[0];
         if (g && g.estado === 'Enviado') continue;
         const totales = await computeSemanaContable(s.desde, s.hasta);
