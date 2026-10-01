@@ -1723,11 +1723,34 @@ async function construirLayoutPendientes(idCorte) {
   const afiliaciones = [...new Set(cal.map(x => x.afil))];
   const pendientes = await DP.pendientesORecuperadasEnCorte(db, afiliaciones, idCorte);
   if (!pendientes.length) return null;
+  // La cuenta de liquidación (CLABE/banco/beneficiario) depende del par
+  // (id_grupo, numero_afiliacion), NO solo de la afiliación: un mismo
+  // numero_afiliacion puede estar compartido por varios grupos (comercios),
+  // cada uno con su propia cuenta — buscar solo por afiliación en `cal`
+  // (como se hacía antes) podía devolver la cuenta de OTRO grupo que
+  // comparte esa misma afiliación y también tuvo actividad en este corte.
+  const [cuentas, bancos] = [await getCuentas(), await getBancos()];
+  const bancoCod = nombre => { const b = bancos.find(x => nrm(x.nombre) === nrm(nombre)); return b ? b.codigo_spei : null; };
+  const cuentaDe = (idg, afil) => {
+    if (idg == null) return null;
+    if (afil) { const m = cuentas.find(c => String(c.id_grupo) === String(idg) && String(c.numero_afiliacion || '') === String(afil)); if (m) return m; }
+    return cuentas.find(c => String(c.id_grupo) === String(idg));
+  };
+  // Fallback (solo para pendientes antiguas registradas sin id_grupo): el
+  // comportamiento previo, ambiguo si la afiliación es compartida.
   const cuentaDeAfil = afil => cal.find(x => x.afil === afil);
   const orders = pendientes.map(p => {
-    const fila = cuentaDeAfil(p.numero_afiliacion) || {};
-    const concepto = p.bloque === 'AMEX' ? `RECUPERACION ${E.ult3(p.numero_afiliacion)}CPPXAMEX00${p.id_grupo || fila.id_grupo || ''}` : 'RECUPERACION ' + (fila.concepto || '');
-    return { concepto, clabe: fila.clabe, cod: fila.codigo_banco, benef: fila.beneficiario, cant: p.monto, razon: p.grupo_cliente || fila.razon, afil: p.numero_afiliacion, id: p.id };
+    const cuenta = cuentaDe(p.id_grupo, p.numero_afiliacion);
+    const legacy = cuenta ? null : (cuentaDeAfil(p.numero_afiliacion) || {});
+    const idGrupo = p.id_grupo || (legacy && legacy.id_grupo) || '';
+    const concepto = p.bloque === 'AMEX'
+      ? `RECUPERACION ${E.ult3(p.numero_afiliacion)}CPPXAMEX00${idGrupo}`
+      : 'RECUPERACION ' + (idGrupo ? E.concepto(p.numero_afiliacion, idGrupo) : ((legacy && legacy.concepto) || ''));
+    const clabe = cuenta ? cuenta.clabe : (legacy && legacy.clabe);
+    const cod = cuenta ? (cuenta.codigo_banco || bancoCod(cuenta.banco)) : (legacy && legacy.codigo_banco);
+    const benef = cuenta ? (cuenta.razon_social_beneficiario || cuenta.nombre_comercial) : (legacy && legacy.beneficiario);
+    const razon = p.grupo_cliente || benef || (legacy && legacy.razon) || '';
+    return { concepto, clabe, cod, benef, cant: p.monto, razon, afil: p.numero_afiliacion, id: p.id };
   });
   const bloqueadas = orders.filter(o => !o.clabe || !o.cod);
   if (bloqueadas.length) return { bloqueado: true, detalle: bloqueadas.map(o => ({ razon: o.razon, afil: o.afil, importe: o.cant, falta: !o.clabe ? 'CLABE' : 'codigo_banco' })) };
