@@ -758,6 +758,7 @@ async function vDashboard(v){
 async function vIngesta(v){
   if(can('ingesta'))$('#pageAction').append(
     el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/plantilla/transacciones.xlsx','plantilla_transacciones.xlsx')},'⬇ Plantilla Excel'),el('span',{},' '),
+    el('button',{class:'btn secondary sm',onclick:openCompletarTarjeta},'Completar datos de tarjeta'),el('span',{},' '),
     el('button',{class:'btn',onclick:openIngesta},'Cargar transacciones'));
   const d=await api('GET','/api/transacciones');const dg=d.diagnostico||{};
   v.innerHTML='';
@@ -821,6 +822,35 @@ function diagIngesta(v,dg){
   p.append(el('h3',{style:'font-size:14px;margin-top:16px'},'Afiliaciones'));
   p.append(tableWrap([{t:'Afiliación'},{t:'#'},'Tasas','Costos'],(dg.afiliaciones||[]).map(a=>[`<span class="mono">${esc(a.k)}</span>`,{num:a.n},a.tasas?'<span class="badge ok">con tasas</span>':'<span class="badge d">sin tasas</span>',a.costos?'<span class="badge ok">con costos</span>':'<span class="badge w">sin costos</span>'])));
   v.append(p);
+}
+function openCompletarTarjeta(){
+  const body=el('div',{});
+  body.append(el('div',{class:'banner',html:'Agrega <b>BIN, Últimos 4, Cashback, Emisor y Modo Entrada</b> a transacciones <b>ya cargadas</b>, sin duplicarlas ni tocar montos, fechas o liquidaciones.<br>1) Descarga el layout. 2) Llena las 5 columnas finales (guarda BIN y Últimos 4 como texto). 3) Súbelo aquí: primero verás una vista previa y solo se escribe al confirmar. <b>No quites la columna "ID Sistema".</b>'}));
+  body.append(el('button',{class:'btn secondary sm',style:'margin-bottom:12px',onclick:()=>descargar('/api/transacciones/export.xlsx?faltantes=1','transacciones_para_completar.xlsx').catch(e=>toast(errMsg(e),'err'))},'⬇ Descargar layout (solo con datos faltantes)'));
+  const file=el('input',{type:'file',accept:'.xlsx,.xls'});
+  const out=el('div',{style:'margin-top:12px'});
+  body.append(el('label',{class:'field'},'Layout completado (.xlsx)',file),out);
+  const foot=el('div',{});
+  const btnAplicar=el('button',{class:'btn ok',style:'display:none'},'Aplicar cambios');
+  const enviar=async(confirmar)=>{
+    const fd=new FormData();fd.append('archivo',file.files[0]);fd.append('confirmar',confirmar?'1':'0');
+    return withBusy(confirmar?'Aplicando…':'Revisando archivo…',()=>api('POST','/api/transacciones/enriquecer',fd));
+  };
+  const revisar=el('button',{class:'btn',onclick:async()=>{
+    if(!file.files[0]){toast('Sube el layout completado','err');return;}
+    try{
+      const r=await enviar(false);
+      out.innerHTML='';btnAplicar.style.display='none';
+      out.append(el('div',{class:'banner'+(r.a_actualizar?' ok':' warn'),html:`<b>Vista previa (aún no se guardó nada)</b><br>Filas en el archivo: <b>${r.filas_archivo}</b><br>Se completarán: <b>${r.a_actualizar}</b><br>Sin cambios (ya tenían datos o vienen vacías): ${r.sin_cambio}<br>ID no encontrado: ${r.no_encontradas} · Sin ID: ${r.sin_id}<br>Omitidas por no coincidir afiliación/monto con su ID: <b>${r.inconsistentes}</b>`}));
+      if(r.inconsistentes)out.append(el('div',{class:'req-note'},'Revisa que no hayas reordenado o mezclado filas: '+r.muestra_inconsistentes.map(x=>'ID '+x.id).join(', ')+(r.inconsistentes>r.muestra_inconsistentes.length?'…':'')));
+      if(r.a_actualizar){btnAplicar.style.display='';btnAplicar.onclick=async()=>{
+        try{const a=await enviar(true);closeModal();render();toast(`Datos de tarjeta completados en ${a.actualizadas} transacciones`,'ok');}
+        catch(e){toast('Error: '+errMsg(e),'err');}
+      };}
+    }catch(e){toast(e.data&&e.data.mensaje?e.data.mensaje:'Error: '+errMsg(e),'err');}
+  }},'Revisar archivo');
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'),revisar,btnAplicar);
+  modal('Completar datos de tarjeta',body,foot,true);
 }
 function openIngesta(){
   const body=el('div',{});

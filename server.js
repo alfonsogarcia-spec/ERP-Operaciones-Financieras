@@ -805,6 +805,93 @@ app.post('/api/transacciones/ingesta', auth, requiereRol('admin', 'operador'), u
   res.json({ validas, invalidas, monto: E.round2(monto), ingesta_id: ingestaId, con_datos_tarjeta: filas.filter(r => r.tarjeta_key).length });
 });
 
+/* ---------- Completar datos de tarjeta de transacciones YA ingestadas ----------
+   1) GET  /api/transacciones/export.xlsx   → layout con lo ya cargado + "ID Sistema"
+      y las columnas de tarjeta vacías (o ya llenas) para que solo se completen.
+   2) POST /api/transacciones/enriquecer    → sube ese archivo; cada fila actualiza
+      EXACTAMENTE la transacción con ese ID. Solo rellena BIN, Últimos 4, Cashback,
+      Emisor y Modo Entrada cuando están vacíos; nunca crea ni borra filas ni toca
+      montos, fechas o liquidaciones. Sin confirmar=1 solo hace vista previa. */
+const COLS_COMPLETAR = ['ID Sistema', ...X.TX_COLS, 'BIN', 'Últimos 4', 'Cashback', 'Emisor', 'Modo Entrada URL'];
+app.get('/api/transacciones/export.xlsx', auth, requiereRol('admin', 'operador'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const soloFaltantes = req.query.faltantes === '1';
+  const rows = (await db.query(
+    `select id,fecha,hora,cliente,comercio,numero_afiliacion,estatus,metodo,producto,monto,folio,referencia,autorizacion,terminal,bin,ultimos4,cashback,emisor,modo_entrada
+       from transacciones
+      ${soloFaltantes ? 'where bin is null or ultimos4 is null or cashback is null or emisor is null or modo_entrada is null' : ''}
+      order by id`)).rows;
+  const s = v => (v == null ? '' : String(v));
+  const aoa = [COLS_COMPLETAR, ...rows.map(r => [
+    r.id, s(r.fecha), s(r.hora), s(r.cliente), s(r.comercio), s(r.numero_afiliacion), s(r.estatus), s(r.metodo), s(r.producto),
+    Number(r.monto), s(r.folio), s(r.referencia), s(r.autorizacion), s(r.terminal),
+    s(r.bin), s(r.ultimos4), r.cashback == null ? '' : Number(r.cashback), s(r.emisor), s(r.modo_entrada),
+  ])];
+  await bit(req, 'ingesta_exportar', `exportó ${rows.length} transacciones para completar tarjeta${soloFaltantes ? ' (solo con datos faltantes)' : ''}`);
+  const buf = X.buildXLSX([{ name: 'Transacciones', aoa, cols: COLS_COMPLETAR.map((_, i) => ({ wch: i === 0 ? 11 : 15 })), freeze: { xSplit: 0, ySplit: 1, topLeftCell: 'A2' } }]);
+  enviarXLSX(res, `transacciones_para_completar_${hoyISOmx()}.xlsx`, buf);
+});
+
+app.post('/api/transacciones/enriquecer', auth, requiereRol('admin', 'operador'), upload.single('archivo'), validaArchivo, async (req, res) => {
+  if (!dbReady(res)) return;
+  if (!req.file) return res.status(400).json({ error: 'sin_archivo' });
+  const confirmar = String((req.body || {}).confirmar) === '1';
+  const objs = X.parseBuffer(req.file.buffer).objs;
+  if (!objs.length) return res.status(400).json({ error: 'sin_datos' });
+  if (!('id_sistema' in objs[0])) return res.status(400).json({ error: 'sin_id_sistema', mensaje: 'El archivo no trae la columna "ID Sistema". Usa el layout de "Exportar para completar" y no quites esa columna.' });
+
+  const ids = [...new Set(objs.map(o => parseInt(o.id_sistema, 10)).filter(n => Number.isInteger(n) && n > 0))];
+  const actuales = new Map();
+  for (let i = 0; i < ids.length; i += 5000) {
+    (await db.query('select id,numero_afiliacion,monto,bin,ultimos4,cashback,emisor,modo_entrada from transacciones where id = any($1::int[])', [ids.slice(i, i + 5000)]))
+      .rows.forEach(r => actuales.set(r.id, r));
+  }
+  const vacio = v => v == null || v === '';
+  let sinId = 0, noEncontradas = 0, sinCambio = 0, nInconsistentes = 0; const muestraInconsistentes = []; const cambios = [];
+  for (const o of objs) {
+    const id = parseInt(o.id_sistema, 10);
+    if (!Number.isInteger(id) || id <= 0) { sinId++; continue; }
+    const ex = actuales.get(id);
+    if (!ex) { noEncontradas++; continue; }
+    // Protección: si la fila del archivo no corresponde a la transacción de ese ID (afiliación o monto distintos), no se toca.
+    const afilArch = String(X.pickCol(o, 'numero_afiliacion') || '').replace(/\D/g, '');
+    const montoCelda = X.pickCol(o, 'monto');
+    if ((afilArch && afilArch !== String(ex.numero_afiliacion || '')) || (!vacio(montoCelda) && Math.abs(E.parseMonto(montoCelda) - Number(ex.monto)) > 0.005)) {
+      nInconsistentes++;
+      if (muestraInconsistentes.length < 5) muestraInconsistentes.push({ id, motivo: 'la afiliación o el monto del archivo no coincide con la transacción de ese ID' });
+      continue;
+    }
+    const n = extraerAntifraude(o);
+    const m = {
+      bin: vacio(ex.bin) ? n.bin : ex.bin,
+      ultimos4: vacio(ex.ultimos4) ? n.ultimos4 : ex.ultimos4,
+      cashback: ex.cashback == null ? n.cashback : Number(ex.cashback),
+      emisor: vacio(ex.emisor) ? n.emisor : ex.emisor,
+      modo_entrada: vacio(ex.modo_entrada) ? n.modo_entrada : ex.modo_entrada,
+    };
+    m.tarjeta_key = (m.bin && m.bin.length >= 6 && m.ultimos4) ? C.hmac(m.bin.slice(0, 6) + '|' + m.ultimos4) : null;
+    const cambia = m.bin !== (ex.bin ?? null) || m.ultimos4 !== (ex.ultimos4 ?? null) || m.emisor !== (ex.emisor ?? null)
+      || m.modo_entrada !== (ex.modo_entrada ?? null) || m.cashback !== (ex.cashback == null ? null : Number(ex.cashback));
+    if (cambia) cambios.push({ id, ...m }); else sinCambio++;
+  }
+  let actualizadas = 0;
+  if (confirmar && cambios.length) {
+    for (let i = 0; i < cambios.length; i += 300) {
+      const chunk = cambios.slice(i, i + 300); const ph = [], vals = [];
+      chunk.forEach((c, k) => {
+        const b = k * 7; ph.push(`($${b + 1}::int,$${b + 2}::text,$${b + 3}::text,$${b + 4}::text,$${b + 5}::numeric,$${b + 6}::text,$${b + 7}::text)`);
+        vals.push(c.id, c.bin, c.ultimos4, c.tarjeta_key, c.cashback, c.emisor, c.modo_entrada);
+      });
+      await db.query(`update transacciones t set bin=v.bin, ultimos4=v.u4, tarjeta_key=v.tk, cashback=v.cb, emisor=v.em, modo_entrada=v.me
+                        from (values ${ph.join(',')}) as v(id,bin,u4,tk,cb,em,me) where t.id=v.id`, vals);
+      actualizadas += chunk.length;
+    }
+    await bit(req, 'ingesta_enriquecer', `completó datos de tarjeta en ${actualizadas} transacciones (archivo ${req.file.originalname || ''})`);
+  }
+  res.json({ aplicado: confirmar, filas_archivo: objs.length, a_actualizar: cambios.length, actualizadas, sin_cambio: sinCambio,
+    no_encontradas: noEncontradas, sin_id: sinId, inconsistentes: nInconsistentes, muestra_inconsistentes: muestraInconsistentes });
+});
+
 app.get('/api/transacciones', auth, async (req, res) => {
   if (!dbReady(res)) return;
   const total = (await db.query('select count(*)::int n from transacciones')).rows[0].n;
