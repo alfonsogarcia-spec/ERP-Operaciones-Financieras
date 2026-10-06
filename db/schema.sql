@@ -127,6 +127,18 @@ alter table transacciones add column if not exists archivo_origen text;
 alter table transacciones add column if not exists cargado_por text;
 create index if not exists idx_tx_ingesta on transacciones(ingesta_id);
 
+-- Datos para el sistema antifraude (opcionales; transacciones anteriores quedan
+-- en NULL). NUNCA se guarda el número completo de tarjeta: solo BIN (6-8) +
+-- últimos 4, y una huella HMAC (BIN6|últimos4) para detectar repeticiones.
+alter table transacciones add column if not exists bin text;
+alter table transacciones add column if not exists ultimos4 text;
+alter table transacciones add column if not exists tarjeta_key text;
+alter table transacciones add column if not exists cashback numeric;
+alter table transacciones add column if not exists emisor text;
+alter table transacciones add column if not exists modo_entrada text;
+create index if not exists idx_tx_tarjeta on transacciones(tarjeta_key);
+create index if not exists idx_tx_bin on transacciones(bin);
+
 create table if not exists cortes (
   id_corte      serial primary key,
   fecha_liq     text,

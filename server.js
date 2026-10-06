@@ -752,6 +752,24 @@ async function recalcularFechasLiq() {
   return n;
 }
 
+// Columnas opcionales para el sistema antifraude. Nunca recibimos ni guardamos
+// el número completo de tarjeta: BIN (máx. 8) + últimos 4 + huella HMAC de
+// BIN6|últimos4 para detectar repeticiones sin exponer la tarjeta.
+function extraerAntifraude(o) {
+  const g = c => X.pickCol(o, c);
+  const txt = (v) => { const s = String(v == null ? '' : v).trim(); return s ? s.toUpperCase() : null; };
+  const dig = v => String(v == null ? '' : v).replace(/\D/g, '');
+  const cb = String(g('cashback') == null ? '' : g('cashback')).trim();
+  const bin = dig(g('bin')).slice(0, 8) || null;
+  const u4raw = dig(g('ultimos4')); const ultimos4 = u4raw ? u4raw.slice(-4).padStart(4, '0') : null;
+  return {
+    bin, ultimos4,
+    tarjeta_key: (bin && bin.length >= 6 && ultimos4) ? C.hmac(bin.slice(0, 6) + '|' + ultimos4) : null,
+    cashback: cb === '' ? null : E.parseMonto(cb),
+    emisor: txt(g('emisor')), modo_entrada: txt(g('modo_entrada')),
+  };
+}
+
 app.post('/api/transacciones/ingesta', auth, requiereRol('admin', 'operador'), upload.single('archivo'), validaArchivo, async (req, res) => {
   if (!dbReady(res)) return;
   const modo = (req.body && req.body.modo) || 'append';
@@ -774,7 +792,7 @@ app.post('/api/transacciones/ingesta', auth, requiereRol('admin', 'operador'), u
     if (!ok) invalidas++; else validas++;
     let fecha_liq = null; if (pk && f) { const fl = E.fechaLiquidacion(t.fecha, t.hora, t.producto, params, feriados); fecha_liq = fl ? E.isoFecha(fl) : null; }
     if (t.estatus === 'APROBADO') monto += t.monto;
-    filas.push({ fecha: t.fecha, hora: t.hora, cliente: t.cliente, comercio: t.comercio, numero_afiliacion: t.numero_afiliacion, estatus: t.estatus, metodo: t.metodo, producto: t.producto, monto: t.monto, folio: String(t.folio || ''), referencia: String(t.referencia || ''), autorizacion: String(t.autorizacion || ''), terminal: String(t.terminal || ''), fecha_liq, cancelacion: t.monto < 0, invalida: !ok });
+    filas.push({ fecha: t.fecha, hora: t.hora, cliente: t.cliente, comercio: t.comercio, numero_afiliacion: t.numero_afiliacion, estatus: t.estatus, metodo: t.metodo, producto: t.producto, monto: t.monto, folio: String(t.folio || ''), referencia: String(t.referencia || ''), autorizacion: String(t.autorizacion || ''), terminal: String(t.terminal || ''), fecha_liq, cancelacion: t.monto < 0, invalida: !ok, ...extraerAntifraude(o) });
   }
   if (modo === 'replace') await db.query('delete from transacciones');
   // Asignar identificador de lote a todas las filas
@@ -782,9 +800,9 @@ app.post('/api/transacciones/ingesta', auth, requiereRol('admin', 'operador'), u
   const nombreArchivo = req.file ? (req.file.originalname || '') : (req.body && req.body.csv ? '(pegado)' : '');
   const ingestaAt = new Date().toISOString();
   filas.forEach(r => { r.ingesta_id = ingestaId; r.ingesta_fecha = ingestaAt; r.archivo_origen = nombreArchivo; r.cargado_por = req.user.nombre; });
-  await insertMany('transacciones', ['fecha', 'hora', 'cliente', 'comercio', 'numero_afiliacion', 'estatus', 'metodo', 'producto', 'monto', 'folio', 'referencia', 'autorizacion', 'terminal', 'fecha_liq', 'cancelacion', 'invalida', 'ingesta_id', 'ingesta_fecha', 'archivo_origen', 'cargado_por'], filas);
+  await insertMany('transacciones', ['fecha', 'hora', 'cliente', 'comercio', 'numero_afiliacion', 'estatus', 'metodo', 'producto', 'monto', 'folio', 'referencia', 'autorizacion', 'terminal', 'fecha_liq', 'cancelacion', 'invalida', 'ingesta_id', 'ingesta_fecha', 'archivo_origen', 'cargado_por', ...X.TX_EXTRA, 'tarjeta_key'], filas);
   await bit(req, 'ingesta', `${validas} válidas, ${invalidas} inválidas (${modo}) · lote ${ingestaId} · archivo ${nombreArchivo}`);
-  res.json({ validas, invalidas, monto: E.round2(monto), ingesta_id: ingestaId });
+  res.json({ validas, invalidas, monto: E.round2(monto), ingesta_id: ingestaId, con_datos_tarjeta: filas.filter(r => r.tarjeta_key).length });
 });
 
 app.get('/api/transacciones', auth, async (req, res) => {
@@ -4328,7 +4346,7 @@ function armarDetalleClienteHTML(n) {
 // Plantillas (cualquiera autenticado)
 app.get('/api/plantilla/:tipo.xlsx', auth, (req, res) => {
   const t = req.params.tipo; let sheet;
-  if (t === 'transacciones') sheet = { name: 'Transacciones', aoa: [X.TX_COLS, ['03/08/2026', '14:20', 'DEAL', 'Comercio Demo', '7194416', 'APROBADO', 'VISA', 'Débito', 1000, 'F001', 'REF001', 'A12345', 'T01']] };
+  if (t === 'transacciones') sheet = { name: 'Transacciones', aoa: [[...X.TX_COLS, 'BIN', 'Últimos 4', 'Cashback', 'Emisor', 'Modo Entrada URL'], ['03/08/2026', '14:20', 'DEAL', 'Comercio Demo', '7194416', 'APROBADO', 'VISA', 'Débito', 1000, 'F001', 'REF001', 'A12345', 'T01', '411111', '0234', 0, 'BBVA', 'CHIP']] };
   else if (t === 'grupos') sheet = { name: 'Grupos', aoa: [['id_grupo', 'nombre_cliente', 'numero_afiliacion', 'razon_social', 'tasa_pac_tdd', 'tasa_pac_tdc', 'tasa_pac_amex', 'tasa_pac_int', 'costo_x_trx', 'pct_banca', 'int_tdd', 'int_tdc', 'int_amex', 'int_int', 'fee_broxel'], [3, 'DEAL', '7194416', 'Deal Comercializadora SA', 0.025, 0.029, 0.035, 0.038, 0, 0.005, 0.011, 0.015, 0.0247, 0.0302, 0.0028]] };
   else if (t === 'cuentas') sheet = { name: 'Cuentas', aoa: [['id_grupo', 'numero_afiliacion', 'nombre_comercial', 'razon_social_beneficiario', 'banco', 'clabe'], [3, '7194416', 'DEAL', 'Deal Comercializadora SA', 'STP', '646180123456789012']] };
   else return res.status(404).json({ error: 'tipo' });
