@@ -826,7 +826,19 @@ function diagIngesta(v,dg){
 function openCompletarTarjeta(){
   const body=el('div',{});
   body.append(el('div',{class:'banner',html:'Agrega <b>BIN, Últimos 4, Cashback, Emisor y Modo Entrada</b> a transacciones <b>ya cargadas</b>, sin duplicarlas ni tocar montos, fechas o liquidaciones.<br>1) Descarga el layout. 2) Llena las 5 columnas finales (guarda BIN y Últimos 4 como texto). 3) Súbelo aquí: primero verás una vista previa y solo se escribe al confirmar. <b>No quites la columna "ID Sistema".</b>'}));
-  body.append(el('button',{class:'btn secondary sm',style:'margin-bottom:12px',onclick:()=>descargar('/api/transacciones/export.xlsx?faltantes=1','transacciones_para_completar.xlsx').catch(e=>toast(errMsg(e),'err'))},'⬇ Descargar layout (solo con datos faltantes)'));
+  const dDesde=el('input',{type:'date'}),dHasta=el('input',{type:'date'});
+  const g=el('div',{class:'form-grid'});g.append(el('label',{class:'field'},'Fecha de liquidación · desde',dDesde),el('label',{class:'field'},'Fecha de liquidación · hasta',dHasta));
+  const aviso=el('div',{class:'req-note',style:'margin:-6px 0 10px'},'El layout se descarga por rango de fechas (máx. 10,000 filas por archivo). Para historia larga, descarga y completa por semanas o por mes.');
+  body.append(g,aviso,el('button',{class:'btn secondary sm',style:'margin-bottom:12px',onclick:async()=>{
+    const qs='faltantes=1'+(dDesde.value?'&desde='+dDesde.value:'')+(dHasta.value?'&hasta='+dHasta.value:'');
+    try{
+      const c=await api('GET','/api/transacciones/export-conteo?'+qs);
+      if(!c.total){toast('No hay transacciones con datos de tarjeta pendientes en ese rango','');return;}
+      if(c.total>c.maximo){aviso.style.color='var(--danger)';aviso.textContent=`Ese rango tiene ${c.total} filas y el máximo por archivo es ${c.maximo}. Acota las fechas (por ejemplo, una semana).`;return;}
+      aviso.style.color='';aviso.textContent=`Descargando ${c.total} filas…`;
+      await descargar('/api/transacciones/export.xlsx?'+qs,'transacciones_para_completar.xlsx');
+    }catch(e){toast(e.data&&e.data.mensaje?e.data.mensaje:errMsg(e),'err');}
+  }},'⬇ Descargar layout (solo con datos faltantes)'));
   const file=el('input',{type:'file',accept:'.xlsx,.xls'});
   const out=el('div',{style:'margin-top:12px'});
   body.append(el('label',{class:'field'},'Layout completado (.xlsx)',file),out);

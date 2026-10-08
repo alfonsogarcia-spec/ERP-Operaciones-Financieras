@@ -813,21 +813,46 @@ app.post('/api/transacciones/ingesta', auth, requiereRol('admin', 'operador'), u
       Emisor y Modo Entrada cuando están vacíos; nunca crea ni borra filas ni toca
       montos, fechas o liquidaciones. Sin confirmar=1 solo hace vista previa. */
 const COLS_COMPLETAR = ['ID Sistema', ...X.TX_COLS, 'BIN', 'Últimos 4', 'Cashback', 'Emisor', 'Modo Entrada URL'];
+// Tope por archivo: armar un .xlsx vive 100% en memoria (el servidor tiene poca RAM), así que
+// un export sin límite sobre toda la historia tumba el proceso (heap out of memory).
+const EXPORT_MAX_FILAS = 10000;
+const ENRIQUECER_MAX_FILAS = 20000;
+function filtroExportTx(q) {
+  const where = [], params = [];
+  if (q.faltantes === '1') where.push('(bin is null or ultimos4 is null or cashback is null or emisor is null or modo_entrada is null)');
+  const f = /^\d{4}-\d{2}-\d{2}$/;
+  if (f.test(String(q.desde || ''))) { params.push(q.desde); where.push(`fecha_liq >= $${params.length}`); }
+  if (f.test(String(q.hasta || ''))) { params.push(q.hasta); where.push(`fecha_liq <= $${params.length}`); }
+  return { where, params };
+}
+app.get('/api/transacciones/export-conteo', auth, requiereRol('admin', 'operador'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const { where, params } = filtroExportTx(req.query);
+  const total = (await db.query('select count(*)::int n from transacciones' + (where.length ? ' where ' + where.join(' and ') : ''), params)).rows[0].n;
+  res.json({ total, maximo: EXPORT_MAX_FILAS });
+});
 app.get('/api/transacciones/export.xlsx', auth, requiereRol('admin', 'operador'), async (req, res) => {
   if (!dbReady(res)) return;
-  const soloFaltantes = req.query.faltantes === '1';
-  const rows = (await db.query(
-    `select id,fecha,hora,cliente,comercio,numero_afiliacion,estatus,metodo,producto,monto,folio,referencia,autorizacion,terminal,bin,ultimos4,cashback,emisor,modo_entrada
-       from transacciones
-      ${soloFaltantes ? 'where bin is null or ultimos4 is null or cashback is null or emisor is null or modo_entrada is null' : ''}
-      order by id`)).rows;
+  const { where, params } = filtroExportTx(req.query);
+  const total = (await db.query('select count(*)::int n from transacciones' + (where.length ? ' where ' + where.join(' and ') : ''), params)).rows[0].n;
+  if (total > EXPORT_MAX_FILAS) return res.status(413).json({ error: 'demasiadas_filas', total, maximo: EXPORT_MAX_FILAS, mensaje: `Son ${total} filas y el máximo por archivo es ${EXPORT_MAX_FILAS}. Acota el rango de fechas de liquidación (por ejemplo, una semana).` });
   const s = v => (v == null ? '' : String(v));
-  const aoa = [COLS_COMPLETAR, ...rows.map(r => [
-    r.id, s(r.fecha), s(r.hora), s(r.cliente), s(r.comercio), s(r.numero_afiliacion), s(r.estatus), s(r.metodo), s(r.producto),
-    Number(r.monto), s(r.folio), s(r.referencia), s(r.autorizacion), s(r.terminal),
-    s(r.bin), s(r.ultimos4), r.cashback == null ? '' : Number(r.cashback), s(r.emisor), s(r.modo_entrada),
-  ])];
-  await bit(req, 'ingesta_exportar', `exportó ${rows.length} transacciones para completar tarjeta${soloFaltantes ? ' (solo con datos faltantes)' : ''}`);
+  const aoa = [COLS_COMPLETAR];
+  // Lectura por bloques (keyset por id) para no duplicar toda la tabla en memoria.
+  let ultimo = 0;
+  for (;;) {
+    const w = [...where, `id > $${params.length + 1}`];
+    const rows = (await db.query(
+      `select id,fecha,hora,cliente,comercio,numero_afiliacion,estatus,metodo,producto,monto,folio,referencia,autorizacion,terminal,bin,ultimos4,cashback,emisor,modo_entrada
+         from transacciones where ${w.join(' and ')} order by id limit 2000`, [...params, ultimo])).rows;
+    if (!rows.length) break;
+    for (const r of rows) aoa.push([
+      r.id, s(r.fecha), s(r.hora), s(r.cliente), s(r.comercio), s(r.numero_afiliacion), s(r.estatus), s(r.metodo), s(r.producto),
+      Number(r.monto), s(r.folio), s(r.referencia), s(r.autorizacion), s(r.terminal),
+      s(r.bin), s(r.ultimos4), r.cashback == null ? '' : Number(r.cashback), s(r.emisor), s(r.modo_entrada)]);
+    ultimo = rows[rows.length - 1].id;
+  }
+  await bit(req, 'ingesta_exportar', `exportó ${aoa.length - 1} transacciones para completar tarjeta${req.query.faltantes === '1' ? ' (solo con datos faltantes)' : ''}`);
   const buf = X.buildXLSX([{ name: 'Transacciones', aoa, cols: COLS_COMPLETAR.map((_, i) => ({ wch: i === 0 ? 11 : 15 })), freeze: { xSplit: 0, ySplit: 1, topLeftCell: 'A2' } }]);
   enviarXLSX(res, `transacciones_para_completar_${hoyISOmx()}.xlsx`, buf);
 });
@@ -835,9 +860,11 @@ app.get('/api/transacciones/export.xlsx', auth, requiereRol('admin', 'operador')
 app.post('/api/transacciones/enriquecer', auth, requiereRol('admin', 'operador'), upload.single('archivo'), validaArchivo, async (req, res) => {
   if (!dbReady(res)) return;
   if (!req.file) return res.status(400).json({ error: 'sin_archivo' });
+  if (req.file.size > 10 * 1024 * 1024) return res.status(413).json({ error: 'archivo_muy_grande', mensaje: 'El archivo pesa más de 10 MB. Divídelo en archivos más pequeños (por rango de fechas).' });
   const confirmar = String((req.body || {}).confirmar) === '1';
   const objs = X.parseBuffer(req.file.buffer).objs;
   if (!objs.length) return res.status(400).json({ error: 'sin_datos' });
+  if (objs.length > ENRIQUECER_MAX_FILAS) return res.status(413).json({ error: 'archivo_muy_grande', mensaje: `El archivo trae ${objs.length} filas; el máximo por carga es ${ENRIQUECER_MAX_FILAS}. Divídelo por rango de fechas.` });
   if (!('id_sistema' in objs[0])) return res.status(400).json({ error: 'sin_id_sistema', mensaje: 'El archivo no trae la columna "ID Sistema". Usa el layout de "Exportar para completar" y no quites esa columna.' });
 
   const ids = [...new Set(objs.map(o => parseInt(o.id_sistema, 10)).filter(n => Number.isInteger(n) && n > 0))];
