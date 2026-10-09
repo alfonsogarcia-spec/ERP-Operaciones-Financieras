@@ -684,7 +684,10 @@ function setView(v,node){v.innerHTML='';v.append(node);}
 async function vDashboard(v){
   const hoy = new Date();
   const y = hoy.getFullYear(), mo = hoy.getMonth()+1;
-  const [cortes,tx,cbsResp,refsResp,dashDisp,contab,alertasTrans]=await Promise.all([
+  // Filtros del resumen (persisten mientras la sesión); '' = el servidor usa el mes en curso / todas las afiliaciones.
+  const F = vDashboard._f || (vDashboard._f = {desde:'',hasta:'',afil:''});
+  const qsF = new URLSearchParams({desde:F.desde,hasta:F.hasta,afiliacion:F.afil}).toString();
+  const [cortes,tx,cbsResp,refsResp,dashDisp,contab,alertasTrans,resumen]=await Promise.all([
     api('GET','/api/cortes').catch(()=>[]),
     api('GET','/api/transacciones').catch(()=>({total:0,aprobadas:0,montoAprobado:0,items:[]})),
     api('GET','/api/disputa/chargebacks').catch(()=>({rows:[]})),
@@ -692,11 +695,36 @@ async function vDashboard(v){
     api('GET','/api/disputa/dashboard').catch(()=>null),
     api('GET','/api/contabilidad/mes?y='+y+'&m='+mo).catch(()=>null),
     api('GET','/api/alertas/transaccionalidad').catch(()=>[]),
+    api('GET','/api/dashboard/resumen?'+qsF).catch(e=>({_err:e})),
   ]);
   // Los endpoints devuelven formatos distintos: chargebacks → {total,rows}; refunds → array.
   const cbs  = Array.isArray(cbsResp)  ? cbsResp  : (cbsResp?.rows  || []);
   const refs = Array.isArray(refsResp) ? refsResp : (refsResp?.rows || []);
   v.innerHTML='';
+  // Resumen del periodo: monto, comisión pactada, IVA y dispersado (neto), con filtro por afiliación y fechas.
+  const rs = resumen && !resumen._err ? resumen : null;
+  const barra=el('div',{style:'display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px'});
+  const selAf=el('select',{id:'dashAfil'});selAf.append(el('option',{value:''},'Todas las afiliaciones'));
+  (rs?rs.opciones:[]).forEach(o=>selAf.append(el('option',{value:o.afil},o.afil+(o.razon?' · '+o.razon:''))));selAf.value=F.afil;
+  const inDesde=el('input',{type:'date',id:'dashDesde',value:rs?rs.desde:F.desde}),inHasta=el('input',{type:'date',id:'dashHasta',value:rs?rs.hasta:F.hasta});
+  barra.append(el('label',{class:'field',style:'margin:0;min-width:240px'},'Afiliación',selAf),el('label',{class:'field',style:'margin:0'},'Fecha de liquidación · desde',inDesde),el('label',{class:'field',style:'margin:0'},'Fecha de liquidación · hasta',inHasta),
+    el('button',{class:'btn',onclick:()=>{
+      if(inDesde.value&&inHasta.value&&inDesde.value>inHasta.value){toast('La fecha "desde" no puede ser posterior a "hasta"','err');return;}
+      vDashboard._f={desde:inDesde.value,hasta:inHasta.value,afil:selAf.value};render();}},'Aplicar'),
+    el('button',{class:'btn ghost',onclick:()=>{vDashboard._f={desde:'',hasta:'',afil:''};render();}},'Mes en curso'));
+  v.append(el('h3',{style:'margin:0 0 10px;font-size:15px'},'Resumen del periodo'),barra);
+  if(!rs){
+    const msg=resumen&&resumen._err&&resumen._err.data&&resumen._err.data.mensaje;
+    v.append(el('div',{class:'banner warn'},msg||'No se pudo calcular el resumen del periodo.'));
+  }else{
+    const pct=rs.monto?((rs.comision/rs.monto)*100).toFixed(2)+'% del monto':'';
+    v.append(cards([
+      ['Monto transaccionado',mxn(rs.monto),rs.n_trx+' transacciones aprobadas'],
+      ['Comisión pactada',mxn(rs.comision),pct],
+      ['IVA',mxn(rs.iva),'Sobre la comisión pactada'],
+      ['Monto dispersado (neto)',mxn(rs.dispersado),'Monto − comisión − IVA − banca'],
+    ]));
+  }
   // KPIs
   const ultimoCorte = cortes[0];
   const cbAbiertos = dashDisp ? dashDisp.abiertos.chargebacks : cbs.filter(c=>['NEW','NOTIFIED','EVIDENCE_REQUESTED','UNDER_REVIEW','REPRESENTED','IN_DISPUTE'].includes(c.status)).length;

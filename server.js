@@ -2217,8 +2217,8 @@ async function buildReporteXLSX(c, cal) {
    Ingresos por comisión (tasa pactada + IVA) por producto (TDD/TDC/AMEX/INT),
    dispersión, e ingreso por banca (Telematic) + IVA. Por FECHA + AFILIACIÓN.
    ========================================================================= */
-async function computeContable(desde, hasta) {
-  const txs = (await db.query("select fecha_liq::text as fl, cliente, numero_afiliacion, producto, monto from transacciones where fecha_liq between $1 and $2 and upper(estatus)='APROBADO' order by fecha_liq", [desde, hasta])).rows;
+async function computeContable(desde, hasta, afilFiltro) {
+  const txs = (await db.query("select fecha_liq::text as fl, cliente, numero_afiliacion, producto, monto from transacciones where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'" + (afilFiltro ? ' and numero_afiliacion=$3' : '') + ' order by fecha_liq', afilFiltro ? [desde, hasta, afilFiltro] : [desde, hasta])).rows;
   const [params, grupos, afilGrupo, costos, afiliaciones] = [await getParams(), await getGrupos(), await getAfilGrupo(), await getCostos(), await getAfiliaciones()];
   const grupoPorNombre = nombre => grupos.find(g => nrm(g.nombre_cliente) === nrm(nombre));
   const tasasDe = (idg, afil) => afilGrupo.find(a => String(a.id_grupo) === String(idg) && String(a.numero_afiliacion) === String(afil));
@@ -2236,7 +2236,7 @@ async function computeContable(desde, hasta) {
       costos: co ? { int_tdd: Number(co.int_tdd), int_tdc: Number(co.int_tdc), int_amex: co.int_amex == null ? null : Number(co.int_amex), int_int: co.int_int == null ? null : Number(co.int_int), fee_broxel: co.fee_broxel == null ? null : Number(co.fee_broxel) } : {},
     };
     const r = E.calcularCompensacion(groups[k], cat, params, {});
-    rows.push({ fl, afil, razon: razonDe(afil) || cliente,
+    rows.push({ fl, afil, razon: razonDe(afil) || cliente, monto: r.m_tdd + r.m_tdc + r.m_amex + r.m_int, n_trx: r.num_trx,
       com_tdd: r.com_tdd, iva_tdd: r.iva_com_tdd, com_tdc: r.com_tdc, iva_tdc: r.iva_com_tdc,
       com_amex: r.com_amex, iva_amex: r.iva_com_amex, com_int: r.com_int, iva_int: r.iva_com_int,
       disp: r.disp_total, banca: r.banca, iva_banca: r.iva_banca });
@@ -2264,6 +2264,33 @@ app.get('/api/contable.xlsx', auth, async (req, res) => {
    CONTABILIDAD — Cortes semanales del mes (SEMANA 1..4 = 1-10, 11-17, 18-24, 25-fin)
    Envío automático semanal + resumen mensual el día 1.
    ========================================================================= */
+// Resumen del dashboard general: monto transaccionado, comisión pactada, IVA y monto dispersado
+// (neto), por rango de FECHA DE LIQUIDACIÓN y afiliación opcional. Usa el mismo cálculo que
+// Registro contable (computeContable) para que las cifras cuadren con contabilidad.
+const DASH_MAX_TX = 200000;   // tope de transacciones por consulta: computeContable las carga en memoria
+app.get('/api/dashboard/resumen', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const fechaOk = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+  const hoy = hoyISOmx();
+  let desde = fechaOk(req.query.desde) ? req.query.desde : hoy.slice(0, 8) + '01';
+  let hasta = fechaOk(req.query.hasta) ? req.query.hasta : new Date(Date.UTC(+hoy.slice(0, 4), +hoy.slice(5, 7), 0)).toISOString().slice(0, 10);
+  if (desde > hasta) return res.status(400).json({ error: 'rango_invalido', mensaje: 'La fecha "desde" no puede ser posterior a "hasta".' });
+  const afil = String(req.query.afiliacion || '').replace(/\D/g, '');
+  const n = (await db.query("select count(*)::int n from transacciones where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'" + (afil ? ' and numero_afiliacion=$3' : ''), afil ? [desde, hasta, afil] : [desde, hasta])).rows[0].n;
+  if (n > DASH_MAX_TX) return res.status(413).json({ error: 'periodo_muy_grande', total: n, maximo: DASH_MAX_TX, mensaje: `El periodo tiene ${n} transacciones y el máximo por consulta es ${DASH_MAX_TX}. Acota las fechas o elige una afiliación.` });
+  const rows = await computeContable(desde, hasta, afil);
+  const S = k => E.round2(rows.reduce((a, r) => a + (r[k] || 0), 0));
+  const monto = S('monto');
+  const comision = E.round2(S('com_tdd') + S('com_tdc') + S('com_amex') + S('com_int'));
+  const iva = E.round2(S('iva_tdd') + S('iva_tdc') + S('iva_amex') + S('iva_int'));
+  const afiliaciones = await getAfiliaciones();
+  res.json({
+    desde, hasta, afiliacion: afil || null, n_trx: rows.reduce((a, r) => a + (r.n_trx || 0), 0),
+    monto, comision, iva, banca: E.round2(S('banca') + S('iva_banca')), dispersado: S('disp'),
+    opciones: afiliaciones.map(a => ({ afil: String(a.numero_afiliacion), razon: a.razon_social || '' })).sort((x, y) => x.afil < y.afil ? -1 : 1),
+  });
+});
+
 function semanasDelMes(anio, mes) {
   // mes: 1..12. Devuelve [{semana, desde:'YYYY-MM-DD', hasta:'YYYY-MM-DD'}]
   const pad = n => String(n).padStart(2, '0');
