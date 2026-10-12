@@ -46,6 +46,7 @@ const mountDisputasRoutes = require('./lib/disputas-routes.js');
 const CCS = require('./lib/contracargos-sync.js');
 const L = require('./lib/ledger.js');
 const DP = require('./lib/dispersion-pendiente.js');
+const CI = require('./lib/cumplimiento-ingesta.js');
 const LP = require('./lib/layout-polipay.js');
 if (!C.ready()) console.warn('⚠  Cifrado app-layer NO configurado (falta ENCRYPTION_KEY_V1 o HMAC_PEPPER). Dual-write escribirá "plain:" en las columnas cifradas.');
 
@@ -1433,6 +1434,165 @@ app.delete('/api/destinatarios-alertas/:id', auth, requiereRol('admin'), async (
    contracargos (monto contracargos / monto transaccionado), transacciones
    duplicadas y devoluciones sospechosas (módulos de Disputas).
    ========================================================================= */
+/* ---------- CUMPLIMIENTO: base de transacciones PROPIA (esquema `cumplimiento`) ----------
+   Independiente de la de liquidación: acepta TODOS los estatus (aprobadas, rechazadas,
+   canceladas, devoluciones). La liquidación nunca lee de aquí. */
+app.post('/api/cumplimiento/ingesta', auth, requiereRol('admin', 'operador'), upload.single('archivo'), validaArchivo, async (req, res) => {
+  if (!dbReady(res)) return;
+  if (!req.file) return res.status(400).json({ error: 'sin_archivo', mensaje: 'Sube el archivo del gateway (.xlsx o .csv).' });
+  if (req.file.size > 25 * 1024 * 1024) return res.status(413).json({ error: 'archivo_muy_grande', mensaje: 'El archivo pesa más de 25 MB. Divídelo por rango de fechas.' });
+
+  const lote = 'cump_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+  const porEstatus = {}, motivosInvalidas = {}; let invalidas = 0, validas = 0, insertadas = 0, desde = null, hasta = null;
+  const n = CI.COLUMNAS.length + 1;     // + lote_id
+  // Se procesa por bloques de 300 filas: la memoria no crece con el tamaño del archivo.
+  const alBloque = async objs => {
+    const bloque = [];
+    for (const o of objs) {
+      const x = CI.normalizarFila(o, C.hmac);
+      if (!x.ok) { invalidas++; motivosInvalidas[x.motivo] = (motivosInvalidas[x.motivo] || 0) + 1; continue; }
+      validas++; const r = x.r;
+      const st = r.estatus || '(SIN ESTATUS)'; porEstatus[st] = (porEstatus[st] || 0) + 1;
+      if (!desde || r.fecha < desde) desde = r.fecha;
+      if (!hasta || r.fecha > hasta) hasta = r.fecha;
+      bloque.push(r);
+    }
+    if (!bloque.length) return;
+    const ph = [], vals = [];
+    bloque.forEach((r, k) => { ph.push('(' + Array.from({ length: n }, (_, c) => '$' + (k * n + c + 1)).join(',') + ')'); CI.COLUMNAS.forEach(c => vals.push(r[c])); vals.push(lote); });
+    const ins = await db.query(`insert into cumplimiento.transacciones(${CI.COLUMNAS.join(',')},lote_id) values ${ph.join(',')} on conflict (llave) do nothing returning id`, vals);
+    insertadas += ins.rows.length;
+  };
+  let leido;
+  try { leido = await CI.leerPorBloques(req.file.buffer, 300, alBloque); }
+  catch (e) {
+    if (e && e.codigo) {
+      // Si falló a medias, deshace lo que alcanzó a insertar de ESTE archivo (no deja cargas parciales).
+      await db.query('delete from cumplimiento.transacciones where lote_id=$1', [lote]);
+      return res.status(e.codigo === 'archivo_muy_grande' ? 413 : 400).json({ error: e.codigo, mensaje: e.mensaje });
+    }
+    await db.query('delete from cumplimiento.transacciones where lote_id=$1', [lote]).catch(() => {});
+    console.error('[cumplimiento_ingesta]', e && e.message);
+    return res.status(500).json({ error: 'error_carga', mensaje: 'No se pudo procesar el archivo; no se guardó nada de esta carga. Intenta de nuevo o divide el archivo.' });
+  }
+  const duplicadas = validas - insertadas;
+  await db.query('insert into cumplimiento.cargas(lote_id,archivo,cargado_por,filas_archivo,validas,invalidas,insertadas,duplicadas,desde,hasta,por_estatus) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+    [lote, req.file.originalname || '', req.user.nombre, leido.filas, validas, invalidas, insertadas, duplicadas, desde, hasta, JSON.stringify(porEstatus)]);
+  await bit(req, 'cumplimiento_ingesta', `${insertadas} nuevas, ${duplicadas} ya existían, ${invalidas} inválidas · lote ${lote} · archivo ${req.file.originalname || ''}`);
+  res.json({ lote_id: lote, filas_archivo: leido.filas, validas, invalidas, motivos_invalidas: motivosInvalidas, insertadas, duplicadas, desde, hasta, por_estatus: porEstatus });
+});
+
+app.get('/api/cumplimiento/cargas', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const rows = (await db.query('select lote_id,archivo,cargado_por,cargado_at,filas_archivo,validas,invalidas,insertadas,duplicadas,desde::text as desde,hasta::text as hasta,por_estatus from cumplimiento.cargas order by cargado_at desc limit 20')).rows;
+  const total = (await db.query('select count(*)::int n from cumplimiento.transacciones')).rows[0].n;
+  res.json({ total_transacciones: total, cargas: rows });
+});
+
+// Revertir una carga (por si se subió el archivo equivocado). Solo admin; queda en bitácora.
+app.delete('/api/cumplimiento/cargas/:lote', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const lote = String(req.params.lote);
+  const c = (await db.query('select lote_id from cumplimiento.cargas where lote_id=$1', [lote])).rows[0];
+  if (!c) return res.status(404).json({ error: 'no_existe' });
+  const del = await db.query('delete from cumplimiento.transacciones where lote_id=$1', [lote]);
+  await db.query('delete from cumplimiento.cargas where lote_id=$1', [lote]);
+  await bit(req, 'cumplimiento_revertir_carga', `revirtió el lote ${lote} (${del.rowCount} transacciones)`);
+  res.json({ ok: true, borradas: del.rowCount });
+});
+
+/* ---------- CUMPLIMIENTO · ANTIFRAUDE por tarjeta / BIN / estatus ----------
+   Todo se agrega en la base (group by); a Node solo llegan los casos marcados (con tope). */
+// "Rechazo": el gateway puede usar varias palabras; se reconocen las comunes. La tabla de estatus
+// muestra los estatus crudos para ver si hace falta agregar alguna.
+const RECHAZO_SQL = "estatus ~ '^(RECHAZ|DECLIN|DENEG|ERROR|FALL|NEGAD)'";
+async function getConfigCump() {
+  const r = (await db.query('select * from cumplimiento.config where id=1')).rows[0] || {};
+  return { tarjeta_ops_dia: Number(r.tarjeta_ops_dia) || 5, tarjeta_rechazos_dia: Number(r.tarjeta_rechazos_dia) || 3, tarjeta_afiliaciones_dia: Number(r.tarjeta_afiliaciones_dia) || 3,
+    bin_rechazos_dia: Number(r.bin_rechazos_dia) || 10, tasa_rechazo_pct: Number(r.tasa_rechazo_pct) || 30, min_ops_tasa: Number(r.min_ops_tasa) || 20 };
+}
+app.get('/api/cumplimiento/config', auth, async (req, res) => { if (!dbReady(res)) return; res.json(await getConfigCump()); });
+app.put('/api/cumplimiento/config', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const b = req.body || {}; const ent = (v, d) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 1 ? n : d; };
+  const tasa = Number(b.tasa_rechazo_pct); 
+  await db.query('update cumplimiento.config set tarjeta_ops_dia=$1,tarjeta_rechazos_dia=$2,tarjeta_afiliaciones_dia=$3,bin_rechazos_dia=$4,tasa_rechazo_pct=$5,min_ops_tasa=$6 where id=1',
+    [ent(b.tarjeta_ops_dia, 5), ent(b.tarjeta_rechazos_dia, 3), ent(b.tarjeta_afiliaciones_dia, 3), ent(b.bin_rechazos_dia, 10), Number.isFinite(tasa) && tasa > 0 && tasa <= 100 ? tasa : 30, ent(b.min_ops_tasa, 20)]);
+  await bit(req, 'cumplimiento_config', 'actualizó umbrales antifraude');
+  res.json(await getConfigCump());
+});
+
+async function construirAntifraude(desde, hasta) {
+  const cfg = await getConfigCump(); const P = [desde, hasta];
+  const T = 'cumplimiento.transacciones'; const W = 'fecha between $1 and $2';
+  const [grupos, afiliaciones] = [await getGrupos(), await getAfiliaciones()];
+  const razonDe = afil => { const a = afiliaciones.find(x => String(x.numero_afiliacion) === String(afil)); return a ? (a.razon_social || '') : ''; };
+  const grupoPorNombre = nombre => grupos.find(g => nrm(g.nombre_cliente) === nrm(nombre));
+  const num = v => Number(v) || 0;
+
+  const tot = (await db.query(`select count(*)::int total, count(*) filter (where estatus='APROBADO')::int aprob, count(*) filter (where ${RECHAZO_SQL})::int rech,
+      count(*) filter (where tarjeta_key is not null)::int con_tarjeta, count(distinct tarjeta_key)::int tarjetas, coalesce(sum(cashback),0) cashback,
+      coalesce(sum(monto) filter (where estatus='APROBADO'),0) monto_aprob
+      from ${T} where ${W}`, P)).rows[0];
+  const dist = async col => (await db.query(`select coalesce(${col},'(SIN DATO)') k, count(*)::int n, count(*) filter (where ${RECHAZO_SQL})::int rech,
+      coalesce(sum(monto) filter (where estatus='APROBADO'),0) monto_aprob, coalesce(sum(monto),0) monto from ${T} where ${W} group by 1 order by n desc limit 30`, P)).rows
+    .map(r => ({ k: r.k, n: r.n, rech: r.rech, monto: E.round2(num(r.monto)), monto_aprob: E.round2(num(r.monto_aprob)) }));
+  const porEstatus = await dist('estatus'), porEstatusFin = await dist('estatus_fin'), porTipo = await dist('tipo_trans'), porModo = await dist('modo_entrada');
+
+  // Tarjetas: misma tarjeta (BIN6|últimos 4) por día. Se marcan las que rebasan algún umbral.
+  const cdSql = `select tarjeta_key, fecha::text f, min(left(bin,6)) bin, min(ultimos4) u4, min(emisor) emisor, count(*)::int n,
+      count(*) filter (where estatus='APROBADO')::int aprob, count(*) filter (where ${RECHAZO_SQL})::int rech, count(distinct numero_afiliacion)::int nafil,
+      coalesce(sum(monto) filter (where estatus='APROBADO'),0) monto_aprob, min(hora) hora_min, max(hora) hora_max,
+      coalesce(sum(cashback),0) cashback, count(*) filter (where modo_entrada in ('MANUAL','URL'))::int n_riesgo
+    from ${T} where ${W} and tarjeta_key is not null group by tarjeta_key, fecha
+    having count(*) >= $3 or count(*) filter (where ${RECHAZO_SQL}) >= $4 or count(distinct numero_afiliacion) >= $5`;
+  const cdP = [...P, cfg.tarjeta_ops_dia, cfg.tarjeta_rechazos_dia, cfg.tarjeta_afiliaciones_dia];
+  const cdRiesgo = (await db.query(`with cd as (${cdSql}) select count(*)::int tarjeta_dias, count(distinct tarjeta_key)::int tarjetas, coalesce(sum(n),0)::int ops, coalesce(sum(monto_aprob),0) monto from cd`, cdP)).rows[0];
+  const tarjetas = (await db.query(`${cdSql} order by n desc, rech desc limit 100`, cdP)).rows.map(r => {
+    const senales = [];
+    if (r.n >= cfg.tarjeta_ops_dia) senales.push(`${r.n} operaciones en el día`);
+    if (r.rech >= cfg.tarjeta_rechazos_dia) senales.push(`${r.rech} rechazos`);
+    if (r.nafil >= cfg.tarjeta_afiliaciones_dia) senales.push(`${r.nafil} afiliaciones`);
+    return { tarjeta: `${r.bin || '——'} •••• ${r.u4 || '----'}`, bin: r.bin, ultimos4: r.u4, emisor: r.emisor || '', fecha: r.f, n: r.n, aprob: r.aprob, rech: r.rech, nafil: r.nafil,
+      monto_aprob: E.round2(num(r.monto_aprob)), hora_min: r.hora_min, hora_max: r.hora_max, cashback: E.round2(num(r.cashback)), n_riesgo: r.n_riesgo, senales };
+  }).sort((a, b) => b.senales.length - a.senales.length || b.n - a.n);
+
+  // BINes: intentos y rechazos por BIN en el periodo, y el peor día.
+  const binSql = `with d as (select left(bin,6) b, fecha, count(*)::int n, count(*) filter (where ${RECHAZO_SQL})::int r from ${T} where ${W} and bin is not null group by 1,2),
+      m as (select b, max(r)::int max_rech_dia, max(n)::int max_ops_dia from d group by b),
+      t as (select left(bin,6) b, min(emisor) emisor, count(*)::int n, count(*) filter (where estatus='APROBADO')::int aprob, count(*) filter (where ${RECHAZO_SQL})::int rech,
+            count(distinct tarjeta_key)::int tarjetas, count(distinct numero_afiliacion)::int nafil, coalesce(sum(monto) filter (where estatus='APROBADO'),0) monto_aprob
+            from ${T} where ${W} and bin is not null group by 1)
+    select t.*, m.max_rech_dia, m.max_ops_dia from t join m using (b) order by m.max_rech_dia desc, t.n desc limit 25`;
+  const bines = (await db.query(binSql, P)).rows.map(r => ({ bin: r.b, emisor: r.emisor || '', n: r.n, aprob: r.aprob, rech: r.rech, tasa_rech: r.n ? E.round2(r.rech / r.n * 100) : 0,
+    tarjetas: r.tarjetas, nafil: r.nafil, max_rech_dia: r.max_rech_dia, max_ops_dia: r.max_ops_dia, monto_aprob: E.round2(num(r.monto_aprob)), marcado: r.max_rech_dia >= cfg.bin_rechazos_dia }));
+  const binesMarcados = (await db.query(`with d as (select left(bin,6) b, fecha, count(*) filter (where ${RECHAZO_SQL})::int r from ${T} where ${W} and bin is not null group by 1,2) select count(distinct b)::int n from d where r >= $3`, [...P, cfg.bin_rechazos_dia])).rows[0].n;
+
+  // Afiliaciones con tasa de rechazo alta (con volumen mínimo para que el % signifique algo).
+  const afils = (await db.query(`select numero_afiliacion afil, min(cliente) cliente, count(*)::int n, count(*) filter (where ${RECHAZO_SQL})::int rech,
+      count(*) filter (where modo_entrada in ('MANUAL','URL'))::int n_riesgo, coalesce(sum(monto) filter (where estatus='APROBADO'),0) monto_aprob
+      from ${T} where ${W} and numero_afiliacion is not null group by 1 having count(*) >= $3
+      order by (count(*) filter (where ${RECHAZO_SQL}))::float / count(*) desc, count(*) desc limit 20`, [...P, cfg.min_ops_tasa])).rows.map(r => {
+    const g = grupoPorNombre(r.cliente); const tasa = r.n ? r.rech / r.n * 100 : 0;
+    return { afil: r.afil, nombre_cliente: g ? g.nombre_cliente : (r.cliente || '(sin homologar)'), razon_social: razonDe(r.afil), n: r.n, rech: r.rech, tasa_rech: E.round2(tasa),
+      pct_riesgo: r.n ? E.round2(r.n_riesgo / r.n * 100) : 0, monto_aprob: E.round2(num(r.monto_aprob)), marcado: tasa >= cfg.tasa_rechazo_pct };
+  });
+
+  return { desde, hasta, config: cfg,
+    kpis: { total: tot.total, aprobadas: tot.aprob, rechazadas: tot.rech, otras: tot.total - tot.aprob - tot.rech, tasa_rechazo_pct: tot.total ? E.round2(tot.rech / tot.total * 100) : 0,
+      con_tarjeta: tot.con_tarjeta, pct_con_tarjeta: tot.total ? E.round2(tot.con_tarjeta / tot.total * 100) : 0, tarjetas_distintas: tot.tarjetas, cashback: E.round2(num(tot.cashback)),
+      tarjetas_marcadas: cdRiesgo.tarjetas, tarjeta_dias_marcados: cdRiesgo.tarjeta_dias, ops_en_riesgo: cdRiesgo.ops, monto_en_riesgo: E.round2(num(cdRiesgo.monto)),
+      bines_marcados: binesMarcados, afiliaciones_marcadas: afils.filter(a => a.marcado).length },
+    por_estatus: porEstatus, por_estatus_fin: porEstatusFin, por_tipo: porTipo, por_modo: porModo, tarjetas, bines, afiliaciones: afils };
+}
+app.get('/api/cumplimiento/antifraude', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const anio = parseInt(req.query.y, 10) || new Date().getFullYear();
+  const mes = parseInt(req.query.m, 10) || (new Date().getMonth() + 1);
+  const { desde, hasta } = rangoMes(anio, mes);
+  res.json({ anio, mes, ...(await construirAntifraude(desde, hasta)) });
+});
+
 function rangoMes(anio, mes) {
   const pad = n => String(n).padStart(2, '0');
   const desde = `${anio}-${pad(mes)}-01`;
@@ -1457,8 +1617,8 @@ async function construirCumplimiento(anio, mes) {
               count(*)::int as n_trx, coalesce(sum(monto),0) as monto,
               coalesce(sum(case when monto > $3 then 1 else 0 end),0)::int as n_umbral,
               coalesce(sum(case when monto > $3 then monto else 0 end),0) as monto_umbral
-         from transacciones
-        where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'
+         from cumplimiento.transacciones
+        where fecha between $1 and $2 and estatus='APROBADO'
         group by cliente, numero_afiliacion`,
       [desdeF, hastaF, umbral]
     )).rows;
@@ -1478,9 +1638,9 @@ async function construirCumplimiento(anio, mes) {
   // Detalle de cada operación individual sobre el umbral — con grupo
   // homologado y razón social, para el reporte de "operación inusual" (PLD).
   const opsUmbralRows = (await db.query(
-    `select fecha_liq::text as fecha, cliente, numero_afiliacion, monto, folio
-       from transacciones
-      where fecha_liq between $1 and $2 and upper(estatus)='APROBADO' and monto > $3
+    `select fecha::text as fecha, cliente, numero_afiliacion, monto, folio
+       from cumplimiento.transacciones
+      where fecha between $1 and $2 and estatus='APROBADO' and monto > $3
       order by monto desc`,
     [desde, hasta, umbral]
   )).rows;
@@ -1491,11 +1651,11 @@ async function construirCumplimiento(anio, mes) {
 
   // Diario del mes (para la tendencia día a día).
   const diarioRows = (await db.query(
-    `select fecha_liq::text as fecha, count(*)::int as n_trx, coalesce(sum(monto),0) as monto,
+    `select fecha::text as fecha, count(*)::int as n_trx, coalesce(sum(monto),0) as monto,
             coalesce(sum(case when monto > $3 then 1 else 0 end),0)::int as n_umbral
-       from transacciones
-      where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'
-      group by fecha_liq order by fecha_liq`,
+       from cumplimiento.transacciones
+      where fecha between $1 and $2 and estatus='APROBADO'
+      group by fecha order by fecha`,
     [desde, hasta, umbral]
   )).rows.map(r => ({ fecha: r.fecha, n_trx: r.n_trx, monto: E.round2(Number(r.monto)), n_umbral: r.n_umbral }));
 
@@ -1580,10 +1740,23 @@ app.get('/api/cumplimiento/mes.xlsx', auth, async (req, res) => {
   const rowsDia = data.diario.map(d => [d.fecha, d.n_trx, d.monto, d.n_umbral]);
   const headUmb = ['Fecha', 'Grupo de cliente', 'Afiliación', 'Razón social', 'Monto', 'Folio'];
   const rowsUmb = data.operaciones_umbral.map(o => [o.fecha, o.nombre_cliente, o.numero_afiliacion, o.razon_social, o.monto, o.folio]);
+  const af = await construirAntifraude(data.desde, data.hasta);
+  const headTar = ['Tarjeta (BIN •••• últimos 4)', 'Emisor', 'Fecha', 'Operaciones', 'Aprobadas', 'Rechazadas', 'Afiliaciones', 'Monto aprobado', 'Primera hora', 'Última hora', 'Cashback', 'Manual/URL', 'Señales'];
+  const rowsTar = af.tarjetas.map(t => [t.tarjeta, t.emisor, t.fecha, t.n, t.aprob, t.rech, t.nafil, t.monto_aprob, t.hora_min, t.hora_max, t.cashback, t.n_riesgo, t.senales.join(' · ')]);
+  const headBin = ['BIN', 'Emisor', 'Operaciones', 'Aprobadas', 'Rechazadas', 'Tasa rechazo %', 'Tarjetas distintas', 'Afiliaciones', 'Máx. rechazos en un día', 'Máx. operaciones en un día', 'Monto aprobado', 'Marcado'];
+  const rowsBin = af.bines.map(b => [b.bin, b.emisor, b.n, b.aprob, b.rech, b.tasa_rech, b.tarjetas, b.nafil, b.max_rech_dia, b.max_ops_dia, b.monto_aprob, b.marcado ? 'SÍ' : '']);
+  const headAfi = ['Afiliación', 'Grupo de cliente', 'Razón social', 'Operaciones', 'Rechazadas', 'Tasa rechazo %', '% Manual/URL', 'Monto aprobado', 'Marcada'];
+  const rowsAfi = af.afiliaciones.map(a => [a.afil, a.nombre_cliente, a.razon_social, a.n, a.rech, a.tasa_rech, a.pct_riesgo, a.monto_aprob, a.marcado ? 'SÍ' : '']);
+  const headEst = ['Estatus', 'Operaciones', 'Rechazos', 'Monto', 'Monto aprobado'];
+  const rowsEst = af.por_estatus.map(e => [e.k, e.n, e.rech, e.monto, e.monto_aprob]);
   const buf = X.buildXLSX([
     { name: 'Detalle por grupo', aoa: [headDet, ...rowsDet], cols: headDet.map(() => ({ wch: 18 })) },
     { name: 'Operaciones sobre umbral', aoa: [headUmb, ...rowsUmb], cols: headUmb.map(() => ({ wch: 20 })) },
     { name: 'Diario', aoa: [headDia, ...rowsDia], cols: headDia.map(() => ({ wch: 18 })) },
+    { name: 'Antifraude · Tarjetas', aoa: [headTar, ...rowsTar], cols: headTar.map(() => ({ wch: 20 })) },
+    { name: 'Antifraude · BINes', aoa: [headBin, ...rowsBin], cols: headBin.map(() => ({ wch: 18 })) },
+    { name: 'Antifraude · Afiliaciones', aoa: [headAfi, ...rowsAfi], cols: headAfi.map(() => ({ wch: 20 })) },
+    { name: 'Antifraude · Estatus', aoa: [headEst, ...rowsEst], cols: headEst.map(() => ({ wch: 18 })) },
   ]);
   await bit(req, 'cumplimiento', `exportó reporte de cumplimiento ${anio}-${mes}`);
   enviarXLSX(res, `cumplimiento_${anio}-${String(mes).padStart(2, '0')}.xlsx`, buf);
@@ -4488,6 +4661,9 @@ function armarDetalleClienteHTML(n) {
 app.get('/api/plantilla/:tipo.xlsx', auth, (req, res) => {
   const t = req.params.tipo; let sheet;
   if (t === 'transacciones') sheet = { name: 'Transacciones', aoa: [[...X.TX_COLS, 'BIN', 'Últimos 4', 'Cashback', 'Emisor', 'Modo Entrada URL'], ['03/08/2026', '14:20', 'DEAL', 'Comercio Demo', '7194416', 'APROBADO', 'VISA', 'Débito', 1000, 'F001', 'REF001', 'A12345', 'T01', '411111', '0234', 0, 'BBVA', 'CHIP']] };
+  else if (t === 'cumplimiento') sheet = { name: 'Transacciones', aoa: [CI.ENCABEZADOS_GATEWAY,
+    ['100001', '05/10/2026', '10:15:22', '2026-10-05T16:15:22Z', 'DEAL', 'Comercio Demo', '7194416', 'APROBADO', '411111', '0234', 'LIQUIDADA', 'VISA', 'T01', 'VENTA', 'Débito', 'F001', 'REF001', '', 'A12345', 0, 1250.5, 0, 0, 'BBVA', 'Polipay', 'STP', 'CHIP'],
+    ['100002', '05/10/2026', '10:16:40', '2026-10-05T16:16:40Z', 'DEAL', 'Comercio Demo', '7194416', 'RECHAZADO', '411111', '0234', '', 'VISA', 'T01', 'VENTA', 'Débito', 'F002', 'REF002', '', '', 0, 899, 0, 0, 'BBVA', 'Polipay', 'STP', 'URL']] };
   else if (t === 'grupos') sheet = { name: 'Grupos', aoa: [['id_grupo', 'nombre_cliente', 'numero_afiliacion', 'razon_social', 'tasa_pac_tdd', 'tasa_pac_tdc', 'tasa_pac_amex', 'tasa_pac_int', 'costo_x_trx', 'pct_banca', 'int_tdd', 'int_tdc', 'int_amex', 'int_int', 'fee_broxel'], [3, 'DEAL', '7194416', 'Deal Comercializadora SA', 0.025, 0.029, 0.035, 0.038, 0, 0.005, 0.011, 0.015, 0.0247, 0.0302, 0.0028]] };
   else if (t === 'cuentas') sheet = { name: 'Cuentas', aoa: [['id_grupo', 'numero_afiliacion', 'nombre_comercial', 'razon_social_beneficiario', 'banco', 'clabe'], [3, '7194416', 'DEAL', 'Deal Comercializadora SA', 'STP', '646180123456789012']] };
   else return res.status(404).json({ error: 'tipo' });

@@ -1591,6 +1591,23 @@ async function vUmbrales(v){
     }catch(e){toast(errMsg(e),'err');}
   }},'Guardar umbrales'));
   v.append(p);
+  // Antifraude por tarjeta / BIN (Cumplimiento): config propia, se guarda aparte de los parámetros de liquidación.
+  const C=await api('GET','/api/cumplimiento/config').catch(()=>null);
+  if(C){
+    const p2=el('div',{class:'panel'});p2.append(el('h3',{},'Antifraude por tarjeta y BIN (Cumplimiento)',ro?el('span',{class:'right'},el('span',{class:'pill'},'solo lectura')):''));
+    p2.append(el('div',{class:'banner',html:'Marcan casos en <b>Cumplimiento → Antifraude</b>. Se evalúan por <b>día</b>. Una tarjeta se identifica por BIN + últimos 4.'}));
+    const mk=(k,step,min,max)=>el('input',{type:'number',step:String(step),min:String(min),max:max?String(max):null,value:C[k],disabled:ro?true:null});
+    const iOps=mk('tarjeta_ops_dia',1,1),iRech=mk('tarjeta_rechazos_dia',1,1),iAfil=mk('tarjeta_afiliaciones_dia',1,1),iBin=mk('bin_rechazos_dia',1,1),iTasa=mk('tasa_rechazo_pct',1,1,100),iMin=mk('min_ops_tasa',1,1);
+    const g2=el('div',{class:'form-grid c3'});
+    g2.append(fld('Misma tarjeta · operaciones en un día',iOps),fld('Misma tarjeta · rechazos en un día',iRech),fld('Misma tarjeta · afiliaciones distintas en un día',iAfil),
+      fld('BIN · rechazos en un día',iBin),fld('Afiliación · tasa de rechazo (%)',iTasa),fld('Afiliación · mínimo de operaciones para evaluar',iMin));
+    p2.append(g2);
+    if(!ro)p2.append(el('button',{class:'btn',style:'margin-top:10px',onclick:async()=>{
+      try{await withBusy('Guardando…',()=>api('PUT','/api/cumplimiento/config',{tarjeta_ops_dia:+iOps.value,tarjeta_rechazos_dia:+iRech.value,tarjeta_afiliaciones_dia:+iAfil.value,bin_rechazos_dia:+iBin.value,tasa_rechazo_pct:+iTasa.value,min_ops_tasa:+iMin.value}));toast('Umbrales antifraude guardados','ok');}
+      catch(e){toast(errMsg(e),'err');}
+    }},'Guardar umbrales antifraude'));
+    v.append(p2);
+  }
 }
 
 /* ---------- BITÁCORA ---------- */
@@ -1819,19 +1836,30 @@ async function vCumplimiento(v){
   const hoy=new Date();
   if(!vCumplimiento._m) vCumplimiento._m={y:hoy.getFullYear(),m:hoy.getMonth()+1};
   const {y,m}=vCumplimiento._m;
-  const data=await api('GET','/api/cumplimiento/mes?y='+y+'&m='+m);
+  const tab=vCumplimiento._tab||'pld';
+  const data=tab==='pld'?await api('GET','/api/cumplimiento/mes?y='+y+'&m='+m):null;
+  const af=tab==='antifraude'?await api('GET','/api/cumplimiento/antifraude?y='+y+'&m='+m):null;
   v.innerHTML='';
   const bar=el('div',{style:'display:flex;gap:8px;align-items:center;margin-bottom:16px;flex-wrap:wrap'});
   bar.append(el('span',{class:'muted',style:'font-size:12px'},'Mes:'));
-  const selY=el('select'); for(let yy=hoy.getFullYear()-2;yy<=hoy.getFullYear()+1;yy++) selY.append(el('option',{value:yy},yy));
-  const selM=el('select'); ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'].forEach((n,i)=>selM.append(el('option',{value:i+1},n)));
+  const selY=el('select',{style:'width:auto'}); for(let yy=hoy.getFullYear()-2;yy<=hoy.getFullYear()+1;yy++) selY.append(el('option',{value:yy},yy));
+  const selM=el('select',{style:'width:auto'}); ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'].forEach((n,i)=>selM.append(el('option',{value:i+1},n)));
   selY.value=y; selM.value=m;
   selY.addEventListener('change',()=>{vCumplimiento._m.y=Number(selY.value);render();});
   selM.addEventListener('change',()=>{vCumplimiento._m.m=Number(selM.value);render();});
   bar.append(selY,selM);
   bar.append(el('span',{style:'flex:1'}));
+  bar.append(el('button',{class:'btn secondary',onclick:()=>descargar('/api/plantilla/cumplimiento.xlsx','layout_cumplimiento.xlsx').catch(e=>toast(errMsg(e),'err'))},'⬇ Descargar layout'),el('span',{},' '));
+  if(can('ingesta'))bar.append(el('button',{class:'btn secondary',onclick:openCargaCumplimiento},'⬆ Cargar transacciones'),el('span',{},' '));
   bar.append(el('button',{class:'btn',onclick:()=>descargar('/api/cumplimiento/mes.xlsx?y='+y+'&m='+m,`cumplimiento_${y}-${String(m).padStart(2,'0')}.xlsx`).catch(e=>toast(errMsg(e),'err'))},'⬇ Descargar reporte'));
   v.append(bar);
+  const cargasInfo=await api('GET','/api/cumplimiento/cargas').catch(()=>({total_transacciones:0,cargas:[]}));
+  if(!cargasInfo.total_transacciones)v.append(el('div',{class:'banner warn',html:'<b>Aún no hay transacciones de Cumplimiento.</b> Esta sección usa su propia base de transacciones (con todos los estatus, también rechazadas), independiente de la de liquidación. Usa <b>Cargar transacciones</b> con el archivo del gateway.'}));
+
+  const tabs=el('div',{class:'tabs'});
+  [['pld','PLD'],['antifraude','Antifraude']].forEach(([k,lbl])=>tabs.append(el('button',{class:'tab'+(tab===k?' active':''),onclick:()=>{vCumplimiento._tab=k;render();}},lbl)));
+  v.append(tabs);
+  if(tab==='antifraude'){renderAntifraude(v,af);v.append(panelCargasCumplimiento(cargasInfo));return;}
 
   const t=data.totales;
   v.append(cards([
@@ -1874,6 +1902,87 @@ async function vCumplimiento(v){
   });
   pDet.append(tableWrap(['Grupo / Afiliación',{t:'Monto procesado'},'Var. vs. mes ant.',{t:'Sobre umbral'},'Tasa contracargos',{t:'Duplicadas'},{t:'Devoluciones'}],rows,{empty:'Sin actividad este mes.'}));
   v.append(pDet);
+  v.append(panelCargasCumplimiento(cargasInfo));
+}
+function renderAntifraude(v,d){
+  const k=d.kpis,c=d.config;
+  const pct=x=>(x||0).toFixed(2)+'%';
+  v.append(el('div',{class:'banner',html:`Detección sobre la <b>base de transacciones de Cumplimiento</b> (todos los estatus). Una tarjeta se identifica por <b>BIN + últimos 4</b> (nunca el número completo). Se marca cuando, en un mismo día, tiene ≥ <b>${c.tarjeta_ops_dia}</b> operaciones, ≥ <b>${c.tarjeta_rechazos_dia}</b> rechazos o aparece en ≥ <b>${c.tarjeta_afiliaciones_dia}</b> afiliaciones; un BIN, con ≥ <b>${c.bin_rechazos_dia}</b> rechazos en un día. Umbrales en Sistema → Parametrización de umbrales.`}));
+  if(!k.total){v.append(el('div',{class:'empty'},'Sin transacciones en este mes. Carga el archivo del gateway.'));return;}
+  if(k.pct_con_tarjeta<50)v.append(el('div',{class:'banner warn',html:`Solo el <b>${pct(k.pct_con_tarjeta)}</b> de las operaciones trae BIN y últimos 4; sin esos datos no se puede detectar repetición por tarjeta. Revisa que el archivo del gateway incluya esas columnas.`}));
+  v.append(cards([
+    ['Operaciones del mes',k.total.toLocaleString('es-MX'),k.aprobadas.toLocaleString('es-MX')+' aprobadas · '+k.rechazadas.toLocaleString('es-MX')+' rechazadas'],
+    ['Tasa de rechazo',pct(k.tasa_rechazo_pct),k.otras?k.otras+' en otros estatus':'Rechazadas / total'],
+    ['Tarjetas marcadas',String(k.tarjetas_marcadas),k.tarjeta_dias_marcados+' tarjeta-día · '+k.tarjetas_distintas.toLocaleString('es-MX')+' tarjetas distintas'],
+    ['Monto aprobado en riesgo',mxn(k.monto_en_riesgo),k.ops_en_riesgo+' operaciones de tarjetas marcadas'],
+    ['BINes marcados',String(k.bines_marcados),'≥ '+c.bin_rechazos_dia+' rechazos en un día'],
+    ['Afiliaciones con rechazo alto',String(k.afiliaciones_marcadas),'Tasa ≥ '+c.tasa_rechazo_pct+'% (mín. '+c.min_ops_tasa+' operaciones)'],
+  ]));
+  // Estatus de las transacciones
+  const pE=el('div',{class:'panel'});pE.append(el('h3',{},'Estatus de las transacciones'));
+  const g3=el('div',{class:'grid2'});
+  const tabla=(titulo,rows,vacio)=>{const w=el('div',{});w.append(el('div',{class:'muted',style:'font-size:12px;font-weight:600;margin-bottom:6px'},titulo));
+    w.append(rows.length?tableWrap(['',{t:'Operaciones'},{t:'%'},{t:'Monto aprobado'}],rows.map(r=>[esc(r.k),{num:r.n.toLocaleString('es-MX')},{num:k.total?((r.n/k.total)*100).toFixed(1)+'%':'—'},{num:mxn(r.monto_aprob)}])):el('div',{class:'muted'},vacio));return w;};
+  g3.append(tabla('Estatus',d.por_estatus,'Sin datos'),tabla('Estatus financiero',d.por_estatus_fin.filter(r=>r.k!=='(SIN DATO)').length?d.por_estatus_fin:[], 'El archivo no trae estatus financiero'));
+  pE.append(g3);
+  const g4=el('div',{class:'grid2',style:'margin-top:14px'});
+  g4.append(tabla('Tipo de transacción',d.por_tipo.filter(r=>r.k!=='(SIN DATO)').length?d.por_tipo:[],'El archivo no trae tipo de transacción'),tabla('Modo de entrada',d.por_modo,'Sin datos'));
+  pE.append(g4);v.append(pE);
+  // Tarjetas con actividad repetida
+  const pT=el('div',{class:'panel'});pT.append(el('h3',{},'Tarjetas con actividad repetida',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},'Por día · máx. 100'))));
+  if(!d.tarjetas.length)pT.append(el('div',{class:'banner ok'},'Ninguna tarjeta rebasó los umbrales este mes.'));
+  else pT.append(tableWrap(['Tarjeta','Emisor','Día',{t:'Operaciones'},{t:'Aprobadas'},{t:'Rechazadas'},{t:'Afiliaciones'},{t:'Monto aprobado'},'Horario','Señales'],d.tarjetas.map(t=>[
+    `<span class="mono">${esc(t.tarjeta)}</span>`,esc(t.emisor||'—'),fmtISO(t.fecha),{num:String(t.n)},{num:String(t.aprob)},{num:t.rech?`<span class="flagbad">${t.rech}</span>`:'0'},{num:String(t.nafil)},{num:mxn(t.monto_aprob)},
+    esc((t.hora_min||'—')+(t.hora_max&&t.hora_max!==t.hora_min?' – '+t.hora_max:'')),t.senales.map(x=>`<span class="badge d" style="margin:0 3px 3px 0">${esc(x)}</span>`).join('')+(t.cashback?`<span class="badge w">cashback ${mxn(t.cashback)}</span>`:'')+(t.n_riesgo?`<span class="badge w">${t.n_riesgo} manual/URL</span>`:'')])));
+  v.append(pT);
+  // BINes
+  const pB=el('div',{class:'panel'});pB.append(el('h3',{},'Intentos por BIN',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},'Ordenado por el peor día de rechazos'))));
+  if(!d.bines.length)pB.append(el('div',{class:'muted'},'Sin operaciones con BIN en el mes.'));
+  else pB.append(tableWrap(['BIN','Emisor',{t:'Operaciones'},{t:'Rechazadas'},{t:'Tasa rechazo'},{t:'Tarjetas distintas'},{t:'Afiliaciones'},{t:'Máx. rechazos/día'},{t:'Monto aprobado'},''],d.bines.map(b=>[
+    `<span class="mono">${esc(b.bin)}</span>`,esc(b.emisor||'—'),{num:b.n.toLocaleString('es-MX')},{num:b.rech.toLocaleString('es-MX')},{num:pct(b.tasa_rech)},{num:String(b.tarjetas)},{num:String(b.nafil)},{num:b.marcado?`<span class="flagbad">${b.max_rech_dia}</span>`:String(b.max_rech_dia)},{num:mxn(b.monto_aprob)},b.marcado?'<span class="badge d">Marcado</span>':''])));
+  v.append(pB);
+  // Afiliaciones
+  const pA=el('div',{class:'panel'});pA.append(el('h3',{},'Afiliaciones por tasa de rechazo'));
+  if(!d.afiliaciones.length)pA.append(el('div',{class:'muted'},'Ninguna afiliación llega al mínimo de '+c.min_ops_tasa+' operaciones.'));
+  else pA.append(tableWrap(['Grupo de cliente','Afiliación','Razón social',{t:'Operaciones'},{t:'Rechazadas'},{t:'Tasa rechazo'},{t:'% Manual/URL'},{t:'Monto aprobado'},''],d.afiliaciones.map(a=>[
+    esc(a.nombre_cliente),`<span class="mono">${esc(a.afil)}</span>`,esc(a.razon_social||'sin razón social'),{num:a.n.toLocaleString('es-MX')},{num:a.rech.toLocaleString('es-MX')},{num:a.marcado?`<span class="flagbad">${pct(a.tasa_rech)}</span>`:pct(a.tasa_rech)},{num:pct(a.pct_riesgo)},{num:mxn(a.monto_aprob)},a.marcado?'<span class="badge d">Rechazo alto</span>':''])));
+  v.append(pA);
+}
+function panelCargasCumplimiento(info){
+  const p=el('div',{class:'panel'});
+  p.append(el('h3',{},'Cargas de transacciones',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},info.total_transacciones.toLocaleString('es-MX')+' transacciones en la base de Cumplimiento'))));
+  if(!info.cargas.length){p.append(el('div',{class:'muted'},'Sin cargas todavía.'));return p;}
+  p.append(tableWrap(['Cuándo','Archivo','Periodo',{t:'Archivo'},{t:'Nuevas'},{t:'Ya existían'},{t:'Inválidas'},'Estatus',''],info.cargas.map(c=>{
+    const est=Object.entries(c.por_estatus||{}).map(([k,n])=>esc(k)+': '+n).join(' · ');
+    const del=can('usuarios')?`<button class="btn danger sm" data-lote="${esc(c.lote_id)}">Revertir</button>`:'';
+    return [new Date(c.cargado_at).toLocaleString('es-MX'),esc(c.archivo||'—'),c.desde?(esc(c.desde)+' → '+esc(c.hasta)):'—',{num:String(c.filas_archivo)},{num:String(c.insertadas)},{num:String(c.duplicadas)},{num:String(c.invalidas)},`<span class="muted" style="font-size:12px">${est}</span>`,del];
+  })));
+  p.addEventListener('click',async e=>{const b=e.target.closest('button[data-lote]');if(!b)return;
+    if(!confirm('¿Revertir esta carga? Se borrarán de Cumplimiento las transacciones que trajo ese archivo.'))return;
+    try{const r=await withBusy('Revirtiendo…',()=>api('DELETE','/api/cumplimiento/cargas/'+encodeURIComponent(b.dataset.lote)));toast(r.borradas+' transacciones revertidas','ok');render();}catch(er){toast(errMsg(er),'err');}});
+  return p;
+}
+function openCargaCumplimiento(){
+  const body=el('div',{});
+  body.append(el('div',{class:'banner',html:'Sube el archivo del gateway con <b>todas</b> las operaciones, <b>incluidas las rechazadas</b>. Esta carga es <b>independiente de la liquidación</b>: no crea ni modifica transacciones de liquidación, cortes ni dispersiones. Si repites un archivo, las operaciones que ya existen se omiten (se detectan por el <b>ID</b> del gateway; sin ID, por el contenido de la fila).'}));
+  body.append(el('button',{class:'btn secondary sm',style:'margin-bottom:12px',onclick:()=>descargar('/api/plantilla/cumplimiento.xlsx','plantilla_cumplimiento.xlsx')},'⬇ Plantilla Excel'));
+  const file=el('input',{type:'file',accept:'.xlsx,.xls,.csv'});
+  const out=el('div',{style:'margin-top:12px'});
+  body.append(el('label',{class:'field'},'Archivo del gateway · Excel hasta 30,000 filas, CSV hasta 100,000',file),out);
+  const foot=el('div',{});
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'),el('button',{class:'btn',onclick:async()=>{
+    if(!file.files[0]){toast('Elige el archivo del gateway','err');return;}
+    const fd=new FormData();fd.append('archivo',file.files[0]);
+    try{
+      const r=await withBusy('Procesando en el servidor…',()=>api('POST','/api/cumplimiento/ingesta',fd));
+      const est=Object.entries(r.por_estatus||{}).map(([k,n])=>`${esc(k)}: <b>${n}</b>`).join(' · ')||'—';
+      const mot=Object.entries(r.motivos_invalidas||{}).map(([k,n])=>`${esc(k)}: ${n}`).join(', ');
+      out.innerHTML='';
+      out.append(el('div',{class:'banner ok',html:`<b>Carga completada</b><br>Filas en el archivo: <b>${r.filas_archivo}</b><br>Nuevas: <b>${r.insertadas}</b> · Ya existían: ${r.duplicadas} · Inválidas: ${r.invalidas}${mot?' ('+mot+')':''}<br>Periodo: ${esc(r.desde||'—')} → ${esc(r.hasta||'—')}<br>Por estatus: ${est}`}));
+      render();
+    }catch(e){toast(e.data&&e.data.mensaje?e.data.mensaje:'Error: '+errMsg(e),'err');}
+  }},'Procesar'));
+  modal('Cargar transacciones de Cumplimiento',body,foot,true);
 }
 
 async function vDestinatarios(v){

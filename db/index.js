@@ -77,6 +77,11 @@ async function migrate() {
     // Aseguramos que el search_path vuelva al schema del sistema tras schema-disputa.sql (usa `set search_path`).
     await backend.query(`set search_path to ${SCHEMA}`);
   } catch (e) { console.warn('⚠ schema-disputa migrate:', e.message); }
+  // Cumplimiento (PLD/antifraude): base de transacciones propia, independiente de la de liquidación.
+  try {
+    await backend.exec(fs.readFileSync(path.join(__dirname, 'schema-cumplimiento.sql'), 'utf8'));
+    await backend.query(`set search_path to ${SCHEMA}`);
+  } catch (e) { console.warn('⚠ schema-cumplimiento migrate:', e.message); }
   await seedUsuarios();
   await seedReasonCodes();
 }
