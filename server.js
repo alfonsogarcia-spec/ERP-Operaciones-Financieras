@@ -1093,6 +1093,12 @@ async function computeCorte(fechaLiqIso) {
   const calculos = []; let total_comp = 0, total_disp = 0, total_monto = 0;
   const aplicaciones = [];  // {cargo_id, monto_aplicado, bloque} — para persistir en corte_aplicaciones
   const afilesVistos = new Set();
+  // Una afiliación puede ser compartida por varios grupos: el corte tiene una fila por (grupo, afiliación).
+  // Los cargos solo se aplican a la fila de SU grupo y nunca más de su saldo (ver lib/ledger.js).
+  const filasPorAfil = new Map();
+  for (const k of Object.keys(groups)) { const a = k.split('||')[1]; filasPorAfil.set(a, (filasPorAfil.get(a) || 0) + 1); }
+  const consumido = new Map();        // cargo.id → monto ya aplicado en ESTE corte (entre filas)
+  const cargosConFila = new Set();    // cargos que coincidieron con el grupo de alguna fila
   for (const k of Object.keys(groups)) {
     const arr = groups[k]; const sep = k.split('||'); const cliente = sep[0], afil = sep[1];
     afilesVistos.add(afil);
@@ -1109,21 +1115,13 @@ async function computeCorte(fechaLiqIso) {
     // FIFO: cobra cargos del más antiguo al más nuevo hasta agotar la bolsa.
     // Si un cargo no cabe completo, se aplica lo que quepa (queda "Parcial" y
     // el SIGUIENTE corte retoma el resto — nunca se pierde ni expira).
-    const aplicarBloque = (cargos, bolsaInicial) => {
-      let restante = bolsaInicial, tot = 0, totContracargo = 0, totFin = 0;
-      const usados = [];
-      for (const c of (cargos || [])) {
-        if (restante <= 0.005) break;
-        const monto = Math.min(c.monto_pendiente, restante);
-        if (monto <= 0.005) continue;
-        usados.push({ cargo_id: c.id, monto_aplicado: E.round2(monto) });
-        tot += monto; restante -= monto;
-        if (c.tipo === 'contracargo' || c.tipo === 'ajuste_manual') totContracargo += monto; else totFin += monto;
-      }
-      return { tot: E.round2(tot), totContracargo: E.round2(totContracargo), totFin: E.round2(totFin), usados };
-    };
-    const resDom  = aplicarBloque(ledgerMap.get(`${afil}||DOM`),  bolsaDom);
-    const resAmex = aplicarBloque(ledgerMap.get(`${afil}||AMEX`), bolsaAmex);
+    const nFilasAfil = filasPorAfil.get(afil) || 1;
+    const filaInfo = { idGrupo, cliente };
+    const selDom  = L.seleccionarCargosParaFila(ledgerMap.get(`${afil}||DOM`),  filaInfo, nFilasAfil, grupoPorNombre, nrm);
+    const selAmex = L.seleccionarCargosParaFila(ledgerMap.get(`${afil}||AMEX`), filaInfo, nFilasAfil, grupoPorNombre, nrm);
+    selDom.coincidentes.concat(selAmex.coincidentes).forEach(id => cargosConFila.add(id));
+    const resDom  = L.aplicarCargosFifo(selDom.aplicables,  bolsaDom,  consumido);
+    const resAmex = L.aplicarCargosFifo(selAmex.aplicables, bolsaAmex, consumido);
     for (const u of resDom.usados)  aplicaciones.push({ cargo_id: u.cargo_id, monto_aplicado: u.monto_aplicado, bloque: 'DOM' });
     for (const u of resAmex.usados) aplicaciones.push({ cargo_id: u.cargo_id, monto_aplicado: u.monto_aplicado, bloque: 'AMEX' });
     // 2ª pasada: con los montos YA capados a lo cobrable, para que disp_dom/
@@ -1154,11 +1152,17 @@ async function computeCorte(fechaLiqIso) {
   const aplicadoPorCargo = new Map();
   for (const a of aplicaciones) aplicadoPorCargo.set(a.cargo_id, (aplicadoPorCargo.get(a.cargo_id) || 0) + a.monto_aplicado);
   const ccNoAplicados = [];
-  for (const [, cargos] of ledgerMap.entries()) {
+  for (const [llave, cargos] of ledgerMap.entries()) {
+    const afilCargo = llave.split('||')[0];
     for (const c of cargos) {
       const aplicado = aplicadoPorCargo.get(c.id) || 0;
       const restante = E.round2(c.monto_pendiente - aplicado);
-      if (restante > 0.005) ccNoAplicados.push({ id: c.id, monto: restante, ids: [c.id] });
+      if (restante > 0.005) {
+        const item = { id: c.id, monto: restante, ids: [c.id] };
+        // Afiliación compartida y el grupo del cargo no coincide con ninguna fila: no se retiene a nadie por error.
+        if ((filasPorAfil.get(afilCargo) || 0) > 1 && !cargosConFila.has(c.id)) item.motivo = 'grupo_no_identificado';
+        ccNoAplicados.push(item);
+      }
     }
   }
   return { calculos, total_comp: E.round2(total_comp), total_disp: E.round2(total_disp), total_monto: E.round2(total_monto), n_trx: txs.length, cuadra, bloqueos, cc_no_aplicados: ccNoAplicados, aplicaciones };
@@ -1797,6 +1801,15 @@ app.get('/api/cortes', auth, async (req, res) => {
   if (!dbReady(res)) return;
   const rows = (await db.query('select * from cortes order by id_corte desc')).rows.map(c => ({ ...c, total_monto: Number(c.total_monto), total_comp: Number(c.total_comp), total_disp: Number(c.total_disp) }));
   res.json(rows);
+});
+// Auditoría (solo lectura): cortes donde se retuvo de más por afiliaciones compartidas por varios grupos.
+app.get('/api/cortes/auditoria-retenciones', auth, requiereRol('admin', 'tesoreria', 'bancos'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const rows = (await db.query(L.SQL_AUDITORIA_RETENCIONES)).rows.map(r => ({
+    corte_id: r.corte_id, fecha: r.fecha, estado: r.estado, afiliacion: r.afil, filas_con_retencion: r.n_filas_con_retencion,
+    retenido_en_filas: E.round2(Number(r.retenido_en_filas)), registrado_en_libro: E.round2(Number(r.registrado)), exceso: E.round2(Number(r.exceso)),
+  }));
+  res.json({ cortes_afectados: new Set(rows.map(r => r.corte_id)).size, exceso_total: E.round2(rows.reduce((s, r) => s + r.exceso, 0)), detalle: rows });
 });
 app.get('/api/cortes/:id', auth, async (req, res) => {
   if (!dbReady(res)) return;

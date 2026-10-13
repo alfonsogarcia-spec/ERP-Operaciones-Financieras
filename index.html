@@ -892,6 +892,19 @@ function openCompletarTarjeta(){
   foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'),revisar,btnAplicar);
   modal('Completar datos de tarjeta',body,foot,true);
 }
+async function openAuditoriaRetenciones(){
+  try{
+    const r=await withBusy('Auditando cortes…',()=>api('GET','/api/cortes/auditoria-retenciones'));
+    const body=el('div',{});
+    body.append(el('div',{class:'banner'+(r.detalle.length?' warn':' ok'),html:r.detalle.length
+      ?`<b>${r.cortes_afectados} corte(s)</b> con retenciones de más por <b>${mxn(r.exceso_total)}</b>. Pasa cuando una afiliación la comparten varios grupos y el mismo cargo se retuvo en varias filas. Revisa estos cortes antes de dispersarlos; si siguen en <b>Borrador</b>, bórralos y vuelve a generarlos.`
+      :'No se encontraron cortes con retenciones de más.'}));
+    if(r.detalle.length)body.append(tableWrap(['Corte','Fecha','Estado','Afiliación',{t:'Filas con retención'},{t:'Retenido en filas'},{t:'Registrado en libro'},{t:'Exceso'}],r.detalle.map(d=>{
+      const row=[`#${d.corte_id}`,fmtISO(d.fecha),badgeEstado(d.estado),`<span class="mono">${esc(d.afiliacion)}</span>`,{num:String(d.filas_con_retencion)},{num:mxn(d.retenido_en_filas)},{num:mxn(d.registrado_en_libro)},{num:`<span class="flagbad">${mxn(d.exceso)}</span>`}];
+      row._onclick=()=>{closeModal();abrirCorte(d.corte_id);};return row;})));
+    modal('Auditoría de retenciones',body,el('div',{},el('button',{class:'btn',onclick:closeModal},'Cerrar')),true);
+  }catch(e){toast(errMsg(e),'err');}
+}
 function openIngesta(){
   const body=el('div',{});
   body.append(el('div',{class:'banner'},'Sube el Excel (.xlsx) del gateway o pega CSV. El servidor lo parsea. Columnas: fecha, cliente, numero_afiliacion, estatus, producto, monto (hora recomendada).'));
@@ -1139,6 +1152,7 @@ function openCargarRetencion(fechaDefault){
 async function vCortes(v){
   if(can('corte'))$('#pageAction').append(el('button',{class:'btn',onclick:openNuevoCorte},'+ Nuevo corte'));
   const cortes=await api('GET','/api/cortes');
+  if(can('notificar'))$('#pageAction').prepend(el('button',{class:'btn ghost sm',onclick:openAuditoriaRetenciones},'🔎 Auditar retenciones'),el('span',{},' '));
   if(can('corte')&&cortes.length)$('#pageAction').prepend(el('button',{class:'btn ghost sm',onclick:async()=>{if(confirm('¿Vaciar TODOS los cortes?')){await api('DELETE','/api/cortes');render();}}},'Vaciar cortes'),el('span',{},' '));
   v.innerHTML='';const p=el('div',{class:'panel'});p.append(el('h3',{},'Cortes'));
   const puedeCorte=can('corte');
@@ -1163,6 +1177,11 @@ async function openNuevoCorte(){
       closeModal();
       if(res.ledger_aplicaciones){
         setTimeout(()=>toast(`✓ Ledger: ${res.ledger_aplicaciones} cargo(s) aplicados por ${mxn(res.ledger_monto_aplicado)}.`, 'ok'), 300);
+      }
+      const sinGrupo=(res.contracargos_no_aplicados||[]).filter(x=>x.motivo==='grupo_no_identificado');
+      if(sinGrupo.length){
+        const sg=sinGrupo.reduce((s,x)=>s+Number(x.monto||0),0);
+        setTimeout(()=>toast(`⚠ ${sinGrupo.length} cargo(s) por ${mxn(sg)} NO se retuvieron: su afiliación la comparten varios grupos y no se pudo identificar a cuál pertenece el cargo. Corrige el grupo del cargo (Retenciones / Contracargos) para que se aplique.`,'err'), 600);
       }
       if(res.contracargos_no_aplicados && res.contracargos_no_aplicados.length){
         const suma = res.contracargos_no_aplicados.reduce((s,x)=>s+Number(x.monto||0),0);
