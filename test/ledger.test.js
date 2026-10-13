@@ -67,6 +67,37 @@ const cons3 = new Map(); const cc = [{ id: 9, tipo: 'contracargo', monto_pendien
 const a1 = L.aplicarCargosFifo(cc, 600, cons3), a2 = L.aplicarCargosFifo(cc, 600, cons3);
 chk('Segunda aplicación del mismo cargo solo toma el saldo', [a1.tot, a2.tot], [600, 400]);
 
+// 9) EL CASO DEL CORTE 92: retención (financiamiento DOM) por todo el "A compensar" de la fila.
+//    Bolsa DOM $9,651.56 + bolsa AMEX $1,472.68 = $11,124.24. Antes quedaba parcial ($9,651.56).
+const fin = id => ({ id, tipo: 'financiamiento', monto_pendiente: 11124.24 });
+let z = L.aplicarCargosEnFila([fin(20)], [], 9651.56, 1472.68, new Map());
+chk('Financiamiento DOM se completa con la bolsa AMEX', [z.resDom.tot, z.resAmex.tot], [9651.56, 1472.68]);
+chk('…retiene el total subido', r2(z.resDom.tot + z.resAmex.tot), 11124.24);
+chk('…y se registra UNA sola aplicación por el total, con su bloque', z.aplicaciones, [{ cargo_id: 20, monto_aplicado: 11124.24, bloque: 'DOM' }]);
+
+// 10) Un contracargo DOM NO desborda a la bolsa AMEX (es de su marca).
+z = L.aplicarCargosEnFila([{ id: 21, tipo: 'contracargo', monto_pendiente: 11124.24 }], [], 9651.56, 1472.68, new Map());
+chk('Contracargo DOM solo toma de la bolsa DOM', [z.resDom.tot, z.resAmex.tot], [9651.56, 0]);
+// …ni un ajuste manual.
+z = L.aplicarCargosEnFila([{ id: 22, tipo: 'ajuste_manual', monto_pendiente: 5000 }], [], 1000, 4000, new Map());
+chk('Ajuste manual no desborda', [z.resDom.tot, z.resAmex.tot], [1000, 0]);
+
+// 11) Financiamiento AMEX que no cabe en AMEX toma de DOM.
+z = L.aplicarCargosEnFila([], [{ id: 23, tipo: 'revenue_share', monto_pendiente: 3000 }], 5000, 1000, new Map());
+chk('Revenue share AMEX se completa con la bolsa DOM', [z.resDom.tot, z.resAmex.tot], [2000, 1000]);
+chk('…una aplicación, bloque AMEX', z.aplicaciones, [{ cargo_id: 23, monto_aplicado: 3000, bloque: 'AMEX' }]);
+
+// 12) El desborde no excede el saldo ni las bolsas; si no alcanza queda parcial.
+z = L.aplicarCargosEnFila([fin(24)], [], 3000, 2000, new Map());
+chk('Si entre las dos bolsas no alcanza, aplica lo que hay (parcial)', r2(z.resDom.tot + z.resAmex.tot), 5000);
+// 13) Una bolsa vacía no genera aplicaciones de cero.
+z = L.aplicarCargosEnFila([fin(25)], [], 0, 0, new Map());
+chk('Sin bolsa no aplica nada', [z.resDom.tot, z.resAmex.tot, z.aplicaciones.length], [0, 0, 0]);
+// 14) Dos financiamientos: FIFO y el desborde respeta el orden.
+z = L.aplicarCargosEnFila([{ id: 30, tipo: 'financiamiento', monto_pendiente: 800 }, { id: 31, tipo: 'financiamiento', monto_pendiente: 800 }], [], 1000, 500, new Map());
+chk('FIFO con desborde: el 1º completo, el 2º con lo que queda', z.aplicaciones.map(a => [a.cargo_id, a.monto_aplicado]), [[30, 800], [31, 700]]);
+chk('…las dos bolsas quedan exactamente agotadas', [z.resDom.tot, z.resAmex.tot], [1000, 500]);
+
 let pass = 0;
 for (const t of out) { console.log((t.pass ? 'PASS  ' : 'FAIL  ') + t.desc + (t.pass ? '' : `  → obtenido ${t.got}, esperado ${t.esperado}`)); if (t.pass) pass++; }
 console.log(`\n${pass}/${out.length} pruebas correctas`);

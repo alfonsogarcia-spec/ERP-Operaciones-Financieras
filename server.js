@@ -1120,10 +1120,8 @@ async function computeCorte(fechaLiqIso) {
     const selDom  = L.seleccionarCargosParaFila(ledgerMap.get(`${afil}||DOM`),  filaInfo, nFilasAfil, grupoPorNombre, nrm);
     const selAmex = L.seleccionarCargosParaFila(ledgerMap.get(`${afil}||AMEX`), filaInfo, nFilasAfil, grupoPorNombre, nrm);
     selDom.coincidentes.concat(selAmex.coincidentes).forEach(id => cargosConFila.add(id));
-    const resDom  = L.aplicarCargosFifo(selDom.aplicables,  bolsaDom,  consumido);
-    const resAmex = L.aplicarCargosFifo(selAmex.aplicables, bolsaAmex, consumido);
-    for (const u of resDom.usados)  aplicaciones.push({ cargo_id: u.cargo_id, monto_aplicado: u.monto_aplicado, bloque: 'DOM' });
-    for (const u of resAmex.usados) aplicaciones.push({ cargo_id: u.cargo_id, monto_aplicado: u.monto_aplicado, bloque: 'AMEX' });
+    const { resDom, resAmex, aplicaciones: apFila } = L.aplicarCargosEnFila(selDom.aplicables, selAmex.aplicables, bolsaDom, bolsaAmex, consumido);
+    aplicaciones.push(...apFila);
     // 2ª pasada: con los montos YA capados a lo cobrable, para que disp_dom/
     // disp_amex nunca queden negativos por un cargo mayor a la bolsa.
     const ajustes = {
