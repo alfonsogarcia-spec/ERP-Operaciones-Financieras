@@ -170,6 +170,9 @@
     .badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;color:#fff;letter-spacing:.01em}
     .badge.g{background:var(--muted)} .badge.b{background:var(--accent)} .badge.ok{background:var(--ok)}
     .badge.w{background:var(--warn-fill);color:#5A4600} .badge.d{background:var(--danger)} .badge.v{background:var(--violet)}
+    .badge.err{background:var(--danger)}
+    .badge.t{background:#0E8C9B} .badge.o{background:#D9730D} .badge.i{background:#3B3FB6}
+    .badge.g2{background:#E3E6EE;color:#475569}
     .pill{display:inline-block;padding:2px 9px;border-radius:999px;background:var(--artico);color:#475569;font-size:11px;font-weight:600}
     .dept{display:inline-block;padding:3px 10px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:11px;font-weight:600}
 
@@ -2191,10 +2194,12 @@ const CB_CICLOS=['RETRIEVAL','FIRST_CHARGEBACK','REPRESENTMENT','PRE_ARBITRATION
 const BRANDS=['VISA','MASTERCARD','AMEX','CARNET','NACIONAL','INTERNACIONAL','OTHER'];
 const CHANNELS=['POS','ECOMMERCE','MOTO','RECURRING','OTHER'];
 function badgeEstadoDisp(estado){
-  const map={NEW:['b','Nuevo'],NOTIFIED:['b','Notificado'],EVIDENCE_REQUESTED:['b','Solicitando evidencia'],UNDER_REVIEW:['b','En revisión'],REPRESENTED:['b','Representado'],IN_DISPUTE:['b','En disputa'],WON:['ok','Ganado'],LOST:['err','Perdido'],ACCEPTED:['g','Aceptado'],EXPIRED:['err','Vencido'],CANCELLED:['g','Cancelado'],ANSWERED:['ok','Respondido'],PROCEDE:['ok','Procede'],NO_PROCEDE:['err','No procede'],DUPLICADA:['err','Duplicada'],NO_DUPLICADA:['ok','No duplicada']};
+  // Un color por estado: amarillo = por atender · azul = esperando al comercio · violeta = evidencia · verde azulado = en revisión
+  // · índigo = representado · naranja = en disputa con la marca · verde = a favor · rojo = perdido/vencido · gris = cerrado sin resultado.
+  const map={NEW:['w','Nuevo'],NOTIFIED:['b','Notificado'],EVIDENCE_REQUESTED:['v','Solicitando evidencia'],UNDER_REVIEW:['t','En revisión'],REPRESENTED:['i','Representado'],IN_DISPUTE:['o','En disputa'],WON:['ok','Ganado'],LOST:['err','Perdido'],ACCEPTED:['g','Aceptado'],EXPIRED:['err','Vencido'],CANCELLED:['g2','Cancelado'],ANSWERED:['ok','Respondido'],PROCEDE:['ok','Procede'],NO_PROCEDE:['err','No procede'],DUPLICADA:['err','Duplicada'],NO_DUPLICADA:['ok','No duplicada']};
   const [c,l]=map[estado]||['g',esc(estado||'—')];return `<span class="badge ${c}">${esc(l)}</span>`;
 }
-function semDias(d){if(d==null)return '<span class="muted">—</span>';return d<=0?`<span class="badge err">${d}d</span>`:d<=3?`<span class="badge b">${d}d</span>`:`<span class="badge ok">${d}d</span>`;}
+function semDias(d){if(d==null)return '<span class="muted">—</span>';return d<=0?`<span class="badge err">${d}d</span>`:d<=3?`<span class="badge w">${d}d</span>`:`<span class="badge ok">${d}d</span>`;}
 
 async function vDispDashboard(v){
   v.innerHTML='';
