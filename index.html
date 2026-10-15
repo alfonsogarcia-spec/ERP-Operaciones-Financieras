@@ -778,7 +778,21 @@ async function vDashboard(v){
   if(cbVencidos>0)alertas.push({t:'CB vencidos',s:cbVencidos+' contracargo(s) sin resolver',b:'d'});
   alertasTrans.forEach(a=>alertas.push({t:'Caída de transaccionalidad',s:`${a.nombre_cliente}: ${mxn(a.monto_real)} vs. promedio ${mxn(a.monto_esperado)} (-${Number(a.pct_caida).toFixed(1)}%) · corte #${a.corte_id}`,b:'d',onclick:()=>{go('cortes');setTimeout(()=>abrirCorte(a.corte_id),100);}}));
   if(!alertas.length) pAler.append(el('div',{class:'banner ok'},'Todo en orden. No hay alertas activas.'));
-  else pAler.append(tableWrap(['Alerta','Estado'],alertas.map(a=>{const r=[`<div class="tt">${esc(a.t)}<small>${esc(a.s)}</small></div>`,`<span class="badge ${a.b}">${a.b==='d'?'Prioridad':'Atención'}</span>`];if(a.onclick)r._onclick=a.onclick;return r;})));
+  else{
+    // Solo las 5 más recientes a la vista (las caídas vienen de la más nueva a la más antigua); el resto se despliega.
+    const VISIBLES=5;
+    pAler.querySelector('h3').append(el('span',{class:'right'},el('span',{class:'pill'},alertas.length+(alertas.length===1?' alerta':' alertas'))));
+    const tw=tableWrap(['Alerta','Estado'],alertas.map(a=>{const r=[`<div class="tt">${esc(a.t)}<small>${esc(a.s)}</small></div>`,`<span class="badge ${a.b}">${a.b==='d'?'Prioridad':'Atención'}</span>`];if(a.onclick)r._onclick=a.onclick;return r;}));
+    pAler.append(tw);
+    if(alertas.length>VISIBLES){
+      const extras=[...tw.querySelectorAll('tbody tr')].slice(VISIBLES);
+      extras.forEach(r=>{r.style.display='none';});
+      let abierto=false;
+      const lbl=()=>abierto?'Ver menos ▴':`Ver las ${extras.length} restantes ▾`;
+      const btn=el('button',{class:'btn ghost sm',style:'margin-top:10px',onclick:()=>{abierto=!abierto;extras.forEach(r=>{r.style.display=abierto?'':'none';});btn.textContent=lbl();}},lbl());
+      pAler.append(btn);
+    }
+  }
   gr2.append(pAler); v.append(gr2);
 }
 
@@ -2887,8 +2901,8 @@ async function vDispDup(v){
     const p=el('div',{class:'panel'});
     p.append(el('h3',{},'Transacciones duplicadas',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},rows.length+' casos'))));
     if(!rows.length)p.append(el('div',{class:'empty'},'Sin duplicados registrados.'));
-    else p.append(tableWrap(['Folio','Fecha reporte','Diferencia','Campos','Estado','Vence','Días','Decisión'],rows.map(x=>{
-      const row=[esc(x.folio),esc(x.fecha_reporte||'—'),x.diferencia_segundos!=null?x.diferencia_segundos+' seg':'—',esc((x.campos_coincidentes||[]).join(', ')||'—'),badgeEstadoDisp(x.status),esc(x.fecha_limite_respuesta||'—'),semDias(x.dias_para_vencer),x.decision?badgeEstadoDisp(x.decision):'—'];
+    else p.append(tableWrap(['Folio','Fecha reporte',{t:'Monto'},'Diferencia','Campos','Estado','Vence','Días','Decisión'],rows.map(x=>{
+      const row=[esc(x.folio),esc(x.fecha_reporte||'—'),{num:x.monto!=null?mxn(x.monto):'—'},x.diferencia_segundos!=null?x.diferencia_segundos+' seg':'—',esc((x.campos_coincidentes||[]).join(', ')||'—'),badgeEstadoDisp(x.status),esc(x.fecha_limite_respuesta||'—'),semDias(x.dias_para_vencer),x.decision?badgeEstadoDisp(x.decision):'—'];
       row._onclick=()=>abrirDupTransicion(x);
       return row;
     })));
@@ -2898,7 +2912,7 @@ async function vDispDup(v){
 async function abrirDupTransicion(r){
   if(!can('disputas'))return;
   const body=el('div',{});
-  body.append(cards([['Folio',r.folio],['Estado',r.status],['Diferencia',r.diferencia_segundos!=null?r.diferencia_segundos+' seg':'—']]));
+  body.append(cards([['Folio',r.folio],['Monto',r.monto!=null?mxn(r.monto):'—'],['Estado',r.status],['Diferencia',r.diferencia_segundos!=null?r.diferencia_segundos+' seg':'—']]));
   const transiciones={NEW:['NOTIFIED','CANCELLED'],NOTIFIED:['ANSWERED','EXPIRED','CANCELLED'],ANSWERED:['CANCELLED']}[r.status]||[];
   if(!transiciones.length){body.append(el('div',{class:'banner'},'Sin transiciones (estado final).'));modal('Detalle · '+r.folio,body,el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cerrar')));return;}
   const nuevoSel=el('select');transiciones.forEach(t=>nuevoSel.append(el('option',{},t)));
