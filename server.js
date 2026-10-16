@@ -108,7 +108,9 @@ const loginLimiter = rateLimit(rlOpts(20, 'Demasiados intentos de inicio de sesi
 const apiLimiter = rateLimit(rlOpts(300, 'Demasiadas solicitudes. Espera un minuto.'));
 app.use('/api/', apiLimiter);
 
-app.use(express.json({ limit: '10mb' }));
+// El webhook público (sin sesión) tiene su propio parser con tope de 2 MB en su ruta; el global de 10 MB no debe tocarlo.
+const jsonGrande = express.json({ limit: '10mb' });
+app.use((req, res, next) => req.path === '/api/webhooks/contracargos' ? next() : jsonGrande(req, res, next));
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
 
 /* ---------- validación estricta de uploads (MIME + magic bytes) ---------- */
@@ -4120,7 +4122,7 @@ function armarNotifDisputaHTML(n, opts) {
       <!-- CTA para responder por correo (devoluciones sospechosas) -->
       <tr><td style="padding:24px 36px 0">
         <div style="background:#EDEEF7;border:1px solid #ABCAE9;color:#0F56AC;padding:12px 16px;border-radius:12px;font:400 13px/1.55 Arial,Helvetica,sans-serif">
-          Cuenta con <b>3 días hábiles</b> (hasta el <b>${escapeHtml(n.fecha_limite_respuesta || '—')}</b>) para atender este requerimiento. Por favor valide que la devolución tenga una <b>venta previa</b> y considérela en sus conciliaciones.
+          Cuenta con <b>3 días hábiles</b> (hasta el <b>${escapeHtml(n.fecha_limite_respuesta || '—')}</b>) para atender este requerimiento. Por favor valide que la devolución tenga una <b>venta previa</b>. Si la devolución <b>procede</b> (o no recibimos su respuesta a tiempo), el monto <b>será retenido de su siguiente liquidación</b>.
         </div>
       </td></tr>
       <tr><td style="padding:22px 36px 0">
@@ -4828,7 +4830,7 @@ app.post('/api/webhooks/contracargos', webhookLimiter, express.json({ limit: '2m
   const arn = body.arn ? String(body.arn).trim() : null;
   const case_number = body.case_number ? String(body.case_number).trim() : null;
   const amount = body.disputed_amount != null && body.disputed_amount !== '' ? Number(body.disputed_amount) : null;
-  if (amount !== null && (!Number.isFinite(amount) || amount <= 0)) return res.status(400).json({ error: 'monto_invalido', mensaje: 'disputed_amount debe ser un número mayor a 0.' });
+  if (amount !== null && (!Number.isFinite(amount) || amount <= 0 || amount > 1e9)) return res.status(400).json({ error: 'monto_invalido', mensaje: 'disputed_amount debe ser un número mayor a 0.' });
   const merchant_name = body.merchant_name ? String(body.merchant_name).trim() : null;
   const afil = body.merchant_affiliation ? String(body.merchant_affiliation).replace(/\D/g, '') : null;
   const fechaReal = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && new Date(v + 'T00:00:00Z').toISOString().slice(0, 10) === v;
@@ -4855,7 +4857,7 @@ app.post('/api/webhooks/contracargos', webhookLimiter, express.json({ limit: '2m
   const vals = [folio, C.hmac(folio), provider.id, merchant_id, client_group_id, reason_code_id, external_id, C.hmac(external_id),
     arn, C.encrypt(arn), arn ? C.hmac(arn) : null, case_number, C.encrypt(case_number),
     brand, card_presence, channel, cycle, 'NEW', body.reason_code_raw || null, body.reason_description || null,
-    C.encrypt(amount != null ? String(amount) : null), (body.currency_code || 'MXN').toUpperCase().slice(0, 3),
+    C.encrypt(amount != null ? String(amount) : null), String(body.currency_code || 'MXN').toUpperCase().slice(0, 3),
     merchant_name, C.encrypt(merchant_name), afil, afil ? C.hmac(afil) : null,
     fecha_evento, fecha_recepcion, fecha_limite_comercio, fecha_limite_representacion,
     'webhook', 'webhook:' + provider.nombre, fecha_retencion];
@@ -4872,7 +4874,9 @@ app.post('/api/webhooks/contracargos', webhookLimiter, express.json({ limit: '2m
     actor: { nombre: 'webhook:' + provider.nombre, rol: '—' },
     resource_type: 'disputa_cb', resource_id: idNuevo,
   });
-  res.status(201).json({ ok: true, deduplicado: false, id: idNuevo, folio: r.rows[0].folio });
+  // Se acepta el caso aunque falten datos (no se pierde un contracargo real), pero se avisa que no podrá retenerse.
+  const aviso_retencion = !afil ? 'sin_afiliacion' : !(amount > 0) ? 'sin_monto' : null;
+  res.status(201).json({ ok: true, deduplicado: false, id: idNuevo, folio: r.rows[0].folio, aviso_retencion });
 });
 
 // Regenera el token del webhook para un provider (solo admin). Devuelve el token en claro UNA sola vez.
@@ -4895,6 +4899,11 @@ app.get('*', (req, res) => {
 app.use((err, req, res, _next) => {
   if (res.headersSent) return;
   if (err && err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'archivo_muy_grande', mensaje: 'El archivo excede el tamaño permitido.' });
+  if (err && err.name === 'MulterError') return res.status(400).json({ error: 'archivo_invalido', mensaje: 'La subida no es válida: envía un solo archivo en el campo archivo.' });
+  // Errores de datos de Postgres (clase 22: formato/rango/codificación; 23: restricciones): la culpa es del dato enviado → 4xx, no 500.
+  const pg = err && typeof err.code === 'string' ? err.code : '';
+  if (pg === '23505') return res.status(409).json({ error: 'duplicado', mensaje: 'Ya existe un registro con esos datos.' });
+  if (/^(22|23)/.test(pg)) return res.status(400).json({ error: 'dato_invalido', mensaje: 'Alguno de los datos enviados no tiene un formato válido.' });
   const st = (err && (err.status || err.statusCode)) || 500;
   if (st >= 500) console.error('[error]', req.method, req.path, ((err && err.stack) || String(err)).split('\n').slice(0, 4).join(' | '));
   res.status(st).json(st < 500 ? { error: 'solicitud_invalida', mensaje: String((err && err.message) || 'Solicitud inválida') } : { error: 'error_interno', mensaje: 'Ocurrió un error inesperado. Intenta de nuevo; si persiste, avisa a soporte.' });

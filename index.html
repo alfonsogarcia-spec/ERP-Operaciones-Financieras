@@ -2199,6 +2199,21 @@ function badgeEstadoDisp(estado){
   const map={NEW:['w','Nuevo'],NOTIFIED:['b','Notificado'],EVIDENCE_REQUESTED:['v','Solicitando evidencia'],UNDER_REVIEW:['t','En revisión'],REPRESENTED:['i','Representado'],IN_DISPUTE:['o','En disputa'],WON:['ok','Ganado'],LOST:['err','Perdido'],ACCEPTED:['g','Aceptado'],EXPIRED:['err','Vencido'],CANCELLED:['g2','Cancelado'],ANSWERED:['ok','Respondido'],PROCEDE:['ok','Procede'],NO_PROCEDE:['err','No procede'],DUPLICADA:['err','Duplicada'],NO_DUPLICADA:['ok','No duplicada']};
   const [c,l]=map[estado]||['g',esc(estado||'—')];return `<span class="badge ${c}">${esc(l)}</span>`;
 }
+// Días de retención: desde que se retuvo en un corte hasta que se liberó (o hasta hoy si sigue retenido).
+function chipRetencion(r){
+  if(!r) return '—';
+  if(r.bloqueo) return '<span class="badge err" style="white-space:nowrap" title="Este contracargo NO se retendrá hasta que se complete el dato faltante">Sin retención · '+(r.bloqueo==='sin_afiliacion'?'falta afiliación':'falta monto')+' ⚠</span>';
+  const t={
+    por_retener:['g','Por retener'],
+    sin_retencion:['g','Sin retención'],
+    en_curso:[r.excede?'err':'w',r.dias+' d · retenido'],
+    por_liberar:['v',r.dias+' d · por liberar'],
+    liberado:['ok',r.dias+' d · liberado'+(r.abonado?' · abonado':'')],
+    definitiva:['d',r.dias+' d · definitiva'],
+  }[r.estado]||['g','—'];
+  const tip=r.estado==='en_curso'&&r.excede?' title="Excede '+r.limite+' días naturales (plazo de dictamen, LTOSF art. 23)"':(r.estado==='por_liberar'?' title="Ganado: el dinero sigue retenido hasta que pulses Liberar contracargo en el detalle"':r.desde?' title="Retenido desde '+r.desde+(r.hasta?' hasta '+r.hasta:'')+'"':(r.estado==='por_retener'&&r.programada?' title="Se retendrá a partir del '+r.programada+'"':''));
+  return '<span class="badge '+t[0]+'" style="white-space:nowrap"'+tip+'>'+t[1]+(r.estado==='en_curso'&&r.excede?' ⚠':'')+'</span>';
+}
 function semDias(d){if(d==null)return '<span class="muted">—</span>';return d<=0?`<span class="badge err">${d}d</span>`:d<=3?`<span class="badge w">${d}d</span>`:`<span class="badge ok">${d}d</span>`;}
 
 async function vDispDashboard(v){
@@ -2252,8 +2267,8 @@ async function vDispCB(v){
     const p=el('div',{class:'panel'});
     p.append(el('h3',{},'Contracargos',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},`${r.total} casos · viendo ${r.rows.length}`))));
     if(!r.rows.length){p.append(el('div',{class:'empty'},'Sin resultados con esos filtros.'));}
-    else p.append(tableWrap(['Folio','Fecha registro','Marca','Canal','Comercio','ARN','Ciclo','Estado','Monto','Vence','Días'],r.rows.map(x=>{
-      const row=[esc(x.folio),x.fecha_recepcion?fmtISO(x.fecha_recepcion):'—',`<span class="pill">${esc(x.brand)}</span>`,`<span class="pill">${esc(x.channel)}</span>`,esc(x.merchant_name_out||'—'),esc(x.arn||'—'),`<span class="pill">${esc(x.cycle)}</span>`,badgeEstadoDisp(x.status),{num:x.disputed_amount!=null?mxn(x.disputed_amount):'—'},esc(x.fecha_limite_comercio||'—'),semDias(x.dias_para_vencer)];
+    else p.append(tableWrap(['Folio','Fecha registro','Marca','Canal','Comercio','ARN','Ciclo','Estado','Monto','Vence','Días','Días retenido'],r.rows.map(x=>{
+      const row=[esc(x.folio),x.fecha_recepcion?fmtISO(x.fecha_recepcion):'—',`<span class="pill">${esc(x.brand)}</span>`,`<span class="pill">${esc(x.channel)}</span>`,esc(x.merchant_name_out||'—'),esc(x.arn||'—'),`<span class="pill">${esc(x.cycle)}</span>`,badgeEstadoDisp(x.status),{num:x.disputed_amount!=null?mxn(x.disputed_amount):'—'},esc(x.fecha_limite_comercio||'—'),semDias(x.dias_para_vencer),chipRetencion(x.retencion)];
       row._onclick=()=>abrirDispCB(x.id);
       return row;
     })));
@@ -2365,6 +2380,25 @@ async function vDispCBDetalle(v, id){
   if(can('disputas') && !d.archivado) head.append(el('button',{class:'btn ghost sm',onclick:async()=>{ if(!confirm('¿Archivar este contracargo?')) return; try{ await api('POST','/api/disputa/chargebacks/'+id+'/archive'); toast('Archivado','ok'); go('disp_chargebacks'); }catch(e){toast(errMsg(e),'err');}}},'Archivar'));
   head.append(el('button',{class:'btn ghost sm',onclick:()=>go('disp_chargebacks')},'← Volver'));
   v.append(head);
+  if(d.retencion&&d.retencion.bloqueo){
+    const bn=el('div',{class:'banner err',style:'display:flex;align-items:center;gap:12px;flex-wrap:wrap'});
+    bn.append(el('div',{style:'flex:1'},el('b',{},'Este contracargo no se está reteniendo. '),'Falta '+(d.retencion.bloqueo==='sin_afiliacion'?'la afiliación del comercio':'el monto en disputa')+'; mientras no se capture, el corte no lo descuenta.'));
+    if(can('disputas')) bn.append(el('button',{class:'btn sm',onclick:()=>{
+      const body=el('div',{});
+      const afilI=el('input',{value:d.merchant_affiliation||'',placeholder:'Número de afiliación'});
+      const montoI=el('input',{type:'number',step:'0.01',value:d.disputed_amount||'',placeholder:'0.00'});
+      body.append(el('div',{class:'form-grid c2'},fld('Afiliación',afilI),fld('Monto en disputa',montoI)));
+      modal('Completar datos para la retención',body,el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+        const payload={};
+        if(afilI.value.trim()&&afilI.value.trim()!==String(d.merchant_affiliation||'')) payload.merchant_affiliation=afilI.value.trim();
+        if(montoI.value&&Number(montoI.value)!==Number(d.disputed_amount||0)) payload.disputed_amount=Number(montoI.value);
+        if(!Object.keys(payload).length) return toast('No hay cambios que guardar','err');
+        try{await api('PATCH','/api/disputa/chargebacks/'+id,payload);toast('Datos guardados · el contracargo ya entra a retención','ok');closeModal();go('disp_cb_'+id);}
+        catch(e){toast(errMsg(e),'err');}
+      }},'Guardar')));
+    }},'Completar datos'));
+    v.append(bn);
+  }
 
   const grid = el('div',{style:'display:grid;grid-template-columns:1fr 320px;gap:20px;align-items:start'});
 
@@ -2397,6 +2431,8 @@ async function vDispCBDetalle(v, id){
     ['Límite evidencia (sub afiliado)', d.fecha_limite_comercio ? fmtFechaMX(d.fecha_limite_comercio) + ' (' + (d.dias_para_vencer!=null?d.dias_para_vencer+'d':'—') + ')' : '—'],
     ['Límite representment (30 cal)', d.fecha_limite_representacion ? fmtFechaMX(d.fecha_limite_representacion) + ' (' + (d.dias_representacion!=null?d.dias_representacion+'d':'—') + ')' : '—'],
     ['Retención preventiva', d.retenido_en_corte_id ? '<span class="badge b">Retenido en corte #'+d.retenido_en_corte_id+'</span>' : (d.fecha_retencion ? 'Programada '+fmtFechaMX(d.fecha_retencion) : 'No aplicada')],
+    ['Días retenido', chipRetencion(d.retencion) + (d.retencion&&d.retencion.desde ? ' <span class="muted" style="font-weight:400">desde '+fmtFechaMX(d.retencion.desde)+(d.retencion.hasta?' hasta '+fmtFechaMX(d.retencion.hasta):'')+'</span>' : '')],
+    d.retencion&&d.retencion.monto_retenido!=null ? ['Monto retenido / pendiente', mxn(d.retencion.monto_retenido)+' / '+mxn(d.retencion.monto_pendiente)] : null,
     ['Resolución', d.status==='WON' ? 'Ganado' : d.status==='LOST' ? 'Perdido' : d.status==='ACCEPTED' ? 'Aceptado' : 'Pendiente'],
     ['Caso / ARN', esc(d.case_number || d.arn || '—')],
     ['Origen', '<span class="badge g" style="padding:4px 12px;border-radius:999px">'+esc(d.origen||'manual')+'</span>'],
@@ -2443,6 +2479,12 @@ async function vDispCBDetalle(v, id){
   else p4.append(tableWrap(['Archivo','Descripción','Tamaño','Subido por','Cuándo',''],atts.map(a=>[esc(a.filename||'—'),esc(a.descripcion||'—'),{num:(a.bytes_size||0)+' B'},esc(a.subido_por||'—'),esc(new Date(a.subido_at).toLocaleString('es-MX')),el('div',{style:'display:flex;gap:6px'},el('button',{class:'btn ghost sm',onclick:()=>{ const url='/api/disputa/attachments/'+a.id+'/download?token='+encodeURIComponent(TOKEN()); window.open(url,'_blank'); }},'⬇'),can('disputas')?el('button',{class:'btn ghost sm',style:'color:#B45309',onclick:async e=>{ e.stopPropagation(); if(confirm('¿Eliminar este adjunto?')){ try{ await api('DELETE','/api/disputa/attachments/'+a.id); toast('Borrado','ok'); go('disp_cb_'+id); }catch(ex){ toast(errMsg(ex),'err'); } } }},'Borrar'):'')])));
   izq.append(p4);
 
+  // Panel 4b: Tiempo por estatus (días naturales que el caso pasó en cada estado)
+  if((d.dias_por_estatus||[]).length){
+    const pT = el('div',{class:'panel'}); pT.append(el('h3',{},'Tiempo por estatus',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},'días naturales'))));
+    pT.append(tableWrap(['Estatus','Desde','Hasta',{t:'Días'}],d.dias_por_estatus.map(t=>[badgeEstadoDisp(t.estado),fmtFechaMX(t.desde)||'—',t.hasta?fmtFechaMX(t.hasta):(t.final?'<span class="muted">desenlace</span>':'<span class="muted">en curso</span>'),{num:t.dias!=null?t.dias:'—'}])));
+    izq.append(pT);
+  }
   // Panel 5: Bitácora
   const p5 = el('div',{class:'panel'}); p5.append(el('h3',{},'Bitácora'));
   (d.eventos||[]).slice().reverse().forEach(ev=>{
@@ -2508,6 +2550,23 @@ async function vDispCBDetalle(v, id){
     acc.append(est);
   } else if (finales) {
     acc.append(el('div',{class:'muted'},'El caso está en estado final ('+esc(d.status)+'). Solo lectura.'));
+  }
+  // Liberar contracargo: solo ganados (WON) con monto retenido que aún no se ha liberado.
+  if (d.status==='WON') {
+    const rt=d.retencion||{};
+    acc.append(el('div',{style:'font:700 11px Montserrat,sans-serif;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.06em;margin:16px 0 6px'},'Liberación del monto retenido'));
+    if (rt.liberado_at) {
+      acc.append(el('div',{class:'banner ok',style:'font-size:12px'},'Liberado el '+fmtFechaMX(rt.liberado_at)+' por '+mxn(rt.monto_liberado||0)+(rt.abonado?' · ya abonado en el corte #'+(rt.abonado_corte||'—'):' · pendiente de abonar en el siguiente corte con actividad de la afiliación')+'.'));
+    } else if (rt.estado==='por_liberar' && can('disputas')) {
+      acc.append(el('div',{class:'muted',style:'font-size:12px;margin-bottom:8px'},'Se ganó el caso: el monto retenido ('+mxn(rt.monto_retenido||0)+') se queda retenido hasta que lo liberes. El abono sale como pendiente de dispersión en el siguiente corte con actividad de esta afiliación.'));
+      acc.append(el('button',{class:'btn',style:'width:100%;background:#0E7A4F;color:#fff',onclick:async()=>{
+        if(!confirm('¿Liberar este contracargo y abonar '+mxn(rt.monto_retenido||0)+' al comercio en el siguiente corte?')) return;
+        try{ const r=await api('POST','/api/disputa/chargebacks/'+id+'/liberar'); toast('Liberado · '+mxn(r.monto)+' pendiente de abonar en el siguiente corte','ok'); go('disp_cb_'+id); }
+        catch(e){ toast(errMsg(e),'err'); }
+      }},'Liberar contracargo'));
+    } else if (rt.estado==='sin_retencion') {
+      acc.append(el('div',{class:'muted',style:'font-size:12px'},'No se le retuvo nada en ningún corte: no hay monto que devolver.'));
+    }
   }
   der.append(acc);
 
@@ -2609,6 +2668,8 @@ async function openCBNuevo(){
     foot.append(el('label',{style:'display:flex;align-items:center;gap:6px;font:600 13px Montserrat,sans-serif;color:var(--ink,#1A1A1A);margin-right:auto'},chkNot,el('span',{},'Notificar al comercio por email')));
     foot.append(el('button',{class:'btn',onclick:async()=>{
       if(!merchantNombre.value.trim())return toast('Falta el nombre del comercio','err');
+      if(!afil.value.replace(/\D/g,''))return toast('La afiliación es obligatoria: sin ella el contracargo no se puede retener','err');
+      if(!(Number(monto.value)>0))return toast('Captura el monto en disputa (mayor a 0)','err');
       try{
         const payload={
           merchant_name:merchantNombre.value.trim(),
@@ -2673,8 +2734,8 @@ async function vDispRefunds(v){
     const p=el('div',{class:'panel'});
     p.append(el('h3',{},'Devoluciones sospechosas',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},rows.length+' casos'))));
     if(!rows.length)p.append(el('div',{class:'empty'},'Sin devoluciones registradas.'));
-    else p.append(tableWrap(['Folio','Fecha reporte','Monto','Ref. original','Estado','Vence','Días','Decisión'],rows.map(x=>{
-      const row=[esc(x.folio),esc(x.fecha_reporte||'—'),{num:x.amount!=null?mxn(x.amount):'—'},esc(x.reference_original||'—'),badgeEstadoDisp(x.status),esc(x.fecha_limite_respuesta||'—'),semDias(x.dias_para_vencer),x.decision?badgeEstadoDisp(x.decision):'—'];
+    else p.append(tableWrap(['Folio','Fecha reporte','Monto','Ref. original','Estado','Vence','Días','Decisión','Días retenido'],rows.map(x=>{
+      const row=[esc(x.folio),esc(x.fecha_reporte||'—'),{num:x.amount!=null?mxn(x.amount):'—'},esc(x.reference_original||'—'),badgeEstadoDisp(x.status),esc(x.fecha_limite_respuesta||'—'),semDias(x.dias_para_vencer),x.decision?badgeEstadoDisp(x.decision):'—',chipRetencion(x.retencion)];
       row._onclick=()=>go('disp_ref_'+x.id);
       return row;
     })));
@@ -2736,7 +2797,7 @@ async function vDispRefundDetalle(v, id){
     if(d.status!=='NOTIFIED') btns.append(el('div',{class:'muted',style:'align-self:center;font-size:12px'},'Para registrar la decisión (PROCEDE / NO PROCEDE) primero notifica al comercio.'));
     if(d.status==='NOTIFIED') btns.append(el('button',{class:'btn ok',onclick:async()=>{
       if(!confirm('¿Marcar como PROCEDE?')) return;
-      try{ await api('POST','/api/disputa/refunds/'+id+'/decision',{decision:'PROCEDE'}); toast('Marcada PROCEDE','ok'); go('disp_ref_'+id); }
+      try{ const rr=await api('POST','/api/disputa/refunds/'+id+'/decision',{decision:'PROCEDE'}); const rt=rr&&rr.retencion; toast(rt&&rt.accion==='retencion_programada'?'Marcada PROCEDE · retención de '+mxn(rt.monto)+' programada para '+rt.fecha:(rt&&rt.ok===false?'Marcada PROCEDE, pero NO se programó la retención ('+(rt.motivo==='sin_afiliacion'?'falta la afiliación del comercio':rt.motivo==='sin_monto'?'falta el monto':rt.motivo)+')':'Marcada PROCEDE'),rt&&rt.ok===false?'err':'ok'); go('disp_ref_'+id); }
       catch(e){toast(errMsg(e),'err');}
     }},'✓ Marcar PROCEDE'));
     if(d.status==='NOTIFIED') btns.append(el('button',{class:'btn danger',onclick:async()=>{
@@ -2801,7 +2862,8 @@ async function abrirRefundTransicion(r){
   if(!transiciones.length){body.append(el('div',{class:'banner'},'Sin transiciones disponibles (estado final).'));modal('Detalle · '+r.folio,body,el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cerrar')));return;}
   const nuevoSel=el('select');transiciones.forEach(t=>nuevoSel.append(el('option',{},t)));
   const decSel=el('select');['','PROCEDE','NO_PROCEDE'].forEach(d=>decSel.append(el('option',{value:d},d||'—')));
-  body.append(fld('Nuevo estado',nuevoSel),fld('Decisión (solo si ANSWERED)',decSel));
+  body.append(fld('Nuevo estado',nuevoSel),fld('Decisión (obligatoria si ANSWERED)',decSel));
+  body.append(el('div',{class:'muted',style:'font-size:12px'},'PROCEDE: se retiene el monto en la siguiente liquidación. NO_PROCEDE: no se retiene. Si el caso expira (EXPIRED) también se retiene.'));
   const foot=el('div',{});
   foot.append(el('button',{class:'btn sm',style:'background:#0F56AC;color:#fff',onclick:async()=>{
     const msg=prompt('Mensaje adicional (opcional):');
@@ -2810,7 +2872,12 @@ async function abrirRefundTransicion(r){
   }},'📧 Notificar'));
   foot.append(el('div',{style:'flex:1'}));
   foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
-    try{await api('POST','/api/disputa/refunds/'+r.id+'/status',{status:nuevoSel.value,decision:decSel.value||undefined});toast('Cambio registrado','ok');closeModal();go('disp_refunds');}
+    try{const rr=await api('POST','/api/disputa/refunds/'+r.id+'/status',{status:nuevoSel.value,decision:decSel.value||undefined});
+      const rt=rr&&rr.retencion;
+      if(rt&&rt.accion==='retencion_programada') toast('Cambio registrado · retención de '+mxn(rt.monto)+' programada para '+rt.fecha,'ok');
+      else if(rt&&rt.ok===false) toast('Cambio registrado, pero NO se programó la retención ('+(rt.motivo==='sin_afiliacion'?'falta la afiliación del comercio':rt.motivo==='sin_monto'?'falta el monto':rt.motivo)+').','err');
+      else toast('Cambio registrado','ok');
+      closeModal();go('disp_refunds');}
     catch(e){toast(errMsg(e),'err');}
   }},'Aplicar'));
   modal('Transición · '+r.folio,body,foot);
@@ -2911,8 +2978,8 @@ async function vDispDup(v){
     const p=el('div',{class:'panel'});
     p.append(el('h3',{},'Transacciones duplicadas',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},rows.length+' casos'))));
     if(!rows.length)p.append(el('div',{class:'empty'},'Sin duplicados registrados.'));
-    else p.append(tableWrap(['Folio','Fecha reporte',{t:'Monto'},'Diferencia','Campos','Estado','Vence','Días','Decisión'],rows.map(x=>{
-      const row=[esc(x.folio),esc(x.fecha_reporte||'—'),{num:x.monto!=null?mxn(x.monto):'—'},x.diferencia_segundos!=null?x.diferencia_segundos+' seg':'—',esc((x.campos_coincidentes||[]).join(', ')||'—'),badgeEstadoDisp(x.status),esc(x.fecha_limite_respuesta||'—'),semDias(x.dias_para_vencer),x.decision?badgeEstadoDisp(x.decision):'—'];
+    else p.append(tableWrap(['Folio','Fecha reporte',{t:'Monto'},'Diferencia','Campos','Estado','Vence','Días','Decisión','Días retenido'],rows.map(x=>{
+      const row=[esc(x.folio),esc(x.fecha_reporte||'—'),{num:x.monto!=null?mxn(x.monto):'—'},x.diferencia_segundos!=null?x.diferencia_segundos+' seg':'—',esc((x.campos_coincidentes||[]).join(', ')||'—'),badgeEstadoDisp(x.status),esc(x.fecha_limite_respuesta||'—'),semDias(x.dias_para_vencer),x.decision?badgeEstadoDisp(x.decision):'—',chipRetencion(x.retencion)];
       row._onclick=()=>abrirDupTransicion(x);
       return row;
     })));
@@ -2928,7 +2995,7 @@ async function abrirDupTransicion(r){
   const nuevoSel=el('select');transiciones.forEach(t=>nuevoSel.append(el('option',{},t)));
   const decSel=el('select');['','DUPLICADA','NO_DUPLICADA'].forEach(d=>decSel.append(el('option',{value:d},d||'—')));
   body.append(fld('Nuevo estado',nuevoSel),fld('Decisión (obligatoria si ANSWERED)',decSel));
-  body.append(el('div',{class:'muted',style:'font-size:12px'},'DUPLICADA: se retiene el monto en la siguiente liquidación (día hábil siguiente). NO_DUPLICADA: no se retiene.'));
+  body.append(el('div',{class:'muted',style:'font-size:12px'},'DUPLICADA: se retiene el monto en la siguiente liquidación (día hábil siguiente). NO_DUPLICADA: no se retiene. Si el caso expira (EXPIRED) también se retiene.'));
   const foot=el('div',{});
   foot.append(el('button',{class:'btn sm',style:'background:#0F56AC;color:#fff',onclick:async()=>{
     const msg=prompt('Mensaje adicional (opcional):');

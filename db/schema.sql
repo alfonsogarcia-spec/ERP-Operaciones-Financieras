@@ -208,6 +208,10 @@ create table if not exists dispersiones_pendientes (
   creado_por           text
 );
 create index if not exists idx_disppend_afil on dispersiones_pendientes(numero_afiliacion, bloque, estatus);
+-- Abonos por liberación de contracargos ganados (Disputas): ligan la pendiente a su folio para no duplicarla.
+alter table dispersiones_pendientes add column if not exists origen     text;
+alter table dispersiones_pendientes add column if not exists origen_ref text;
+create unique index if not exists uq_disppend_origen_bloque on dispersiones_pendientes(origen, origen_ref, bloque) where origen is not null and estatus <> 'Cancelado';
 
 create table if not exists contracargos (
   id                    serial primary key,
