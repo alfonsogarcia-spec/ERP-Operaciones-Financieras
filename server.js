@@ -1561,7 +1561,14 @@ app.put('/api/cumplimiento/config', auth, requiereRol('admin'), async (req, res)
 app.get('/api/cumplimiento/reglas', auth, (req, res) => res.json({ reglas: PLD.REGLAS, globales: PLD.GLOBALES, niveles: PLD.NIVELES, medidas: PLD.MEDIDA }));
 const fechaIsoOk = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && new Date(v + 'T00:00:00Z').toISOString().slice(0, 10) === v;
 // Evalúa las reglas sobre un rango (máx. 93 días) y guarda las alertas nuevas. Idempotente.
-async function evaluarAlertasPLD(desde, hasta) {
+// Una evaluación a la vez: cargas seguidas no deben competir por memoria (el servidor tiene poca RAM).
+let colaPLD = Promise.resolve();
+function evaluarAlertasPLD(desde, hasta) {
+  const turno = colaPLD.then(() => evaluarAlertasPLDSerie(desde, hasta));
+  colaPLD = turno.catch(() => {});
+  return turno;
+}
+async function evaluarAlertasPLDSerie(desde, hasta) {
   if (!fechaIsoOk(desde) || !fechaIsoOk(hasta) || desde > hasta) throw Object.assign(new Error('rango'), { status: 400 });
   if ((Date.parse(hasta) - Date.parse(desde)) / 86400000 > 93) throw Object.assign(new Error('rango_largo'), { status: 400 });
   const r = await PLD.evaluar(db, desde, hasta, (await getConfigCump()).reglas);

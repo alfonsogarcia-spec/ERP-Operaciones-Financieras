@@ -81,6 +81,11 @@ chk('correo: más de 25 alertas de un nivel se resumen', C.armarCorreoAlertas({ 
 chk('parámetros de correo por defecto (activo, 3 días)', [p.correo_activo, p.correo_dias], [true, 3]);
 chk('correo_dias inválido cae al valor por defecto', P.normalizarParametros({ correo_dias: -5 }).correo_dias, 3);
 
+// ---- el export trae "APROBADA"
+const CI = require('../lib/cumplimiento-ingesta.js');
+const nf = est => CI.normalizarFila({ fecha_local: '31/12/2025', hora_local: '23:13:16', monto: 100, estatus: est, bin: '493000', ultimos_4: '3539', id: 1 }, s => 'h' + s);
+chk('ingesta: "APROBADA" se normaliza a "APROBADO"', [nf('APROBADA').r.estatus, nf('Aprobado').r.estatus, nf('RECHAZADA').r.estatus], ['APROBADO', 'APROBADO', 'RECHAZADA']);
+
 let pass = 0;
 for (const t of out) { console.log((t.pass ? 'PASS  ' : 'FAIL  ') + t.desc + (t.pass ? '' : `  → obtenido ${t.got}, esperado ${t.esperado}`)); if (t.pass) pass++; }
 console.log(`\n${pass}/${out.length} pruebas correctas`);

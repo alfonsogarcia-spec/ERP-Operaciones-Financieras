@@ -134,3 +134,6 @@ create table if not exists cumplimiento.alerta_destinatarios (
   creado_at      timestamptz not null default now(),
   constraint alerta_dest_hash_uk unique (email_hash)
 );
+
+-- Normaliza estatus cargados antes de reconocer el femenino del export ("APROBADA" → "APROBADO"). Idempotente.
+update cumplimiento.transacciones set estatus = 'APROBADO' where estatus in ('APROBADA', 'APROBADAS', 'APROBADOS');

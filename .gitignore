@@ -4,3 +4,4 @@ node_modules/
 .DS_Store
 *.log
 _snapshot_borrado_*.json
+cargas-pld/
