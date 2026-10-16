@@ -80,3 +80,57 @@ create table if not exists cumplimiento.config (
   constraint config_una_fila check (id = 1)
 );
 insert into cumplimiento.config (id) values (1) on conflict (id) do nothing;
+
+-- ============================================================================
+-- Alertas y bloqueo por operativa inusual (POL-CUM-FOR-006 v1.0)
+-- ============================================================================
+-- Motivo de rechazo del gateway (fondos insuficientes, tarjeta robada/perdida…), si el archivo lo trae.
+alter table cumplimiento.transacciones add column if not exists motivo text;
+-- Parámetros de las reglas (JSON; los valores por defecto viven en lib/pld-alertas.js).
+alter table cumplimiento.config add column if not exists reglas jsonb not null default '{}'::jsonb;
+
+create table if not exists cumplimiento.alertas (
+  id                bigserial primary key,
+  clave             text not null,                 -- anti-duplicados: regla|alcance|fecha|inicio
+  regla             text not null,                 -- AV-1, RT-3, BL-2…
+  nivel             text not null check (nivel in ('AVISO','SUSPENDER','BLOQUEO')),
+  fecha             date not null,
+  hora_ini          text,
+  hora_fin          text,
+  terminal          text,
+  comercio          text,
+  cliente           text,
+  numero_afiliacion text,
+  bin               text,
+  tarjeta           text,                          -- BIN •••• últimos 4 (nunca el número completo)
+  monto             numeric not null default 0,
+  n_ops             integer not null default 0,
+  detalle           text,
+  evidencia         jsonb not null default '[]'::jsonb,   -- hasta 25 operaciones (folio, hora, monto, estatus)
+  estatus           text not null default 'NUEVA' check (estatus in ('NUEVA','EN_REVISION','MEDIDA_APLICADA','FALSO_POSITIVO','CERRADA')),
+  medida            text,                          -- qué se hizo (aviso atendido, terminal suspendida, tarjeta/BIN bloqueado…)
+  nota              text,
+  revisado_por      text,
+  revisado_at       timestamptz,
+  creada_at         timestamptz not null default now(),
+  constraint alertas_clave_uk unique (clave)
+);
+create index if not exists idx_cump_alertas_fecha on cumplimiento.alertas(fecha desc);
+create index if not exists idx_cump_alertas_estatus on cumplimiento.alertas(estatus, nivel);
+
+-- Correo de alertas: destinatarios configurables y control de envío (no repetir el aviso de una alerta).
+alter table cumplimiento.alertas add column if not exists notificada_at timestamptz;
+alter table cumplimiento.alertas add column if not exists correo_estado text;     -- enviada | omitida (antigua) | error
+create table if not exists cumplimiento.alerta_destinatarios (
+  id             serial primary key,
+  nombre         text,
+  email          text not null,
+  email_cifrado  text,
+  email_hash     text,
+  niveles        text[] not null default '{AVISO,SUSPENDER,BLOQUEO}',   -- niveles de alerta que recibe
+  tipo           text not null default 'to' check (tipo in ('to','cc')),
+  activo         boolean not null default true,
+  creado_por     text,
+  creado_at      timestamptz not null default now(),
+  constraint alerta_dest_hash_uk unique (email_hash)
+);

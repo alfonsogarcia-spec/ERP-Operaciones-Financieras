@@ -47,6 +47,8 @@ const CCS = require('./lib/contracargos-sync.js');
 const L = require('./lib/ledger.js');
 const DP = require('./lib/dispersion-pendiente.js');
 const CI = require('./lib/cumplimiento-ingesta.js');
+const PLD = require('./lib/pld-alertas.js');
+const PLDC = require('./lib/pld-correo.js');
 const LP = require('./lib/layout-polipay.js');
 if (!C.ready()) console.warn('⚠  Cifrado app-layer NO configurado (falta ENCRYPTION_KEY_V1 o HMAC_PEPPER). Dual-write escribirá "plain:" en las columnas cifradas.');
 
@@ -1494,6 +1496,17 @@ app.post('/api/cumplimiento/ingesta', auth, requiereRol('admin', 'operador'), up
     [lote, req.file.originalname || '', req.user.nombre, leido.filas, validas, invalidas, insertadas, duplicadas, desde, hasta, JSON.stringify(porEstatus)]);
   await bit(req, 'cumplimiento_ingesta', `${insertadas} nuevas, ${duplicadas} ya existían, ${invalidas} inválidas · lote ${lote} · archivo ${req.file.originalname || ''}`);
   res.json({ lote_id: lote, filas_archivo: leido.filas, validas, invalidas, motivos_invalidas: motivosInvalidas, insertadas, duplicadas, desde, hasta, por_estatus: porEstatus });
+  // Alertas POL-CUM-FOR-006 sobre las fechas cargadas (en segundo plano: no retrasa ni rompe la carga).
+  if (insertadas > 0 && desde && hasta) setImmediate(async () => {
+    try {
+      let nuevas = 0, ini = desde;
+      for (let i = 0; i < 12 && ini <= hasta; i++) {            // tramos de hasta 31 días (máx. ~1 año por carga)
+        const fin = new Date(Math.min(Date.parse(ini) + 30 * 86400000, Date.parse(hasta))).toISOString().slice(0, 10);
+        nuevas += (await evaluarAlertasPLD(ini, fin)).nuevas; ini = new Date(Date.parse(fin) + 86400000).toISOString().slice(0, 10);
+      }
+      if (nuevas) console.log(`[pld_alertas] lote ${lote}: ${nuevas} alerta(s) nueva(s)`);
+    } catch (e) { console.error('[pld_alertas]', e && e.message); }
+  });
 });
 
 app.get('/api/cumplimiento/cargas', auth, async (req, res) => {
@@ -1519,11 +1532,14 @@ app.delete('/api/cumplimiento/cargas/:lote', auth, requiereRol('admin'), async (
    Todo se agrega en la base (group by); a Node solo llegan los casos marcados (con tope). */
 // "Rechazo": el gateway puede usar varias palabras; se reconocen las comunes. La tabla de estatus
 // muestra los estatus crudos para ver si hace falta agregar alguna.
-const RECHAZO_SQL = "estatus ~ '^(RECHAZ|DECLIN|DENEG|ERROR|FALL|NEGAD)'";
+// Rechazo = estatus distinto de APROBADO que no sea cancelación / devolución / reverso / pendiente (en el archivo de PLD el motivo viene en el propio estatus: "FONDOS INSUFICIENTES", "TARJETA ROBADA"…).
+const RECHAZO_SQL = "(estatus is not null and estatus <> '' and estatus !~ '^(APROBAD|CANCEL|DEVOL|REEMBOLS|REVERS|ANULAD|PENDIENT)')";
 async function getConfigCump() {
   const r = (await db.query('select * from cumplimiento.config where id=1')).rows[0] || {};
   return { tarjeta_ops_dia: Number(r.tarjeta_ops_dia) || 5, tarjeta_rechazos_dia: Number(r.tarjeta_rechazos_dia) || 3, tarjeta_afiliaciones_dia: Number(r.tarjeta_afiliaciones_dia) || 3,
-    bin_rechazos_dia: Number(r.bin_rechazos_dia) || 10, tasa_rechazo_pct: Number(r.tasa_rechazo_pct) || 30, min_ops_tasa: Number(r.min_ops_tasa) || 20 };
+    bin_rechazos_dia: Number(r.bin_rechazos_dia) || 10, tasa_rechazo_pct: Number(r.tasa_rechazo_pct) || 30, min_ops_tasa: Number(r.min_ops_tasa) || 20,
+    // Reglas de alertas y bloqueo (POL-CUM-FOR-006): lo guardado, completado con los valores del documento.
+    reglas: PLD.normalizarParametros(typeof r.reglas === 'string' ? JSON.parse(r.reglas) : (r.reglas || {})) };
 }
 app.get('/api/cumplimiento/config', auth, async (req, res) => { if (!dbReady(res)) return; res.json(await getConfigCump()); });
 app.put('/api/cumplimiento/config', auth, requiereRol('admin'), async (req, res) => {
@@ -1532,9 +1548,169 @@ app.put('/api/cumplimiento/config', auth, requiereRol('admin'), async (req, res)
   const tasa = Number(b.tasa_rechazo_pct); 
   await db.query('update cumplimiento.config set tarjeta_ops_dia=$1,tarjeta_rechazos_dia=$2,tarjeta_afiliaciones_dia=$3,bin_rechazos_dia=$4,tasa_rechazo_pct=$5,min_ops_tasa=$6 where id=1',
     [ent(b.tarjeta_ops_dia, 5), ent(b.tarjeta_rechazos_dia, 3), ent(b.tarjeta_afiliaciones_dia, 3), ent(b.bin_rechazos_dia, 10), Number.isFinite(tasa) && tasa > 0 && tasa <= 100 ? tasa : 30, ent(b.min_ops_tasa, 20)]);
+  if (b.reglas && typeof b.reglas === 'object') {
+    const actual = (await getConfigCump()).reglas; const nuevas = PLD.normalizarParametros(b.reglas, actual);
+    await db.query('update cumplimiento.config set reglas=$1 where id=1', [JSON.stringify(nuevas)]);
+    await bit(req, 'cumplimiento_config_reglas', 'actualizó los parámetros de alertas y bloqueo (POL-CUM-FOR-006)');
+  }
   await bit(req, 'cumplimiento_config', 'actualizó umbrales antifraude');
   res.json(await getConfigCump());
 });
+
+/* ---------- CUMPLIMIENTO · ALERTAS Y BLOQUEO POR OPERATIVA INUSUAL (POL-CUM-FOR-006) ---------- */
+app.get('/api/cumplimiento/reglas', auth, (req, res) => res.json({ reglas: PLD.REGLAS, globales: PLD.GLOBALES, niveles: PLD.NIVELES, medidas: PLD.MEDIDA }));
+const fechaIsoOk = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && new Date(v + 'T00:00:00Z').toISOString().slice(0, 10) === v;
+// Evalúa las reglas sobre un rango (máx. 93 días) y guarda las alertas nuevas. Idempotente.
+async function evaluarAlertasPLD(desde, hasta) {
+  if (!fechaIsoOk(desde) || !fechaIsoOk(hasta) || desde > hasta) throw Object.assign(new Error('rango'), { status: 400 });
+  if ((Date.parse(hasta) - Date.parse(desde)) / 86400000 > 93) throw Object.assign(new Error('rango_largo'), { status: 400 });
+  const r = await PLD.evaluar(db, desde, hasta, (await getConfigCump()).reglas);
+  // Avisa por correo a los destinatarios configurados (si hay alertas nuevas); un fallo de correo nunca rompe la evaluación.
+  // También reintenta lo pendiente de envíos anteriores (SES caído, correo desactivado/sin destinatarios en su momento).
+  r.correo = await notificarAlertasPLD().catch(e => ({ enviado: false, motivo: 'error', error: e.message }));
+  return r;
+}
+app.post('/api/cumplimiento/alertas/evaluar', auth, requiereRol('admin', 'operador'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const { desde, hasta } = req.body || {};
+  let r; try { r = await evaluarAlertasPLD(desde, hasta); } catch (e) { if (e.status === 400) return res.status(400).json({ error: e.message === 'rango_largo' ? 'rango_largo' : 'rango_invalido', mensaje: e.message === 'rango_largo' ? 'Evalúa a lo más 93 días por vez.' : 'Indica desde y hasta (AAAA-MM-DD).' }); throw e; }
+  await bit(req, 'cumplimiento_alertas_evaluar', `${desde} a ${hasta}: ${r.nuevas} nuevas de ${r.detectadas} detectadas`);
+  res.json(r);
+});
+function condicionesAlertas(q, sinEstatus) {
+  const c = [], v = [];
+  if (fechaIsoOk(q.desde)) { v.push(q.desde); c.push(`fecha >= $${v.length}`); }
+  if (fechaIsoOk(q.hasta)) { v.push(q.hasta); c.push(`fecha <= $${v.length}`); }
+  if (!sinEstatus && ['NUEVA', 'EN_REVISION', 'MEDIDA_APLICADA', 'FALSO_POSITIVO', 'CERRADA'].includes(q.estatus)) { v.push(q.estatus); c.push(`estatus = $${v.length}`); }
+  if (!sinEstatus && q.estatus === 'ABIERTAS') c.push("estatus in ('NUEVA','EN_REVISION')");
+  if (['AVISO', 'SUSPENDER', 'BLOQUEO'].includes(q.nivel)) { v.push(q.nivel); c.push(`nivel = $${v.length}`); }
+  if (PLD.REGLAS.some(r => r.id === q.regla)) { v.push(q.regla); c.push(`regla = $${v.length}`); }
+  return { where: c.length ? ' where ' + c.join(' and ') : '', v };
+}
+app.get('/api/cumplimiento/alertas', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const { where, v } = condicionesAlertas(req.query || {});
+  const limit = Math.min(parseInt(req.query.limit, 10) || 300, 1000);
+  const rows = (await db.query(`select id, regla, nivel, fecha::text f, hora_ini, hora_fin, terminal, comercio, cliente, numero_afiliacion afil, bin, tarjeta, monto, n_ops, detalle, evidencia, estatus, medida, nota, revisado_por, revisado_at, creada_at
+      from cumplimiento.alertas${where} order by case nivel when 'BLOQUEO' then 0 when 'SUSPENDER' then 1 else 2 end, fecha desc, id desc limit ${limit}`, v)).rows
+    .map(r => ({ ...r, monto: E.round2(Number(r.monto)), evidencia: typeof r.evidencia === 'string' ? JSON.parse(r.evidencia) : r.evidencia, accion: PLD.accionEjecutable(r) }));
+  const rc = condicionesAlertas(req.query || {}, true);
+  const resumen = (await db.query(`select nivel, estatus, count(*)::int n from cumplimiento.alertas${rc.where} group by 1,2`, rc.v)).rows;
+  res.json({ alertas: rows, resumen, reglas: Object.fromEntries(PLD.REGLAS.map(r => [r.id, { titulo: r.titulo, nivel: r.nivel }])) });
+});
+app.patch('/api/cumplimiento/alertas/:id', auth, requiereRol('admin', 'operador'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const id = parseInt(req.params.id, 10); const b = req.body || {};
+  if (!Number.isInteger(id) || id <= 0 || id > 2147483647) return res.status(404).json({ error: 'no_existe' });
+  if (!['EN_REVISION', 'MEDIDA_APLICADA', 'FALSO_POSITIVO', 'CERRADA', 'NUEVA'].includes(b.estatus)) return res.status(400).json({ error: 'estatus_invalido', mensaje: 'Elige un estatus válido.' });
+  const medida = String(b.medida || '').trim().slice(0, 200), nota = String(b.nota || '').trim().slice(0, 2000);
+  if (b.estatus === 'MEDIDA_APLICADA' && !medida) return res.status(400).json({ error: 'medida_requerida', mensaje: 'Indica la medida aplicada (aviso atendido, terminal suspendida, tarjeta o BIN bloqueado…).' });
+  if (b.estatus === 'FALSO_POSITIVO' && !nota) return res.status(400).json({ error: 'nota_requerida', mensaje: 'Explica por qué es falso positivo: queda como evidencia para el oficial de cumplimiento.' });
+  const r = await db.query('update cumplimiento.alertas set estatus=$1, medida=coalesce(nullif($2,\'\'), medida), nota=coalesce(nullif($3,\'\'), nota), revisado_por=$4, revisado_at=now() where id=$5 returning id, regla, estatus',
+    [b.estatus, medida, nota, req.user.nombre || req.user.email, id]);
+  if (!r.rows.length) return res.status(404).json({ error: 'no_existe' });
+  await bit(req, 'cumplimiento_alerta_estatus', `alerta #${id} ${r.rows[0].regla} → ${b.estatus}${medida ? ' · ' + medida : ''}`, { resource_type: 'cumplimiento_alerta', resource_id: id });
+  res.json({ ok: true, ...r.rows[0] });
+});
+async function libroAlertasXlsx(rows) {
+  const nivel = { AVISO: 'Aviso', SUSPENDER: 'Suspender', BLOQUEO: 'Bloqueo' }, est = { NUEVA: 'Nueva', EN_REVISION: 'En revisión', MEDIDA_APLICADA: 'Medida aplicada', FALSO_POSITIVO: 'Falso positivo', CERRADA: 'Cerrada' };
+  const regla = Object.fromEntries(PLD.REGLAS.map(r => [r.id, r.titulo]));
+  return X.buildPolipayXLSX({ title: 'Alertas y bloqueo por operativa inusual · POL-CUM-FOR-006', meta: `${rows.length} alerta(s)   ·   Generado ${new Date().toISOString().slice(0, 10)}`, footer: 'Polipay POS Settlement · Cumplimiento (PLD) · Solo se muestran BIN y últimos 4 dígitos de la tarjeta.',
+    sheets: [{ name: 'Alertas', columns: [{ header: 'Fecha', width: 12, align: 'center' }, { header: 'Nivel', width: 11, align: 'center' }, { header: 'Regla', width: 8, align: 'center' }, { header: 'Descripción de la regla', width: 44, align: 'left' }, { header: 'Terminal', width: 18, align: 'left' }, { header: 'Comercio', width: 24, align: 'left' }, { header: 'Cliente', width: 20, align: 'left' }, { header: 'Afiliación', width: 13, align: 'left' }, { header: 'BIN', width: 9, align: 'center' }, { header: 'Tarjeta', width: 16, align: 'left' }, { header: 'Hora inicio', width: 10, align: 'center' }, { header: 'Hora fin', width: 10, align: 'center' }, { header: 'Operaciones', width: 11, align: 'center' }, { header: 'Monto', width: 15, numFmt: 'mxn' }, { header: 'Qué se detectó', width: 80, align: 'left' }, { header: 'Acción a ejecutar', width: 80, align: 'left' }, { header: 'Estatus', width: 16, align: 'left' }, { header: 'Medida aplicada', width: 30, align: 'left' }, { header: 'Nota', width: 40, align: 'left' }, { header: 'Revisó', width: 18, align: 'left' }],
+      rows: rows.map(r => [String(r.fecha).slice(0, 10), nivel[r.nivel], r.regla, regla[r.regla] || '', r.terminal || '', r.comercio || '', r.cliente || '', r.numero_afiliacion || '', r.bin || '', r.tarjeta || '', r.hora_ini || '', r.hora_fin || '', r.n_ops, Number(r.monto), r.detalle || '', PLD.accionEjecutable({ ...r, afil: r.numero_afiliacion }), est[r.estatus], r.medida || '', r.nota || '', r.revisado_por || '']) }] });
+}
+app.get('/api/cumplimiento/alertas.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const { where, v } = condicionesAlertas(req.query || {});
+  const rows = (await db.query(`select * from cumplimiento.alertas${where} order by fecha desc, id desc limit 20000`, v)).rows;
+  const buf = await libroAlertasXlsx(rows);
+  await bit(req, 'cumplimiento_alertas_xlsx', `exportó ${rows.length} alertas`);
+  enviarXLSX(res, `alertas_pld_${new Date().toISOString().slice(0, 10)}.xlsx`, buf);
+});
+
+/* ---------- Correo de alertas: destinatarios configurables + envío ---------- */
+app.get('/api/cumplimiento/alertas-destinatarios', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const rows = (await db.query('select id, nombre, email, niveles, activo, creado_at from cumplimiento.alerta_destinatarios order by activo desc, email')).rows;
+  res.json(rows);
+});
+app.post('/api/cumplimiento/alertas-destinatarios', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const b = req.body || {}; const email = String(b.email || '').trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'email_invalido', mensaje: 'El correo no es válido.' });
+  const niveles = (Array.isArray(b.niveles) ? b.niveles : []).filter(n => ['AVISO', 'SUSPENDER', 'BLOQUEO'].includes(n));
+  if (!niveles.length) return res.status(400).json({ error: 'niveles_requeridos', mensaje: 'Elige al menos un nivel de alerta (Aviso, Suspender o Bloqueo).' });
+  const r = await db.query(`insert into cumplimiento.alerta_destinatarios(nombre, email, email_cifrado, email_hash, niveles, activo, creado_por) values($1,$2,$3,$4,$5,$6,$7)
+    on conflict (email_hash) do update set nombre=excluded.nombre, niveles=excluded.niveles, activo=excluded.activo returning id`,
+    [String(b.nombre || '').trim().slice(0, 120) || null, email, C.encrypt(email), C.hmacEmail(email), niveles, b.activo !== false, req.user.nombre]);
+  await bit(req, 'cumplimiento_alertas_destinatario', `${email} · ${niveles.join(',')}`, { resource_type: 'cumplimiento_alerta_dest', resource_id: r.rows[0].id });
+  res.json({ ok: true, id: r.rows[0].id });
+});
+app.delete('/api/cumplimiento/alertas-destinatarios/:id', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const id = parseInt(req.params.id, 10); if (!Number.isInteger(id) || id <= 0) return res.status(404).json({ error: 'no_existe' });
+  await db.query('delete from cumplimiento.alerta_destinatarios where id=$1', [id]);
+  await bit(req, 'cumplimiento_alertas_destinatario_baja', '#' + id, { resource_type: 'cumplimiento_alerta_dest', resource_id: id });
+  res.json({ ok: true });
+});
+// Envía el aviso de alertas nuevas. Automático: solo alertas NUEVAS sin avisar y recientes. Manual (forzarIds): esas alertas, aunque ya se hayan avisado.
+let notificandoPLD = false;
+async function notificarAlertasPLD(opts) {
+  opts = opts || {}; const forzar = Array.isArray(opts.forzarIds) && opts.forzarIds.length;
+  if (!forzar) { if (notificandoPLD) return { enviado: false, motivo: 'en_proceso' }; notificandoPLD = true; }
+  let reclamadas = [];
+  try {
+    const cfg = (await getConfigCump()).reglas;
+    if (!forzar) {
+      // Las que ya son viejas no se avisan (p. ej. al cargar un mes pasado): se marcan como omitidas.
+      await db.query("update cumplimiento.alertas set notificada_at=now(), correo_estado='omitida' where notificada_at is null and estatus='NUEVA' and fecha < current_date - $1::int", [cfg.correo_dias]);
+      if (!cfg.correo_activo) return { enviado: false, motivo: 'desactivado' };
+    }
+    if (!sesEnabled()) return { enviado: false, motivo: 'ses_no_configurado' };
+    const dest = (await db.query('select nombre, email, niveles from cumplimiento.alerta_destinatarios where activo=true order by id')).rows;
+    if (!dest.length) return { enviado: false, motivo: 'sin_destinatarios' };
+    reclamadas = forzar
+      ? (await db.query('select * from cumplimiento.alertas where id = any($1::bigint[]) order by id', [opts.forzarIds])).rows
+      : (await db.query("update cumplimiento.alertas set notificada_at=now(), correo_estado='enviando' where notificada_at is null and estatus='NUEVA' returning *")).rows;
+    if (!reclamadas.length) return { enviado: false, motivo: 'sin_alertas' };
+    const norm = r => ({ ...r, f: String(r.fecha).slice(0, 10), fecha: String(r.fecha).slice(0, 10), afil: r.numero_afiliacion, monto: Number(r.monto) });
+    const alertas = reclamadas.map(norm).sort((a, b) => ['BLOQUEO', 'SUSPENDER', 'AVISO'].indexOf(a.nivel) - ['BLOQUEO', 'SUSPENDER', 'AVISO'].indexOf(b.nivel));
+    const reglas = Object.fromEntries(PLD.REGLAS.map(r => [r.id, { titulo: r.titulo, nivel: r.nivel }]));
+    // Un correo por cada combinación distinta de niveles suscritos (los destinatarios iguales van juntos).
+    const grupos = new Map();
+    for (const d of dest) { const k = [...d.niveles].sort().join(','); if (!grupos.has(k)) grupos.set(k, { niveles: d.niveles, dest: [] }); grupos.get(k).dest.push(d); }
+    let enviados = 0, errores = [];
+    const logo = (() => { try { return [{ cid: 'polipay-logo', filename: 'polipay-logo.png', contentType: 'image/png', content: require('fs').readFileSync(path.join(__dirname, 'public', 'logo.png')) }]; } catch (_e) { return []; } })();
+    for (const g of grupos.values()) {
+      const propias = alertas.filter(a => g.niveles.includes(a.nivel)); if (!propias.length) continue;
+      const mail = PLDC.armarCorreoAlertas({ alertas: propias, reglas, appUrl: process.env.APP_URL, nombre: g.dest.length === 1 ? g.dest[0].nombre : '' });
+      try {
+        const adj = await libroAlertasXlsx(reclamadas.filter(r => g.niveles.includes(r.nivel)));
+        await sendSES({ to: g.dest.map(d => d.nombre ? `${d.nombre.replace(/["<>\r\n,;]/g, ' ')} <${d.email}>` : d.email), subject: mail.subject, html: mail.html, textFallback: mail.text, inlineImages: logo,
+          attachments: [{ filename: `alertas_pld_${new Date().toISOString().slice(0, 10)}.xlsx`, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: adj }] });
+        enviados += g.dest.length;
+      } catch (e) { errores.push(e.message); }
+    }
+    if (!forzar) {
+      if (enviados) await db.query("update cumplimiento.alertas set correo_estado='enviada' where id = any($1::bigint[])", [reclamadas.map(r => r.id)]);
+      else await db.query("update cumplimiento.alertas set notificada_at=null, correo_estado='error' where id = any($1::bigint[])", [reclamadas.map(r => r.id)]);   // se reintenta en la siguiente evaluación
+    }
+    await bit(null, 'cumplimiento_alertas_correo', `${alertas.length} alerta(s) → ${enviados} destinatario(s)${errores.length ? ' · ERROR ' + errores[0] : ''}`, { actor: { nombre: opts.actor || 'sistema', rol: '—' }, success: enviados > 0 });
+    return { enviado: enviados > 0, alertas: alertas.length, destinatarios: enviados, error: errores[0] || null, motivo: enviados ? null : 'error_envio' };
+  } catch (e) {
+    if (reclamadas.length && !forzar) await db.query("update cumplimiento.alertas set notificada_at=null, correo_estado='error' where id = any($1::bigint[])", [reclamadas.map(r => r.id)]).catch(() => {});
+    console.error('[pld_correo]', e && e.message); return { enviado: false, motivo: 'error', error: e && e.message };
+  } finally { if (!forzar) notificandoPLD = false; }
+}
+app.post('/api/cumplimiento/alertas/:id/correo', auth, requiereRol('admin', 'operador'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const id = parseInt(req.params.id, 10); if (!Number.isInteger(id) || id <= 0) return res.status(404).json({ error: 'no_existe' });
+  const r = await notificarAlertasPLD({ forzarIds: [id], actor: req.user.nombre });
+  if (r.enviado) return res.json({ ok: true, ...r });
+  const msg = { ses_no_configurado: 'SES no está configurado en el servidor.', sin_destinatarios: 'No hay destinatarios activos: agrégalos en Sistema → Alertas y bloqueo.', sin_alertas: 'La alerta no existe.', error_envio: 'No se pudo enviar el correo: ' + (r.error || 'error de SES') };
+  res.status(r.motivo === 'sin_alertas' ? 404 : 409).json({ error: r.motivo || 'error', mensaje: msg[r.motivo] || 'No se envió el correo.' });
+});
+
 
 async function construirAntifraude(desde, hasta) {
   const cfg = await getConfigCump(); const P = [desde, hasta];

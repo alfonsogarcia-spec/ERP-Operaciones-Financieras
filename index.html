@@ -1643,6 +1643,50 @@ async function vUmbrales(v){
       catch(e){toast(errMsg(e),'err');}
     }},'Guardar umbrales antifraude'));
     v.append(p2);
+    // Reglas de alertas y bloqueo por operativa inusual (POL-CUM-FOR-006)
+    try{
+      const cat=await api('GET','/api/cumplimiento/reglas'); const R=C.reglas||{};
+      const p3=el('div',{class:'panel'});p3.append(el('h3',{},'Alertas y bloqueo por operativa inusual (POL-CUM-FOR-006)',ro?el('span',{class:'right'},el('span',{class:'pill'},'solo lectura')):''));
+      p3.append(el('div',{class:'banner',html:'Valores iniciales = los del documento. Lo marcado con <b>ⓘ</b> el documento no lo define (propuesta nuestra) y conviene que Cumplimiento lo confirme. Se evalúan al <b>cargar transacciones</b> y al pulsar <b>Reevaluar</b> en Cumplimiento → Alertas.'}));
+      const campos={};
+      const pintar=(r)=>{
+        const box=el('div',{style:'border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px'});
+        const act=el('input',{type:'checkbox',disabled:ro?true:null});act.checked=R['act_'+r.id]!==false;campos['act_'+r.id]={tipo:'bool',el:act};
+        box.append(el('label',{style:'display:flex;align-items:center;gap:8px;font:700 13px Montserrat,sans-serif'},act,el('span',{class:'badge '+(r.nivel==='BLOQUEO'?'err':r.nivel==='SUSPENDER'?'w':'b')},({AVISO:'Aviso',SUSPENDER:'Suspender',BLOQUEO:'Bloqueo'})[r.nivel]),el('span',{},r.id+' · '+r.titulo)));
+        box.append(el('div',{class:'muted',style:'font-size:12px;margin:6px 0 8px'},r.desc));
+        if(r.params.length){const g=el('div',{class:'form-grid c3'});r.params.forEach(pr=>{const i=el('input',{type:pr.tipo==='txt'?'text':'number',step:'any',value:R[pr.key],disabled:ro?true:null});campos[pr.key]={tipo:pr.tipo==='txt'?'txt':'num',el:i};g.append(fld(pr.label+(pr.supuesto?' ⓘ':''),i));});box.append(g);}
+        return box;
+      };
+      [['AVISO','Alertas de aviso (monitoreo)'],['SUSPENDER','Alertas en tiempo real (suspender)'],['BLOQUEO','Alertas de bloqueo']].forEach(([n,t])=>{p3.append(el('div',{style:'font:700 12px Montserrat,sans-serif;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:12px 0 6px'},t));cat.reglas.filter(r=>r.nivel===n).forEach(r=>p3.append(pintar(r)));});
+      p3.append(el('div',{style:'font:700 12px Montserrat,sans-serif;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:12px 0 6px'},'Criterios generales'));
+      const gg=el('div',{class:'form-grid c2'});
+      cat.globales.forEach(g=>{let i,tipo='txt';
+        if(g.tipo==='sel'){i=el('select',{disabled:ro?true:null});g.opciones.forEach(o=>i.append(el('option',{value:o[0]},o[1])));i.value=R[g.key];}
+        else if(g.tipo==='bool'){i=el('input',{type:'checkbox',disabled:ro?true:null});i.checked=R[g.key]!==false;tipo='bool';}
+        else if(g.tipo==='num'){i=el('input',{type:'number',min:String(g.min),max:String(g.max),value:R[g.key],disabled:ro?true:null});tipo='num';}
+        else i=el('input',{type:'text',value:R[g.key],disabled:ro?true:null});
+        campos[g.key]={tipo,el:i};gg.append(g.tipo==='bool'?el('label',{class:'field',style:'flex-direction:row;align-items:center;gap:8px'},i,el('span',{},g.label)):fld(g.label+(g.supuesto?' ⓘ':''),i));});
+      p3.append(gg);
+      p3.append(el('div',{class:'muted',style:'font-size:12px;margin-top:6px'},'El motivo de rechazo (fondos insuficientes, tarjeta robada o perdida) se toma de la columna "Motivo de rechazo" / "Mensaje" / "Respuesta" del archivo del gateway, o del texto del estatus. Si el archivo no la trae, las reglas AV-2, RT-4 y BL-1 no podrán dispararse.'));
+      if(!ro)p3.append(el('button',{class:'btn',style:'margin-top:10px',onclick:async()=>{
+        const out={};Object.entries(campos).forEach(([k,c])=>{out[k]=c.tipo==='bool'?c.el.checked:c.tipo==='num'?Number(c.el.value):c.el.value;});
+        try{await withBusy('Guardando…',()=>api('PUT','/api/cumplimiento/config',{...C,reglas:out}));toast('Parámetros de alertas guardados','ok');render();}catch(e){toast(errMsg(e),'err');}
+      }},'Guardar parámetros de alertas'));
+      v.append(p3);
+      // Destinatarios del correo de alertas (con la acción ejecutable de cada una)
+      const dests=await api('GET','/api/cumplimiento/alertas-destinatarios').catch(()=>[]);
+      const p4=el('div',{class:'panel'});p4.append(el('h3',{},'Destinatarios del correo de alertas'));
+      p4.append(el('div',{class:'banner',html:'Reciben un correo cuando salen <b>alertas nuevas</b>, con la <b>acción a ejecutar</b> por cada una (suspender terminal, bloquear tarjeta/BIN, dar aviso) y el Excel adjunto. Cada persona elige qué niveles recibe.'}));
+      if(!dests.length)p4.append(el('div',{class:'empty'},'Aún no hay destinatarios: no se enviará ningún correo.'));
+      else p4.append(tableWrap(['Nombre','Correo','Niveles','Estado',''],dests.map(d=>[esc(d.nombre||'—'),esc(d.email),esc((d.niveles||[]).map(n=>({AVISO:'Aviso',SUSPENDER:'Suspender',BLOQUEO:'Bloqueo'})[n]).join(', ')),d.activo?'<span class="badge ok">Activo</span>':'<span class="badge g">Inactivo</span>',ro?'':el('button',{class:'btn ghost sm',onclick:async()=>{if(!confirm('¿Quitar a '+d.email+'?'))return;try{await api('DELETE','/api/cumplimiento/alertas-destinatarios/'+d.id);toast('Destinatario eliminado','ok');render();}catch(e){toast(errMsg(e),'err');}}},'Quitar')])));
+      if(!ro){
+        const iN=el('input',{placeholder:'Nombre'}),iE=el('input',{type:'email',placeholder:'correo@empresa.com'});
+        const cks=['BLOQUEO','SUSPENDER','AVISO'].map(n=>{const c=el('input',{type:'checkbox'});c.checked=true;return [n,c];});
+        p4.append(el('div',{class:'form-grid c3',style:'margin-top:12px'},fld('Nombre',iN),fld('Correo',iE),el('div',{class:'field'},el('label',{},'Niveles que recibe'),el('div',{style:'display:flex;gap:12px;flex-wrap:wrap;padding-top:6px'},...cks.map(([n,c])=>el('label',{style:'display:flex;gap:6px;align-items:center'},c,({AVISO:'Aviso',SUSPENDER:'Suspender',BLOQUEO:'Bloqueo'})[n]))))));
+        p4.append(el('button',{class:'btn',style:'margin-top:10px',onclick:async()=>{try{await api('POST','/api/cumplimiento/alertas-destinatarios',{nombre:iN.value,email:iE.value,niveles:cks.filter(([,c])=>c.checked).map(([n])=>n)});toast('Destinatario guardado','ok');render();}catch(e){toast(errMsg(e),'err');}}},'Agregar destinatario'));
+      }
+      v.append(p4);
+    }catch(_e){}
   }
 }
 
@@ -1868,6 +1912,55 @@ async function enviarSemana(anio,mes,semana,esReenvio){
 }
 
 /* ---------- CUMPLIMIENTO (PLD + antifraude) ---------- */
+// Alertas y bloqueo por operativa inusual (POL-CUM-FOR-006): lista, filtros, revisión y medida aplicada.
+const NIVEL_PLD={AVISO:['b','Aviso'],SUSPENDER:['w','Suspender'],BLOQUEO:['err','Bloqueo']};
+const ESTATUS_PLD={NUEVA:['w','Nueva'],EN_REVISION:['b','En revisión'],MEDIDA_APLICADA:['ok','Medida aplicada'],FALSO_POSITIVO:['g','Falso positivo'],CERRADA:['g','Cerrada']};
+async function renderAlertasPLD(v,y,m){
+  const F=vCumplimiento._af||(vCumplimiento._af={estatus:'ABIERTAS',nivel:'',regla:''});
+  const pad=n=>String(n).padStart(2,'0'); const desde=`${y}-${pad(m)}-01`, hasta=`${y}-${pad(m)}-${pad(new Date(y,m,0).getDate())}`;
+  const q=`desde=${desde}&hasta=${hasta}&limit=500&estatus=${F.estatus}&nivel=${F.nivel}&regla=${F.regla}`;
+  const r=await api('GET','/api/cumplimiento/alertas?'+q);
+  const ab=(n)=>r.resumen.filter(x=>x.nivel===n&&['NUEVA','EN_REVISION'].includes(x.estatus)).reduce((s,x)=>s+x.n,0);
+  const total=r.resumen.reduce((s,x)=>s+x.n,0);
+  v.append(el('div',{class:'banner',html:'Reglas del documento <b>POL-CUM-FOR-006</b> evaluadas sobre las transacciones cargadas. Cada alerta indica la <b>medida precautoria</b> que le corresponde (aviso, suspender o bloqueo); el sistema <b>no suspende ni bloquea por sí solo</b>: aquí se registra la revisión y la medida que se aplicó, como evidencia.'}));
+  v.append(cards([['Bloqueo abiertas',String(ab('BLOQUEO')),'Requieren bloqueo'],['Suspender abiertas',String(ab('SUSPENDER')),'Terminal / comercio'],['Aviso abiertas',String(ab('AVISO')),'Monitoreo'],['Alertas del mes',String(total),'Todas las revisiones']]));
+  const pf=el('div',{class:'panel'});
+  const mkSel=(k,l,opts)=>{const s=el('select');opts.forEach(([val,t])=>s.append(el('option',{value:val},t)));s.value=F[k];s.addEventListener('change',()=>{F[k]=s.value;render();});return el('label',{class:'field'},l,s);};
+  pf.append(el('div',{class:'form-grid c3'},
+    mkSel('estatus','Estatus',[['ABIERTAS','Abiertas (nuevas y en revisión)'],['','Todas'],['NUEVA','Nuevas'],['EN_REVISION','En revisión'],['MEDIDA_APLICADA','Medida aplicada'],['FALSO_POSITIVO','Falso positivo'],['CERRADA','Cerradas']]),
+    mkSel('nivel','Nivel',[['','Todos'],['BLOQUEO','Bloqueo'],['SUSPENDER','Suspender'],['AVISO','Aviso']]),
+    mkSel('regla','Regla',[['','Todas'],...Object.entries(r.reglas).map(([id,x])=>[id,id+' · '+x.titulo])])));
+  const bt=el('div',{style:'display:flex;gap:8px;margin-top:12px;flex-wrap:wrap'});
+  if(can('ingesta')) bt.append(el('button',{class:'btn',onclick:async()=>{try{const x=await withBusy('Evaluando reglas…',()=>api('POST','/api/cumplimiento/alertas/evaluar',{desde,hasta}));toast(x.nuevas+' alerta(s) nueva(s) de '+x.detectadas+' detectadas'+(x.rechazos&&x.rechazos_sin_motivo===x.rechazos?' · ⚠ el archivo no trae el motivo de rechazo':''),'ok');render();}catch(e){toast(errMsg(e),'err');}}},'Reevaluar el mes'));
+  bt.append(el('button',{class:'btn secondary',onclick:()=>descargar('/api/cumplimiento/alertas.xlsx?'+q,`alertas_pld_${y}-${pad(m)}.xlsx`).catch(e=>toast(errMsg(e),'err'))},'⬇ Excel'));
+  pf.append(bt);v.append(pf);
+  const p=el('div',{class:'panel'});p.append(el('h3',{},'Alertas',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},r.alertas.length+' mostradas'))));
+  if(!r.alertas.length) p.append(el('div',{class:'empty'},'Sin alertas con esos filtros. Se generan al cargar transacciones; también puedes pulsar "Reevaluar el mes".'));
+  else p.append(tableWrap(['Fecha','Nivel','Regla','Terminal / comercio','BIN / tarjeta',{t:'Monto'},{t:'Ops'},'Estatus'],r.alertas.map(a=>{
+    const nv=NIVEL_PLD[a.nivel],es=ESTATUS_PLD[a.estatus];
+    const row=[esc(a.f),`<span class="badge ${nv[0]}">${nv[1]}</span>`,`<b>${esc(a.regla)}</b> <span class="muted">${esc((r.reglas[a.regla]||{}).titulo||'')}</span>`,esc([a.terminal,a.comercio].filter(Boolean).join(' · ')||a.afil||'—'),esc(a.tarjeta||a.bin||'—'),{num:mxn(a.monto)},{num:String(a.n_ops)},`<span class="badge ${es[0]}">${es[1]}</span>`];
+    row._onclick=()=>abrirAlertaPLD(a,r.reglas);return row;})));
+  v.append(p);
+}
+function abrirAlertaPLD(a,reglas){
+  const body=el('div',{});const nv=NIVEL_PLD[a.nivel];
+  body.append(el('div',{class:'banner '+(a.nivel==='BLOQUEO'?'err':a.nivel==='SUSPENDER'?'warn':''),html:`<b>${esc(a.regla)} · ${esc((reglas[a.regla]||{}).titulo||'')}</b><br>Medida precautoria: <b>${({AVISO:'aviso para monitoreo en tiempo real',SUSPENDER:'suspender terminal / comercio',BLOQUEO:'bloqueo'})[a.nivel]}</b>`}));
+  body.append(cards([['Fecha',a.f,(a.hora_ini||'')+(a.hora_fin&&a.hora_fin!==a.hora_ini?' – '+a.hora_fin:'')],['Terminal',a.terminal||'—',a.comercio||''],['Afiliación',a.afil||'—',a.cliente||''],['BIN / tarjeta',a.tarjeta||a.bin||'—',a.n_ops+' operación(es)'],['Monto',mxn(a.monto),'']]));
+  body.append(el('div',{style:'margin:12px 0;font:600 13px/1.5 Montserrat,sans-serif'},a.detalle||''));
+  if(a.accion) body.append(el('div',{class:'banner '+(a.nivel==='BLOQUEO'?'err':a.nivel==='SUSPENDER'?'warn':''),html:'<b>Acción a ejecutar:</b> '+esc(a.accion)}));
+  if((a.evidencia||[]).length) body.append(tableWrap(['Folio','Hora',{t:'Monto'},'Estatus','Tarjeta'],a.evidencia.map(e=>[esc(e.folio||'—'),esc(e.hora||'—'),{num:mxn(e.monto)},esc(e.estatus||'—'),esc(e.tarjeta||'—')])));
+  if(a.revisado_por) body.append(el('div',{class:'muted',style:'font-size:12px;margin:10px 0'},'Última revisión: '+esc(a.revisado_por)+' · '+new Date(a.revisado_at).toLocaleString('es-MX')+(a.medida?' · Medida: '+esc(a.medida):'')+(a.nota?' · Nota: '+esc(a.nota):'')));
+  let foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'));
+  if(can('ingesta')) foot.append(el('button',{class:'btn secondary',onclick:async()=>{try{await withBusy('Enviando correo…',()=>api('POST','/api/cumplimiento/alertas/'+a.id+'/correo',{}));toast('Correo enviado a los destinatarios configurados','ok');}catch(e){toast(errMsg(e),'err');}}},'📧 Enviar por correo'));
+  if(can('ingesta')){
+    const est=el('select');[['EN_REVISION','En revisión'],['MEDIDA_APLICADA','Medida aplicada'],['FALSO_POSITIVO','Falso positivo'],['CERRADA','Cerrada'],['NUEVA','Regresar a nueva']].forEach(([val,t])=>est.append(el('option',{value:val},t)));est.value=a.estatus==='NUEVA'?'EN_REVISION':a.estatus;
+    const med=el('input',{placeholder:'Ej. terminal suspendida, tarjeta/BIN bloqueado, comercio avisado',value:a.medida||''});
+    const nota=el('textarea',{rows:2,placeholder:'Nota para el oficial de cumplimiento (obligatoria si es falso positivo)'});nota.value=a.nota||'';
+    body.append(el('div',{class:'form-grid c2',style:'margin-top:10px'},fld('Nuevo estatus',est),fld('Medida aplicada',med)),fld('Nota',nota));
+    foot.append(el('button',{class:'btn',onclick:async()=>{try{await api('PATCH','/api/cumplimiento/alertas/'+a.id,{estatus:est.value,medida:med.value,nota:nota.value});toast('Alerta actualizada','ok');closeModal();render();}catch(e){toast(errMsg(e),'err');}}},'Guardar'));
+  }
+  modal('Alerta · '+a.regla,body,foot,true);
+}
 async function vCumplimiento(v){
   const hoy=new Date();
   if(!vCumplimiento._m) vCumplimiento._m={y:hoy.getFullYear(),m:hoy.getMonth()+1};
@@ -1893,9 +1986,10 @@ async function vCumplimiento(v){
   if(!cargasInfo.total_transacciones)v.append(el('div',{class:'banner warn',html:'<b>Aún no hay transacciones de Cumplimiento.</b> Esta sección usa su propia base de transacciones (con todos los estatus, también rechazadas), independiente de la de liquidación. Usa <b>Cargar transacciones</b> con el archivo del gateway.'}));
 
   const tabs=el('div',{class:'tabs'});
-  [['pld','PLD'],['antifraude','Antifraude']].forEach(([k,lbl])=>tabs.append(el('button',{class:'tab'+(tab===k?' active':''),onclick:()=>{vCumplimiento._tab=k;render();}},lbl)));
+  [['pld','PLD'],['antifraude','Antifraude'],['alertas','Alertas']].forEach(([k,lbl])=>tabs.append(el('button',{class:'tab'+(tab===k?' active':''),onclick:()=>{vCumplimiento._tab=k;render();}},lbl)));
   v.append(tabs);
   if(tab==='antifraude'){renderAntifraude(v,af);v.append(panelCargasCumplimiento(cargasInfo));return;}
+  if(tab==='alertas'){await renderAlertasPLD(v,y,m);return;}
 
   const t=data.totales;
   v.append(cards([
