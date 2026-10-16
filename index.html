@@ -2204,14 +2204,14 @@ function chipRetencion(r){
   if(!r) return '—';
   if(r.bloqueo) return '<span class="badge err" style="white-space:nowrap" title="Este contracargo NO se retendrá hasta que se complete el dato faltante">Sin retención · '+(r.bloqueo==='sin_afiliacion'?'falta afiliación':'falta monto')+' ⚠</span>';
   const t={
-    por_retener:['g','Por retener'],
+    por_retener:r.atraso>0?['err','Atrasada '+r.atraso+' d']:['g','Por retener'],
     sin_retencion:['g','Sin retención'],
     en_curso:[r.excede?'err':'w',r.dias+' d · retenido'],
     por_liberar:['v',r.dias+' d · por liberar'],
     liberado:['ok',r.dias+' d · liberado'+(r.abonado?' · abonado':'')],
     definitiva:['d',r.dias+' d · definitiva'],
   }[r.estado]||['g','—'];
-  const tip=r.estado==='en_curso'&&r.excede?' title="Excede '+r.limite+' días naturales (plazo de dictamen, LTOSF art. 23)"':(r.estado==='por_liberar'?' title="Ganado: el dinero sigue retenido hasta que pulses Liberar contracargo en el detalle"':r.desde?' title="Retenido desde '+r.desde+(r.hasta?' hasta '+r.hasta:'')+'"':(r.estado==='por_retener'&&r.programada?' title="Se retendrá a partir del '+r.programada+'"':''));
+  const tip=r.estado==='en_curso'&&r.excede?' title="Excede '+r.limite+' días naturales (plazo de dictamen, LTOSF art. 23)"':(r.estado==='por_liberar'?' title="Ganado: el dinero sigue retenido hasta que pulses Liberar contracargo en el detalle"':r.desde?' title="Retenido desde '+r.desde+(r.hasta?' hasta '+r.hasta:'')+'"':(r.estado==='por_retener'&&r.programada?(r.atraso>0?' title="Debió retenerse el '+r.programada+' y ningún corte lo ha retenido todavía (hace '+r.atraso+' días). Revisa que la afiliación tenga actividad y el monto sea correcto."':' title="Se retendrá a partir del '+r.programada+'"'):''));
   return '<span class="badge '+t[0]+'" style="white-space:nowrap"'+tip+'>'+t[1]+(r.estado==='en_curso'&&r.excede?' ⚠':'')+'</span>';
 }
 function semDias(d){if(d==null)return '<span class="muted">—</span>';return d<=0?`<span class="badge err">${d}d</span>`:d<=3?`<span class="badge w">${d}d</span>`:`<span class="badge ok">${d}d</span>`;}

@@ -31,6 +31,11 @@ chk('dup cancelado tras retener → sigue retenido', Rd({ status: 'CANCELLED', i
 chk('dup vencido (EXPIRED) → se retiene', Rd({ status: 'EXPIRED', ini: '2026-10-10', fecha_cierre: '2026-10-14' }), ['definitiva', 4]);
 chk('dup NO_DUPLICADA nunca retiene', Rd({ status: 'ANSWERED', decision: 'NO_DUPLICADA' }), ['sin_retencion', null]);
 chk('dup DUPLICADA programada aún sin corte → por retener', Rd({ status: 'ANSWERED', decision: 'DUPLICADA', programada: '2026-10-21' }), ['por_retener', null]);
+// Atraso: debió retenerse y ningún corte lo ha hecho
+const At = (o) => D.calcRetencion({ tipo: 'CB', hoy: '2026-10-20', ...o }).atraso;
+chk('aceptado sin corte con fecha programada vencida → atraso en días', At({ status: 'ACCEPTED', programada: '2026-09-18' }), 32);
+chk('abierto con fecha programada futura → sin atraso', At({ status: 'NOTIFIED', programada: '2026-10-21' }), 0);
+chk('ya retenido → sin atraso', At({ status: 'ACCEPTED', programada: '2026-09-18', ini: '2026-09-25' }), 0);
 // Devoluciones sospechosas
 const Rr = (o) => { const r = D.calcRetencion({ tipo: 'REF', hoy: '2026-10-20', ...o }); return [r.estado, r.dias]; };
 chk('refund PROCEDE retenido → definitiva', Rr({ status: 'ANSWERED', decision: 'PROCEDE', ini: '2026-10-10', fecha_cierre: '2026-10-15' }), ['definitiva', 5]);
