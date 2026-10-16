@@ -2094,25 +2094,52 @@ function panelCargasCumplimiento(info){
 }
 function openCargaCumplimiento(){
   const body=el('div',{});
-  body.append(el('div',{class:'banner',html:'Sube el archivo del gateway con <b>todas</b> las operaciones, <b>incluidas las rechazadas</b>. Esta carga es <b>independiente de la liquidación</b>: no crea ni modifica transacciones de liquidación, cortes ni dispersiones. Si repites un archivo, las operaciones que ya existen se omiten (se detectan por el <b>ID</b> del gateway; sin ID, por el contenido de la fila).'}));
+  body.append(el('div',{class:'banner',html:'Sube el archivo del gateway con <b>todas</b> las operaciones, <b>incluidas las rechazadas</b>. Esta carga es <b>independiente de la liquidación</b>: no crea ni modifica transacciones de liquidación, cortes ni dispersiones. Si repites un archivo, las operaciones que ya existían se omiten (no se duplican).'}));
   body.append(el('button',{class:'btn secondary sm',style:'margin-bottom:12px',onclick:()=>descargar('/api/plantilla/cumplimiento.xlsx','plantilla_cumplimiento.xlsx')},'⬇ Plantilla Excel'));
-  const file=el('input',{type:'file',accept:'.xlsx,.xls,.csv'});
-  const out=el('div',{style:'margin-top:12px'});
-  body.append(el('label',{class:'field'},'Archivo del gateway · Excel hasta 30,000 filas, CSV hasta 100,000',file),out);
-  const foot=el('div',{});
-  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'),el('button',{class:'btn',onclick:async()=>{
-    if(!file.files[0]){toast('Elige el archivo del gateway','err');return;}
-    const fd=new FormData();fd.append('archivo',file.files[0]);
-    try{
-      const r=await withBusy('Procesando en el servidor…',()=>api('POST','/api/cumplimiento/ingesta',fd));
-      const est=Object.entries(r.por_estatus||{}).map(([k,n])=>`${esc(k)}: <b>${n}</b>`).join(' · ')||'—';
-      const mot=Object.entries(r.motivos_invalidas||{}).map(([k,n])=>`${esc(k)}: ${n}`).join(', ');
-      out.innerHTML='';
-      out.append(el('div',{class:'banner ok',html:`<b>Carga completada</b><br>Filas en el archivo: <b>${r.filas_archivo}</b><br>Nuevas: <b>${r.insertadas}</b> · Ya existían: ${r.duplicadas} · Inválidas: ${r.invalidas}${mot?' ('+mot+')':''}<br>Periodo: ${esc(r.desde||'—')} → ${esc(r.hasta||'—')}<br>Por estatus: ${est}`}));
-      render();
-    }catch(e){toast(e.data&&e.data.mensaje?e.data.mensaje:'Error: '+errMsg(e),'err');}
-  }},'Procesar'));
-  modal('Cargar transacciones de Cumplimiento',body,foot,true);
+  // Zona para ARRASTRAR uno o varios archivos: se cargan solos, uno por uno y en orden de nombre.
+  const file=el('input',{type:'file',accept:'.xlsx,.xls,.csv',multiple:true,style:'display:none'});
+  const zona=el('div',{style:'border:2px dashed var(--line,#cbd5e1);border-radius:14px;padding:34px 16px;text-align:center;cursor:pointer;transition:all .15s;background:var(--bg-soft,#f8fafc)'});
+  zona.append(el('div',{style:'font:700 15px Montserrat,sans-serif;color:var(--brand,#051B3B)'},'Arrastra aquí tus archivos'),el('div',{class:'muted',style:'font-size:12px;margin-top:6px'},'.xlsx hasta 30,000 filas · .csv hasta 100,000 filas · máximo 25 MB por archivo. Puedes soltar varios a la vez: se cargan uno por uno. O haz clic para elegirlos.'));
+  const lista=el('div',{style:'margin-top:14px;display:flex;flex-direction:column;gap:8px'});
+  const resumen=el('div',{style:'margin-top:12px'});
+  body.append(zona,file,lista,resumen);
+  let ocupado=false; const tot={ins:0,dup:0,inv:0,ok:0,mal:0};
+  const ico={espera:'⏳',cargando:'⏫',ok:'✅',error:'⚠️'};
+  const pintarFila=(f)=>{const fila=el('div',{style:'display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line,#e5e7eb);border-radius:10px;font-size:13px'});f.fila=fila;f.ico=el('span',{},ico.espera);f.txt=el('div',{style:'flex:1'},el('b',{},esc(f.file.name)),el('span',{class:'muted'},' · '+(f.file.size/1048576).toFixed(1)+' MB · en espera'));fila.append(f.ico,f.txt);lista.append(fila);};
+  const estado=(f,k,html)=>{f.ico.textContent=ico[k];f.txt.innerHTML='<b>'+esc(f.file.name)+'</b> · '+html;f.fila.style.borderColor=k==='error'?'#DC2626':k==='ok'?'#16A34A':'var(--line,#e5e7eb)';};
+  const procesar=async(archivos)=>{
+    const validos=[...archivos].filter(x=>/\.(xlsx|xls|csv)$/i.test(x.name)).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
+    const omitidos=[...archivos].length-validos.length;
+    if(omitidos)toast(omitidos+' archivo(s) omitido(s): solo .xlsx, .xls o .csv','err');
+    if(!validos.length)return;
+    if(ocupado){toast('Espera a que termine la carga en curso','err');return;}
+    ocupado=true; zona.style.opacity='.55'; zona.style.pointerEvents='none';
+    const cola=validos.map(x=>({file:x})); cola.forEach(pintarFila);
+    for(const f of cola){
+      if(f.file.size>25*1024*1024){estado(f,'error','<span style="color:#B91C1C">pesa más de 25 MB: divídelo por rango de fechas</span>');tot.mal++;continue;}
+      estado(f,'cargando','<span class="muted">procesando en el servidor… (puede tardar 1–2 min si es grande)</span>');
+      try{
+        const fd=new FormData();fd.append('archivo',f.file);
+        const r=await api('POST','/api/cumplimiento/ingesta',fd);
+        const mot=Object.entries(r.motivos_invalidas||{}).map(([k,n])=>`${esc(k)}: ${n}`).join(', ');
+        estado(f,'ok',`<b>${r.insertadas}</b> nuevas · ${r.duplicadas} ya existían · ${r.invalidas} inválidas${mot?' ('+mot+')':''} <span class="muted">· ${esc(r.desde||'—')} → ${esc(r.hasta||'—')}</span>`);
+        tot.ins+=r.insertadas;tot.dup+=r.duplicadas;tot.inv+=r.invalidas;tot.ok++;
+      }catch(e){
+        estado(f,'error','<span style="color:#B91C1C">'+esc(e.data&&e.data.mensaje?e.data.mensaje:errMsg(e))+'</span>');tot.mal++;
+      }
+    }
+    resumen.innerHTML='';
+    resumen.append(el('div',{class:'banner '+(tot.mal?'warn':'ok'),html:`<b>${tot.mal?'Carga terminada con avisos':'Carga completada'}</b><br>Archivos correctos: <b>${tot.ok}</b>${tot.mal?' · con error: <b>'+tot.mal+'</b>':''}<br>Transacciones nuevas: <b>${tot.ins.toLocaleString('es-MX')}</b> · ya existían: ${tot.dup.toLocaleString('es-MX')} · inválidas: ${tot.inv.toLocaleString('es-MX')}<br><span class="muted">Las alertas de PLD se evalúan en segundo plano; aparecen en la pestaña Alertas en unos minutos.</span>`}));
+    ocupado=false; zona.style.opacity='1'; zona.style.pointerEvents='auto'; render();
+  };
+  zona.addEventListener('click',()=>file.click());
+  file.addEventListener('change',()=>{const a=[...file.files];file.value='';procesar(a);});
+  ['dragenter','dragover'].forEach(ev=>zona.addEventListener(ev,e=>{e.preventDefault();e.stopPropagation();zona.style.borderColor='#3083F4';zona.style.background='#EAF2FF';}));
+  ['dragleave','drop'].forEach(ev=>zona.addEventListener(ev,e=>{e.preventDefault();e.stopPropagation();zona.style.borderColor='';zona.style.background='';}));
+  zona.addEventListener('drop',e=>{procesar([...(e.dataTransfer&&e.dataTransfer.files||[])]);});
+  // Evita que el navegador abra el archivo si se suelta fuera de la zona mientras el modal está abierto.
+  body.addEventListener('dragover',e=>e.preventDefault());body.addEventListener('drop',e=>{e.preventDefault();if(!zona.contains(e.target))procesar([...(e.dataTransfer&&e.dataTransfer.files||[])]);});
+  modal('Cargar transacciones de Cumplimiento',body,el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cerrar')),true);
 }
 
 async function vDestinatarios(v){
