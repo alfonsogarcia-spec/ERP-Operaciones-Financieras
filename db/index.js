@@ -124,6 +124,24 @@ async function seedReasonCodes() {
       [brand, codigo, descripcion, presence, pc, pr, rep]
     );
   }
+  // Datos para el correo (motivo, ★ fraude, documentos requeridos). Solo rellena lo que esté vacío:
+  // nunca pisa lo capturado desde la pantalla ni lo importado del Excel.
+  const correo = [
+    ['VISA', '10.4', 'Fraude · tarjeta no presente', 'Fraude', 'Comprobante de la venta o ticket firmado; Evidencia de autenticación (3-D Secure / CVV / AVS); IP, dispositivo y correo del comprador; Historial de compras previas del mismo cliente; Comprobante de entrega con firma o guía'],
+    ['VISA', '13.1', 'Mercancía o servicios no recibidos', 'Servicio / mercancía', 'Comprobante de entrega firmado o guía de rastreo con fecha de recepción; Comunicación con el cliente; Orden de compra o contrato; Fecha acordada de entrega'],
+    ['VISA', '13.7', 'Mercancía o servicios cancelados', 'Servicio / mercancía', 'Política de cancelación aceptada por el cliente; Evidencia de que el servicio se prestó o la mercancía se envió; Comunicación con el cliente; Comprobante de la venta'],
+    ['MASTERCARD', '4837', 'Sin autorización del tarjetahabiente', 'Fraude', 'Comprobante de la venta o ticket firmado; Evidencia de autenticación (3-D Secure / CVV / PIN); Comprobante de entrega; Historial de compras previas del cliente'],
+    ['MASTERCARD', '4863', 'El tarjetahabiente no reconoce el cargo', 'Reconocimiento del cargo', 'Comprobante de la venta con nombre comercial reconocible; Datos de la transacción (fecha, monto, descripción); Comprobante de entrega o prestación del servicio; Comunicación con el cliente'],
+    ['AMEX', 'C08', 'Mercancía o servicios devueltos o rechazados', 'Servicio / mercancía', 'Política de devoluciones aceptada por el cliente; Evidencia de que no hubo devolución, o del estado de la mercancía; Comunicación con el cliente; Comprobante de la venta'],
+    ['AMEX', 'FR2', 'Fraude · recurso total', 'Fraude', 'Comprobante de la venta o ticket firmado; Evidencia de autenticación; Comprobante de entrega'],
+    ['CID', '2001', 'Nacional · presencia de tarjeta en disputa', 'Presencia de tarjeta', 'Voucher firmado o comprobante con NIP/chip; Registro de la terminal (ARQC, modo de entrada); Identificación del tarjetahabiente si aplica'],
+  ];
+  for (const [brand, codigo, titulo, categoria, evidencia] of correo) {
+    await backend.query(
+      "update disputa.reason_codes set titulo=coalesce(nullif(titulo,''),$3), categoria=coalesce(nullif(categoria,''),$4), evidencia_sugerida=coalesce(nullif(evidencia_sugerida,''),$5) where brand=$1 and codigo=$2",
+      [brand, codigo, titulo, categoria, evidencia]
+    );
+  }
 }
 
 function query(text, params) {

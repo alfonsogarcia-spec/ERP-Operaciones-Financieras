@@ -507,7 +507,7 @@ function tableWrap(head,rows,opts){const w=el('div',{class:'tablewrap'});const t
   t.append(tb);w.append(t);return w;}
 const badgeEstado=e=>{const m={'Borrador':'g','Validado':'b','Dispersado':'v','Cerrado':'ok'};return `<span class="badge ${m[e]||'g'}">${esc(e)}</span>`;};
 const badgeProd=p=>{const m={'Débito':'b','Crédito':'v','American Express':'g','Internacional':'w'};return `<span class="badge ${m[p]||'d'}">${esc(p||'—')}</span>`;};
-function errMsg(e){const d=e&&e.data||{};if(e.status===403)return'No tienes permiso para esta acción ('+SES.rol+')';if(d.error==='no_cuadra_o_bloqueado')return'El corte no cuadra o tiene órdenes sin CLABE';if(d.error==='corte_inmutable')return'El corte ya está '+d.estado+' (inmutable)';if(d.error==='transicion_invalida')return'Transición no válida (estado '+d.estado+')';if(d.error==='ya_aplicado')return'Este contracargo ya fue aplicado a un corte. Elimina el corte para poder borrarlo.';return d.error||e.message||'Error';}
+function errMsg(e){const d=e&&e.data||{};if(e.status===403)return'No tienes permiso para esta acción ('+SES.rol+')';if(d.error==='no_cuadra_o_bloqueado')return'El corte no cuadra o tiene órdenes sin CLABE';if(d.error==='corte_inmutable')return'El corte ya está '+d.estado+' (inmutable)';if(d.error==='transicion_invalida')return'Transición no válida (estado '+d.estado+')';if(d.error==='ya_aplicado')return'Este contracargo ya fue aplicado a un corte. Elimina el corte para poder borrarlo.';return d.mensaje||d.error||e.message||'Error';}
 
 /* ============================================================================
    NAV / ROUTER
@@ -2635,7 +2635,9 @@ async function openCBNuevo(){
         if(chkNot.checked && r.mail){
           if(r.mail.ok) msg+=' · correo enviado a '+r.mail.enviados;
           else if(r.mail.motivo==='sin_contactos') msg+=' · sin contactos para notificar';
-          else if(r.mail.motivo==='ses_error') msg+=' · error SES';
+          else if(r.mail.motivo==='ses_no_configurado') msg+=' · SES no configurado: no se envió el correo';
+          else if(r.mail.motivo==='ses_error') msg+=' · error SES'+(r.mail.error?' ('+r.mail.error+')':'');
+          else msg+=' · el correo no se envió'+(r.mail.error?' ('+r.mail.error+')':'');
         }
         toast(msg,'ok');closeModal();go('disp_chargebacks');
       }catch(e){toast(errMsg(e),'err');}
@@ -2731,12 +2733,13 @@ async function vDispRefundDetalle(v, id){
       try{ const r=await withBusy('Enviando…',()=>api('POST','/api/disputa/refunds/'+id+'/notify',{mensaje:''})); toast('Correo enviado a '+r.enviados+' contacto(s)','ok'); go('disp_ref_'+id); }
       catch(e){const d2=e.data||{};toast(d2.error==='sin_contactos'?'Sin contactos con email':d2.error==='ses_no_configurado'?'SES no configurado':errMsg(e),'err');}
     }},'📧 Notificar / reenviar al comercio'));
-    btns.append(el('button',{class:'btn ok',onclick:async()=>{
+    if(d.status!=='NOTIFIED') btns.append(el('div',{class:'muted',style:'align-self:center;font-size:12px'},'Para registrar la decisión (PROCEDE / NO PROCEDE) primero notifica al comercio.'));
+    if(d.status==='NOTIFIED') btns.append(el('button',{class:'btn ok',onclick:async()=>{
       if(!confirm('¿Marcar como PROCEDE?')) return;
       try{ await api('POST','/api/disputa/refunds/'+id+'/decision',{decision:'PROCEDE'}); toast('Marcada PROCEDE','ok'); go('disp_ref_'+id); }
       catch(e){toast(errMsg(e),'err');}
     }},'✓ Marcar PROCEDE'));
-    btns.append(el('button',{class:'btn danger',onclick:async()=>{
+    if(d.status==='NOTIFIED') btns.append(el('button',{class:'btn danger',onclick:async()=>{
       if(!confirm('¿Marcar como NO PROCEDE?')) return;
       try{ await api('POST','/api/disputa/refunds/'+id+'/decision',{decision:'NO_PROCEDE'}); toast('Marcada NO PROCEDE','ok'); go('disp_ref_'+id); }
       catch(e){toast(errMsg(e),'err');}
@@ -2889,7 +2892,9 @@ async function openRefundNuevo(){
           if(r.mail.ok) msg+=' · correo enviado a '+(r.mail.enviados||'—');
           else if(r.mail.motivo==='sin_contactos') msg+=' · sin contactos para notificar';
           else if(r.mail.motivo==='sin_grupo') msg+=' · asigna un grupo para poder notificar';
-          else if(r.mail.motivo==='ses_error') msg+=' · error SES';
+          else if(r.mail.motivo==='ses_no_configurado') msg+=' · SES no configurado: no se envió el correo';
+          else if(r.mail.motivo==='ses_error') msg+=' · error SES'+(r.mail.error?' ('+r.mail.error+')':'');
+          else msg+=' · el correo no se envió'+(r.mail.error?' ('+r.mail.error+')':'');
         }
         toast(msg,'ok');closeModal();go('disp_refunds');
       }catch(e){toast(errMsg(e),'err');}
@@ -2922,7 +2927,8 @@ async function abrirDupTransicion(r){
   if(!transiciones.length){body.append(el('div',{class:'banner'},'Sin transiciones (estado final).'));modal('Detalle · '+r.folio,body,el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cerrar')));return;}
   const nuevoSel=el('select');transiciones.forEach(t=>nuevoSel.append(el('option',{},t)));
   const decSel=el('select');['','DUPLICADA','NO_DUPLICADA'].forEach(d=>decSel.append(el('option',{value:d},d||'—')));
-  body.append(fld('Nuevo estado',nuevoSel),fld('Decisión (solo si ANSWERED)',decSel));
+  body.append(fld('Nuevo estado',nuevoSel),fld('Decisión (obligatoria si ANSWERED)',decSel));
+  body.append(el('div',{class:'muted',style:'font-size:12px'},'DUPLICADA: se retiene el monto en la siguiente liquidación (día hábil siguiente). NO_DUPLICADA: no se retiene.'));
   const foot=el('div',{});
   foot.append(el('button',{class:'btn sm',style:'background:#0F56AC;color:#fff',onclick:async()=>{
     const msg=prompt('Mensaje adicional (opcional):');
@@ -2931,7 +2937,12 @@ async function abrirDupTransicion(r){
   }},'📧 Notificar'));
   foot.append(el('div',{style:'flex:1'}));
   foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
-    try{await api('POST','/api/disputa/duplicates/'+r.id+'/status',{status:nuevoSel.value,decision:decSel.value||undefined});toast('Cambio registrado','ok');closeModal();go('disp_duplicates');}
+    try{const rr=await api('POST','/api/disputa/duplicates/'+r.id+'/status',{status:nuevoSel.value,decision:decSel.value||undefined});
+      const rt=rr&&rr.retencion;
+      if(rt&&rt.accion==='retencion_programada') toast('Cambio registrado · retención de '+mxn(rt.monto)+' programada para '+rt.fecha,'ok');
+      else if(rt&&rt.ok===false) toast('Cambio registrado, pero NO se programó la retención ('+(rt.motivo==='sin_afiliacion'?'falta la afiliación del comercio':rt.motivo==='sin_monto'?'falta el monto':rt.motivo)+').','err');
+      else toast('Cambio registrado','ok');
+      closeModal();go('disp_duplicates');}
     catch(e){toast(errMsg(e),'err');}
   }},'Aplicar'));
   modal('Transición · '+r.folio,body,foot);
@@ -3029,7 +3040,9 @@ async function openDupNuevo(){
           if(r.mail.ok) msg+=' · correo enviado a '+(r.mail.enviados||'—');
           else if(r.mail.motivo==='sin_contactos') msg+=' · sin contactos para notificar';
           else if(r.mail.motivo==='sin_grupo') msg+=' · asigna un grupo para poder notificar';
-          else if(r.mail.motivo==='ses_error') msg+=' · error SES';
+          else if(r.mail.motivo==='ses_no_configurado') msg+=' · SES no configurado: no se envió el correo';
+          else if(r.mail.motivo==='ses_error') msg+=' · error SES'+(r.mail.error?' ('+r.mail.error+')':'');
+          else msg+=' · el correo no se envió'+(r.mail.error?' ('+r.mail.error+')':'');
         }
         toast(msg,'ok');closeModal();go('disp_duplicates');
       }catch(e){toast(errMsg(e),'err');}
@@ -3124,8 +3137,13 @@ function openRCNuevo(rc){
   const repr=el('input',{type:'checkbox'});repr.checked=rc.representable!==false;
   body.append(el('div',{class:'form-grid c3'},fld('Red',brand),fld('Código',codigo),fld('Presencia',presence),fld('Plazo comercio (d)',pc),fld('Plazo representación (d)',pr),el('label',{class:'field',style:'flex-direction:row;align-items:center;gap:8px'},repr,el('span',{},'Representable'))));
   body.append(fld('Descripción',desc));
+  // Datos que salen en el correo al comercio.
+  const titulo=el('input',{value:rc.titulo||'',placeholder:'Motivo que verá el comercio (si se deja vacío usa la descripción)'});
+  const categoria=el('input',{value:rc.categoria||'',placeholder:'Ej. Fraude, Servicio / mercancía (si contiene "fraude" el correo marca ★)'});
+  const evid=el('textarea',{rows:4,placeholder:'Un documento por línea (o separados por ;). Aparecen como "Documentos requeridos" en el correo.'});evid.value=rc.evidencia_sugerida||'';
+  body.append(fld('Motivo en el correo',titulo),fld('Categoría',categoria),fld('Documentos requeridos (evidencia sugerida)',evid));
   const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
-    try{await api('POST','/api/disputa/reason-codes',{id:rc.id,brand:brand.value,codigo:codigo.value,descripcion:desc.value,card_presence:presence.value,plazo_comercio_dias:Number(pc.value)||0,plazo_representacion_dias:Number(pr.value)||0,representable:repr.checked});toast('Guardado','ok');closeModal();go('disp_reasoncodes');}
+    try{await api('POST','/api/disputa/reason-codes',{id:rc.id,brand:brand.value,codigo:codigo.value,descripcion:desc.value,titulo:titulo.value,categoria:categoria.value,evidencia_sugerida:evid.value,card_presence:presence.value,plazo_comercio_dias:Number(pc.value)||0,plazo_representacion_dias:Number(pr.value)||0,representable:repr.checked});toast('Guardado','ok');closeModal();go('disp_reasoncodes');}
     catch(e){toast(errMsg(e),'err');}
   }},'Guardar'));
   modal(rc.id?'Editar reason code':'Nuevo reason code',body,foot,true);

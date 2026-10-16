@@ -51,6 +51,16 @@ const LP = require('./lib/layout-polipay.js');
 if (!C.ready()) console.warn('⚠  Cifrado app-layer NO configurado (falta ENCRYPTION_KEY_V1 o HMAC_PEPPER). Dual-write escribirá "plain:" en las columnas cifradas.');
 
 const app = express();
+// Red de seguridad: en Express 4 una promesa rechazada dentro de un handler async (violación de FK,
+// fecha inválida, etc.) no llega al manejador de errores y Node >=15 tumba el proceso completo.
+// Aquí se reenvía a next(err): la petición responde 500 y el servidor sigue vivo.
+require('express/lib/router/layer').prototype.handle_request = function handle(req, res, next) {
+  const fn = this.handle;
+  if (fn.length > 3) return next();
+  try { const p = fn(req, res, next); if (p && typeof p.catch === 'function') p.catch(next); }
+  catch (e) { next(e); }
+};
+process.on('unhandledRejection', e => console.error('[unhandledRejection]', (e && e.stack) || e));
 const PORT = process.env.PORT || 4174;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-cambia-en-produccion';
 if (!process.env.JWT_SECRET) console.warn('⚠  JWT_SECRET no definido: usando secreto de desarrollo.');
@@ -4093,6 +4103,9 @@ function armarNotifDisputaHTML(n, opts) {
             ? 'Hemos detectado una <b>posible transacción duplicada</b> en su comercio. Es necesario que revisen el caso y nos hagan llegar la evidencia <b>antes de la fecha límite</b> para dictaminar si es válida.'
             : 'Se ha registrado un <b>contracargo</b> sobre una de sus transacciones. Es necesario que revisen el caso y, de proceder, nos hagan llegar la evidencia <b>antes de la fecha límite</b> para poder representar la disputa ante el adquirente.'}
       </td></tr>
+      ${n.mensaje_extra ? `
+      <!-- Mensaje del operador -->
+      <tr><td style="padding:12px 36px 0"><div style="background:#f3f4f6;border-radius:10px;padding:12px 16px;font:400 13px/1.6 Arial,Helvetica,sans-serif;color:${ink}">${escapeHtml(n.mensaje_extra).replace(/\r?\n/g, '<br>')}</div></td></tr>` : ''}
       <!-- Tabla de datos -->
       <tr><td style="padding:20px 36px 0">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">${filasHtml}</table>
@@ -4122,7 +4135,9 @@ function armarNotifDisputaHTML(n, opts) {
       <!-- Advertencia de retención -->
       <tr><td style="padding:24px 36px 0">
         <div style="background:${warnBg};border:1px solid ${warnBorder};border-radius:10px;padding:14px 16px;font:400 13px/1.55 Arial,Helvetica,sans-serif;color:${warnInk}">
-          <span style="color:${warnInk}">⚠</span> El monto de este ${n.tipo === 'duplicate' ? 'cobro' : 'contracargo'} <b>será retenido de su siguiente liquidación, el día hábil siguiente a esta notificación</b>. Si no recibimos su evidencia antes del <b>${escapeHtml(n.fecha_limite_respuesta || 'la fecha indicada')}</b>, se tomará como <b>aceptado</b>: el débito será definitivo y el caso <b>no podrá disputarse posteriormente</b>.
+          ${n.tipo === 'duplicate'
+            ? `<span style="color:${warnInk}">⚠</span> Esta notificación <b>no genera ninguna retención por sí sola</b>. Si antes del <b>${escapeHtml(n.fecha_limite_respuesta || 'la fecha indicada')}</b> no recibimos su respuesta, o se confirma que se trata de un <b>cobro duplicado</b>, el monto de este cobro <b>será retenido de su siguiente liquidación</b> para devolverlo al tarjetahabiente.`
+            : `<span style="color:${warnInk}">⚠</span> El monto de este contracargo <b>será retenido de su siguiente liquidación, el día hábil siguiente a esta notificación</b>. Si no recibimos su evidencia antes del <b>${escapeHtml(n.fecha_limite_respuesta || 'la fecha indicada')}</b>, se tomará como <b>aceptado</b>: el débito será definitivo y el caso <b>no podrá disputarse posteriormente</b>.`}
         </div>
       </td></tr>`}
       <!-- Footer -->
@@ -4348,6 +4363,7 @@ function sesEnabled() {
 const SES_FROM = process.env.SES_FROM || 'ops.agregador@polipay.io';
 const SES_FROM_NAME = process.env.SES_FROM_NAME || 'Polipay · Operaciones · MCEB';
 
+const { parseDir, fmtDir } = require('./lib/mime-dir.js');
 function buildMime({ from, fromName, to, cc, bcc, subject, html, attachments, inlineImages, textFallback }) {
   // Estructura MIME:
   // multipart/mixed (adjuntos)
@@ -4361,8 +4377,8 @@ function buildMime({ from, fromName, to, cc, bcc, subject, html, attachments, in
   const b64 = buf => buf.toString('base64').replace(/(.{76})/g, '$1\r\n');
   const L = [];
   L.push(`From: ${fromName ? `${enc(fromName)} <${from}>` : from}`);
-  if (to && to.length) L.push(`To: ${to.join(', ')}`);
-  if (cc && cc.length) L.push(`Cc: ${cc.join(', ')}`);
+  if (to && to.length) L.push(`To: ${to.map(fmtDir).join(', ')}`);
+  if (cc && cc.length) L.push(`Cc: ${cc.map(fmtDir).join(', ')}`);
   // BCC deliberadamente NO en headers (queda oculto). SES lo entrega via Destinations.
   L.push(`Subject: ${enc(subject)}`);
   L.push('MIME-Version: 1.0');
@@ -4418,7 +4434,7 @@ async function sendSES({ to, cc, bcc, subject, html, attachments, inlineImages, 
   });
   const raw = buildMime({ from: SES_FROM, fromName: SES_FROM_NAME, to, cc, bcc, subject, html, attachments, inlineImages, textFallback });
   // Destinations debe incluir TODOS (To+Cc+Bcc). El BCC no aparece en headers, así queda oculto.
-  const Destinations = [...(to || []), ...(cc || []), ...(bcc || [])];
+  const Destinations = [...(to || []), ...(cc || []), ...(bcc || [])].map(a => parseDir(a).email);
   const cmd = new SendRawEmailCommand({
     RawMessage: { Data: Buffer.from(raw, 'utf8') },
     Destinations,
@@ -4767,7 +4783,7 @@ app.get('/api/bitacora/verificar-integridad', auth, requiereRol('admin'), async 
 });
 
 /* ---------- Módulo DISPUTAS (Sprint 1 · portado de sistema Python Contracargos) ---------- */
-mountDisputasRoutes(app, { auth, requiereRol, bit, db, C, D, upload, sesEnabled, sendSES, armarNotifDisputaHTML, path, fs: require('fs'), X, enviarXLSX, CCS, getFeriados });
+const disputasMod = mountDisputasRoutes(app, { auth, requiereRol, bit, db, C, D, upload, sesEnabled, sendSES, armarNotifDisputaHTML, path, fs: require('fs'), X, enviarXLSX, CCS, getFeriados });
 
 /* ---------- Módulo TAREAS (fase 4) ---------- */
 const { mountTareasRoutes } = require('./lib/tareas-routes.js');
@@ -4812,38 +4828,45 @@ app.post('/api/webhooks/contracargos', webhookLimiter, express.json({ limit: '2m
   const arn = body.arn ? String(body.arn).trim() : null;
   const case_number = body.case_number ? String(body.case_number).trim() : null;
   const amount = body.disputed_amount != null && body.disputed_amount !== '' ? Number(body.disputed_amount) : null;
+  if (amount !== null && (!Number.isFinite(amount) || amount <= 0)) return res.status(400).json({ error: 'monto_invalido', mensaje: 'disputed_amount debe ser un número mayor a 0.' });
   const merchant_name = body.merchant_name ? String(body.merchant_name).trim() : null;
   const afil = body.merchant_affiliation ? String(body.merchant_affiliation).replace(/\D/g, '') : null;
-  const fecha_evento = body.fecha_evento && /^\d{4}-\d{2}-\d{2}$/.test(body.fecha_evento) ? body.fecha_evento : new Date().toISOString().slice(0, 10);
+  const fechaReal = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && new Date(v + 'T00:00:00Z').toISOString().slice(0, 10) === v;
+  const fecha_evento = fechaReal(body.fecha_evento) ? body.fecha_evento : new Date().toISOString().slice(0, 10);
   const fecha_recepcion = new Date().toISOString().slice(0, 10);
   const fecha_limite_comercio = await D.computarLimiteComercio(db, fecha_recepcion, reason_code_id);
   const fecha_limite_representacion = await D.computarLimiteRepresentacion(db, fecha_recepcion, reason_code_id);
   // Resolver merchant por afiliacion_hash si existe.
-  let merchant_id = null;
+  let merchant_id = null, client_group_id = null;
   if (afil) {
-    const m = (await db.query('select id from disputa.merchants where afiliacion_hash=$1', [C.hmac(afil)])).rows[0];
-    if (m) merchant_id = m.id;
+    const m = (await db.query('select id, client_group_id from disputa.merchants where afiliacion_hash=$1', [C.hmac(afil)])).rows[0];
+    if (m) { merchant_id = m.id; client_group_id = m.client_group_id || null; }
   }
+  // Igual que el alta manual: la retención arranca el día hábil siguiente al alta.
+  const fecha_retencion = await D.agregarDiasHabilesConciliacion(db, fecha_recepcion, 1);
   const folio = await D.generarFolio(db, 'CB', 'chargebacks');
-  const cols = ['folio', 'folio_hash', 'provider_id', 'merchant_id', 'reason_code_id', 'external_id', 'external_id_hash',
+  const cols = ['folio', 'folio_hash', 'provider_id', 'merchant_id', 'client_group_id', 'reason_code_id', 'external_id', 'external_id_hash',
     'arn', 'arn_cifrado', 'arn_hash', 'case_number', 'case_number_cifrado',
     'brand', 'card_presence', 'channel', 'cycle', 'status', 'reason_code_raw', 'reason_description',
     'disputed_amount_cifrado', 'currency_code',
     'merchant_name', 'merchant_name_cifrado', 'merchant_affiliation', 'merchant_affiliation_hash',
     'fecha_evento', 'fecha_recepcion', 'fecha_limite_comercio', 'fecha_limite_representacion',
-    'origen', 'creado_por'];
-  const vals = [folio, C.hmac(folio), provider.id, merchant_id, reason_code_id, external_id, C.hmac(external_id),
+    'origen', 'creado_por', 'fecha_retencion'];
+  const vals = [folio, C.hmac(folio), provider.id, merchant_id, client_group_id, reason_code_id, external_id, C.hmac(external_id),
     arn, C.encrypt(arn), arn ? C.hmac(arn) : null, case_number, C.encrypt(case_number),
     brand, card_presence, channel, cycle, 'NEW', body.reason_code_raw || null, body.reason_description || null,
     C.encrypt(amount != null ? String(amount) : null), (body.currency_code || 'MXN').toUpperCase().slice(0, 3),
     merchant_name, C.encrypt(merchant_name), afil, afil ? C.hmac(afil) : null,
     fecha_evento, fecha_recepcion, fecha_limite_comercio, fecha_limite_representacion,
-    'webhook', 'webhook:' + provider.nombre];
+    'webhook', 'webhook:' + provider.nombre, fecha_retencion];
   const ph = cols.map((_, i) => '$' + (i + 1)).join(',');
   const r = await db.query(`insert into disputa.chargebacks(${cols.join(',')}) values(${ph}) returning id, folio`, vals);
   const idNuevo = r.rows[0].id;
   await D.agregarEventoCB(db, idNuevo, { tipo: 'created', estado_nuevo: 'NEW', actor: 'webhook:' + provider.nombre, detalle: 'Alta vía webhook · external_id=' + external_id });
   await db.query('update disputa.providers set ultima_sync=now() where id=$1', [provider.id]);
+  // Puente al ledger de retenciones (igual que el alta manual); si falla no debe tumbar el webhook.
+  try { await CCS.syncCbAContracargos(db, idNuevo, { crypto: C, feriados: await getFeriados(), actor: 'webhook:' + provider.nombre }); }
+  catch (e) { console.error('[webhook syncCb]', idNuevo, e && e.message); }
   // Registrar en bitácora (hash-chain + posible alerta 'disputa_webhook_lote' si hay volumen).
   await bit(req, 'disputa_cb_webhook', `folio=${folio} · provider=${provider.nombre} · external_id=${external_id}`, {
     actor: { nombre: 'webhook:' + provider.nombre, rol: '—' },
@@ -4867,6 +4890,14 @@ app.use('/public', express.static(path.join(__dirname, 'public'), { maxAge: '7d'
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'not_found' });
   res.sendFile(path.join(__dirname, 'index.html'));
+});
+// Errores no controlados de cualquier ruta: respuesta JSON y registro en el log (sin filtrar detalles al cliente).
+app.use((err, req, res, _next) => {
+  if (res.headersSent) return;
+  if (err && err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'archivo_muy_grande', mensaje: 'El archivo excede el tamaño permitido.' });
+  const st = (err && (err.status || err.statusCode)) || 500;
+  if (st >= 500) console.error('[error]', req.method, req.path, ((err && err.stack) || String(err)).split('\n').slice(0, 4).join(' | '));
+  res.status(st).json(st < 500 ? { error: 'solicitud_invalida', mensaje: String((err && err.message) || 'Solicitud inválida') } : { error: 'error_interno', mensaje: 'Ocurrió un error inesperado. Intenta de nuevo; si persiste, avisa a soporte.' });
 });
 
 /* ---------- Cron interno de contabilidad ---------- */
@@ -4930,4 +4961,10 @@ function agendaContabilidad() {
   // cada semana (1-10, 11-17, 18-24, 25-fin) sale un correo con el detalle;
   // el día 1 de cada mes sale también el resumen mensual del mes anterior.
   agendaContabilidad();
+  // Vencimiento automático de contracargos notificados (pasan a ACCEPTED al vencer su fecha límite).
+  if (disputasMod && disputasMod.autoVencerCB && db.isReady()) {
+    const correr = () => disputasMod.autoVencerCB().catch(e => console.error('[autoVencerCB]', e && e.message));
+    setTimeout(correr, 45 * 1000);
+    setInterval(correr, 60 * 60 * 1000);
+  }
 })();

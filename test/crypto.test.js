@@ -37,17 +37,20 @@ ok('mismo texto → cifrados distintos (IV random)', c1 !== c2);
 ok('ambos descifran al mismo original', C.decryptString(c1) === 'same input' && C.decryptString(c2) === 'same input');
 
 /* ---------- Detección de manipulación (GCM tag) ---------- */
-throws('ciphertext modificado → falla decrypt', () => {
+// decrypt() NO lanza ante un dato alterado o con otra llave: devuelve null (para que un campo ilegible
+// no tumbe el proceso). Lo importante es que JAMÁS devuelva texto alterado.
+const flip = x => (x[0] === 'A' ? 'B' : 'A') + x.slice(1);
+{
   const parts = ct.split(':');
-  // corrompemos el ciphertext: cambiamos primer char del ct base64
-  const bad = parts[0] + ':' + parts[1] + ':A' + parts[2].slice(1) + ':' + parts[3];
-  C.decrypt(bad);
-});
-throws('tag modificado → falla decrypt', () => {
-  const parts = ct.split(':');
-  const bad = parts[0] + ':' + parts[1] + ':' + parts[2] + ':A' + parts[3].slice(1);
-  C.decrypt(bad);
-});
+  const badCt = [parts[0], parts[1], flip(parts[2]), parts[3]].join(':');
+  const badTag = [parts[0], parts[1], parts[2], flip(parts[3])].join(':');
+  const badIv = [parts[0], flip(parts[1]), parts[2], parts[3]].join(':');
+  const quiet = console.warn; console.warn = () => {};
+  ok('ciphertext modificado → decrypt devuelve null (no texto alterado)', C.decrypt(badCt) === null, C.decrypt(badCt));
+  ok('tag modificado → decrypt devuelve null', C.decrypt(badTag) === null, C.decrypt(badTag));
+  ok('IV modificado → decrypt devuelve null', C.decrypt(badIv) === null, C.decrypt(badIv));
+  console.warn = quiet;
+}
 
 /* ---------- null / vacío ---------- */
 ok('encrypt(null) → null', C.encrypt(null) === null);
