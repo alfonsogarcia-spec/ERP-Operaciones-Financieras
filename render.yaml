@@ -29,3 +29,33 @@ services:
         sync: false        # 32 bytes hex - cifrado app-layer AES-256-GCM (Fase 2). Perderla = perder datos.
       - key: HMAC_PEPPER
         sync: false        # 32 bytes hex - pepper del HMAC para hashes determinísticos (email_hash, clabe_hash)
+
+  # ----------------------------------------------------------------
+  # Cartera SOLVENDOM — vive en su PROPIO repo (alfonsogarcia-spec/cartera-solvendom),
+  # colgada de este blueprint. Mismo Supabase, aislada en el schema `cartera_solvendom`.
+  - type: web
+    name: cartera-solvendom
+    repo: https://github.com/alfonsogarcia-spec/cartera-solvendom
+    branch: main
+    runtime: node
+    plan: starter
+    region: oregon
+    buildCommand: npm install --omit=dev
+    startCommand: node servidor.mjs
+    autoDeploy: true
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: CARTERA_SCHEMA
+        value: cartera_solvendom
+      - key: CARTERA_ADMINS
+        value: alfonso.garcia@polipay.io,adrik.moreno@sayo.mx,alexis.torres@polipay.io
+      - key: CARTERA_POSTGRES
+        sync: false        # misma cadena de Supabase que DATABASE_URL (Session pooler)
+      - key: CARTERA_SECRETO
+        sync: false
+      - key: CARTERA_CLAVE_ADMIN
+        sync: false
+      - key: CARTERA_CLAVE_OPERADOR
+        sync: false
