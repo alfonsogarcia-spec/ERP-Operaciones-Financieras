@@ -137,3 +137,7 @@ create table if not exists cumplimiento.alerta_destinatarios (
 
 -- Normaliza estatus cargados antes de reconocer el femenino del export ("APROBADA" → "APROBADO"). Idempotente.
 update cumplimiento.transacciones set estatus = 'APROBADO' where estatus in ('APROBADA', 'APROBADAS', 'APROBADOS');
+
+-- BL-1 (tarjeta robada o perdida) pasó a nivel AVISO por defecto: alinea las alertas abiertas mientras no se haya configurado el nivel a mano.
+update cumplimiento.alertas set nivel = 'AVISO' where regla = 'BL-1' and nivel = 'BLOQUEO' and estatus in ('NUEVA','EN_REVISION')
+  and not coalesce((select reglas ? 'nivel_BL-1' from cumplimiento.config where id = 1), false);

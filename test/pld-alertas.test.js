@@ -86,6 +86,17 @@ const CI = require('../lib/cumplimiento-ingesta.js');
 const nf = est => CI.normalizarFila({ fecha_local: '31/12/2025', hora_local: '23:13:16', monto: 100, estatus: est, bin: '493000', ultimos_4: '3539', id: 1 }, s => 'h' + s);
 chk('ingesta: "APROBADA" se normaliza a "APROBADO"', [nf('APROBADA').r.estatus, nf('Aprobado').r.estatus, nf('RECHAZADA').r.estatus], ['APROBADO', 'APROBADO', 'RECHAZADA']);
 
+// ---- nivel configurable por regla
+chk('BL-1 (tarjeta robada o perdida) es AVISO por defecto', [P.REGLAS.find(r => r.id === 'BL-1').nivel, p['nivel_BL-1']], ['AVISO', 'AVISO']);
+chk('BL-2 sigue siendo BLOQUEO y RT-3 SUSPENDER', [p['nivel_BL-2'], p['nivel_RT-3']], ['BLOQUEO', 'SUSPENDER']);
+chk('se puede cambiar el nivel de una regla', P.normalizarParametros({ 'nivel_BL-1': 'BLOQUEO' })['nivel_BL-1'], 'BLOQUEO');
+chk('nivel inválido cae al valor vigente', [P.normalizarParametros({ 'nivel_BL-1': 'ALTO' })['nivel_BL-1'], P.normalizarParametros({ 'nivel_BL-1': 'ALTO' }, { 'nivel_BL-1': 'SUSPENDER' })['nivel_BL-1']], ['AVISO', 'SUSPENDER']);
+const bl1 = nivel => P.accionEjecutable({ regla: 'BL-1', nivel, tarjeta: '450000 •••• 9999', terminal: 'T-1', bin: '450000' });
+chk('acción BL-1 en AVISO: dar aviso, no bloquear', /^AVISO · Dar aviso/.test(bl1('AVISO')) && !/BLOQUEAR/.test(bl1('AVISO')), true);
+chk('acción BL-1 en BLOQUEO: bloquear la tarjeta', /^BLOQUEAR 450000/.test(bl1('BLOQUEO')), true);
+chk('acción BL-1 en SUSPENDER: suspender la terminal', /^SUSPENDER la terminal T-1/.test(bl1('SUSPENDER')), true);
+chk('acción RT-3 degradada a AVISO se redacta como aviso', /^AVISO · /.test(P.accionEjecutable({ regla: 'RT-3', nivel: 'AVISO', terminal: 'T-9', bin: '506406' })), true);
+
 let pass = 0;
 for (const t of out) { console.log((t.pass ? 'PASS  ' : 'FAIL  ') + t.desc + (t.pass ? '' : `  → obtenido ${t.got}, esperado ${t.esperado}`)); if (t.pass) pass++; }
 console.log(`\n${pass}/${out.length} pruebas correctas`);

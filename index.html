@@ -1666,10 +1666,12 @@ async function vUmbrales(v){
         const act=el('input',{type:'checkbox',disabled:ro?true:null});act.checked=R['act_'+r.id]!==false;campos['act_'+r.id]={tipo:'bool',el:act};
         box.append(el('label',{style:'display:flex;align-items:center;gap:8px;font:700 13px Montserrat,sans-serif'},act,el('span',{class:'badge '+(r.nivel==='BLOQUEO'?'err':r.nivel==='SUSPENDER'?'w':'b')},({AVISO:'Aviso',SUSPENDER:'Suspender',BLOQUEO:'Bloqueo'})[r.nivel]),el('span',{},r.id+' · '+r.titulo)));
         box.append(el('div',{class:'muted',style:'font-size:12px;margin:6px 0 8px'},r.desc));
+        const nvl=el('select',{disabled:ro?true:null,style:'width:auto;display:inline-block;margin-left:8px'});[['AVISO','Aviso'],['SUSPENDER','Suspender'],['BLOQUEO','Bloqueo']].forEach(([val,t])=>nvl.append(el('option',{value:val},t)));nvl.value=R['nivel_'+r.id]||r.nivel;campos['nivel_'+r.id]={tipo:'txt',el:nvl};
+        box.append(el('div',{style:'font-size:12px;margin:0 0 8px'},el('span',{class:'muted'},'Nivel de la alerta (medida precautoria):'),nvl));
         if(r.params.length){const g=el('div',{class:'form-grid c3'});r.params.forEach(pr=>{const i=el('input',{type:pr.tipo==='txt'?'text':'number',step:'any',value:R[pr.key],disabled:ro?true:null});campos[pr.key]={tipo:pr.tipo==='txt'?'txt':'num',el:i};g.append(fld(pr.label+(pr.supuesto?' ⓘ':''),i));});box.append(g);}
         return box;
       };
-      [['AVISO','Alertas de aviso (monitoreo)'],['SUSPENDER','Alertas en tiempo real (suspender)'],['BLOQUEO','Alertas de bloqueo']].forEach(([n,t])=>{p3.append(el('div',{style:'font:700 12px Montserrat,sans-serif;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:12px 0 6px'},t));cat.reglas.filter(r=>r.nivel===n).forEach(r=>p3.append(pintar(r)));});
+      [['AVISO','Alertas de aviso (monitoreo)'],['SUSPENDER','Alertas en tiempo real (suspender)'],['BLOQUEO','Alertas de bloqueo']].forEach(([n,t])=>{p3.append(el('div',{style:'font:700 12px Montserrat,sans-serif;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:12px 0 6px'},t));cat.reglas.filter(r=>(R['nivel_'+r.id]||r.nivel)===n).forEach(r=>p3.append(pintar(r)));});
       p3.append(el('div',{style:'font:700 12px Montserrat,sans-serif;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:12px 0 6px'},'Criterios generales'));
       const gg=el('div',{class:'form-grid c2'});
       cat.globales.forEach(g=>{let i,tipo='txt';

@@ -1578,6 +1578,8 @@ app.put('/api/cumplimiento/config', auth, requiereRol('admin'), async (req, res)
   if (b.reglas && typeof b.reglas === 'object') {
     const actual = (await getConfigCump()).reglas; const nuevas = PLD.normalizarParametros(b.reglas, actual);
     await db.query('update cumplimiento.config set reglas=$1 where id=1', [JSON.stringify(nuevas)]);
+    // Si cambió el nivel de una regla, sus alertas abiertas (nuevas / en revisión) pasan al nuevo nivel.
+    for (const r of PLD.REGLAS) if (nuevas['nivel_' + r.id] !== actual['nivel_' + r.id]) await db.query("update cumplimiento.alertas set nivel=$1 where regla=$2 and estatus in ('NUEVA','EN_REVISION')", [nuevas['nivel_' + r.id], r.id]);
     await bit(req, 'cumplimiento_config_reglas', 'actualizó los parámetros de alertas y bloqueo (POL-CUM-FOR-006)');
   }
   await bit(req, 'cumplimiento_config', 'actualizó umbrales antifraude');
