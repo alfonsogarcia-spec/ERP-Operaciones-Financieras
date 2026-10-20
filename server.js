@@ -49,6 +49,7 @@ const DP = require('./lib/dispersion-pendiente.js');
 const CI = require('./lib/cumplimiento-ingesta.js');
 const PLD = require('./lib/pld-alertas.js');
 const PLDC = require('./lib/pld-correo.js');
+const MCC = require('./lib/mcc.js');
 const LP = require('./lib/layout-polipay.js');
 if (!C.ready()) console.warn('⚠  Cifrado app-layer NO configurado (falta ENCRYPTION_KEY_V1 o HMAC_PEPPER). Dual-write escribirá "plain:" en las columnas cifradas.');
 
@@ -484,6 +485,8 @@ app.delete('/api/usuarios/:id', auth, requiereRol('admin'), async (req, res) => 
 // Descarga del catálogo grupo × afiliación × tasas × costos como está ahora.
 // IMPORTANTE: debe declararse ANTES de `/api/catalogo/:tipo` — Express
 // matchearía `:tipo = "grupos-full.xlsx"` y devolvería 404.
+// Catálogo de MCC: se registra ANTES del handler paramétrico /api/catalogo/:tipo (si no, "mcc" caería ahí).
+app.get('/api/catalogo/mcc', auth, (req, res) => res.json(MCC.CATALOGO));
 app.get('/api/catalogo/grupos-full.xlsx', auth, async (req, res) => {
   if (!dbReady(res)) return;
   const [grupos, afilGrupo, afiliaciones, costos] = await Promise.all([getGrupos(), getAfilGrupo(), getAfiliaciones(), getCostos()]);
@@ -495,7 +498,8 @@ app.get('/api/catalogo/grupos-full.xlsx', auth, async (req, res) => {
     'costo_x_trx', 'pct_banca', 'int_tdd', 'int_tdc', 'int_amex', 'int_int', 'fee_broxel',
     // Tasa de descuento = intercambio del producto + fee Broxel (costo total del
     // adquirente por esa transacción, antes del margen sobre la tasa pactada).
-    'tasa_descuento_tdd', 'tasa_descuento_tdc', 'tasa_descuento_amex', 'tasa_descuento_int'];
+    'tasa_descuento_tdd', 'tasa_descuento_tdc', 'tasa_descuento_amex', 'tasa_descuento_int',
+    'mcc', 'descripcion_giro'];
   const filas = afilGrupo.map(ag => {
     const g = grupoPor(ag.id_grupo) || {};
     const af = afilPor(ag.numero_afiliacion) || {};
@@ -519,6 +523,7 @@ app.get('/api/catalogo/grupos-full.xlsx', auth, async (req, res) => {
       intAmex == null ? '' : intAmex, intInt == null ? '' : intInt,
       feeBroxel == null ? '' : feeBroxel,
       descuento(intTdd), descuento(intTdc), descuento(intAmex), descuento(intInt),
+      af.mcc == null ? '' : String(af.mcc).padStart(4, '0'), af.descripcion_giro || '',
     ];
   });
   filas.sort((a, b) => String(a[1]).localeCompare(String(b[1])) || String(a[2]).localeCompare(String(b[2])));
@@ -603,8 +608,21 @@ app.post('/api/catalogo/grupo-afiliacion', auth, requiereRol('admin'), async (re
     const val = Number(v) || 0; if (val < 0 || val >= 1) return res.status(400).json({ error: `tasa ${k} fuera de [0,1)` });
   }
   await db.query('insert into grupos(id_grupo,nombre_cliente,activo) values($1,$2,true) on conflict(id_grupo) do update set nombre_cliente=excluded.nombre_cliente', [idg, String(b.nombre_cliente).trim()]);
-  await db.query('insert into afiliaciones(numero_afiliacion,razon_social,ult3,id_afiliacion) values($1,$2,$3,$4) on conflict(numero_afiliacion) do update set razon_social=excluded.razon_social',
-    [afil, String(b.razon_social || '').trim(), E.ult3(afil), E.ult3(afil) + 'CPPX00']);
+  // MCC (4 dígitos) y descripción del giro de la afiliación: solo se tocan si vienen en la petición.
+  const mccIn = MCC.normalizarMcc(b.mcc);
+  if (!mccIn.ok) return res.status(400).json({ error: 'mcc_invalido', mensaje: 'El MCC debe ser un código de hasta 4 dígitos; elígelo de la lista.' });
+  const tocaGiro = Object.prototype.hasOwnProperty.call(b, 'mcc') || Object.prototype.hasOwnProperty.call(b, 'descripcion_giro');
+  // El MCC se elige del catálogo preestablecido (o se conserva uno antiguo que ya tenía la afiliación).
+  if (tocaGiro && mccIn.mcc != null && !MCC.enCatalogo(mccIn.mcc)) {
+    const actual = (await db.query('select mcc from afiliaciones where numero_afiliacion=$1', [afil])).rows[0];
+    if (!actual || Number(actual.mcc) !== mccIn.mcc) return res.status(400).json({ error: 'mcc_no_catalogo', mensaje: 'Ese MCC no está en el catálogo: elige uno de la lista.' });
+  }
+  const rzn = String(b.razon_social || '').trim();
+  // Se actualiza también la columna cifrada: getAfiliaciones() la prefiere sobre la de texto plano.
+  await db.query('insert into afiliaciones(numero_afiliacion,razon_social,ult3,id_afiliacion,razon_social_cifrada) values($1,$2,$3,$4,$5) on conflict(numero_afiliacion) do update set razon_social=excluded.razon_social, razon_social_cifrada=excluded.razon_social_cifrada',
+    [afil, rzn, E.ult3(afil), E.ult3(afil) + 'CPPX00', C.encrypt(rzn)]);
+  // La descripción sale del catálogo (se llena sola); solo un MCC antiguo fuera del catálogo conserva su texto.
+  if (tocaGiro) await db.query('update afiliaciones set mcc=$1, descripcion_giro=$2 where numero_afiliacion=$3', [mccIn.mcc, mccIn.mcc == null ? null : (MCC.descripcionDe(mccIn.mcc) || MCC.limpiarGiro(b.descripcion_giro) || null), afil]);
   await db.query(`insert into afil_grupo(id_grupo,numero_afiliacion,tasa_pac_tdd,tasa_pac_tdc,tasa_pac_amex,tasa_pac_int,costo_x_trx,pct_banca)
       values($1,$2,$3,$4,$5,$6,$7,$8)
       on conflict(id_grupo,numero_afiliacion) do update set tasa_pac_tdd=excluded.tasa_pac_tdd,tasa_pac_tdc=excluded.tasa_pac_tdc,tasa_pac_amex=excluded.tasa_pac_amex,tasa_pac_int=excluded.tasa_pac_int,costo_x_trx=excluded.costo_x_trx,pct_banca=excluded.pct_banca`,
@@ -715,7 +733,7 @@ app.post('/api/catalogo/feriados-mx', auth, requiereRol('admin'), async (req, re
 app.post('/api/catalogo/:tipo/import', auth, requiereRol('admin'), upload.single('archivo'), validaArchivo, async (req, res) => {
   if (!dbReady(res)) return;
   const parsed = req.file ? X.parseBuffer(req.file.buffer) : X.parseCSVText((req.body && req.body.csv) || '');
-  const objs = parsed.objs; let n = 0;
+  const objs = parsed.objs; let n = 0, mccIgnorados = 0;
   try {
     if (req.params.tipo === 'grupos') {
       for (const o of objs) {
@@ -724,6 +742,15 @@ app.post('/api/catalogo/:tipo/import', auth, requiereRol('admin'), upload.single
         {
           const rzn = String(o.razon_social || '');
           await db.query('insert into afiliaciones(numero_afiliacion,razon_social,ult3,id_afiliacion,razon_social_cifrada) values($1,$2,$3,$4,$5) on conflict(numero_afiliacion) do update set razon_social=excluded.razon_social, razon_social_cifrada=excluded.razon_social_cifrada', [afil, rzn, E.ult3(afil), E.ult3(afil) + 'CPPX00', C.encrypt(rzn)]);
+        }
+        // MCC / giro: solo si el archivo trae la columna con valor (un archivo viejo sin esas columnas no borra lo ya capturado).
+        {
+          // Solo MCC del catálogo (la descripción sale del catálogo); uno desconocido se ignora y se cuenta.
+          const mcIn = MCC.normalizarMcc(o.mcc);
+          if (mcIn.ok && mcIn.mcc != null) {
+            if (MCC.enCatalogo(mcIn.mcc)) await db.query('update afiliaciones set mcc=$1, descripcion_giro=$2 where numero_afiliacion=$3', [mcIn.mcc, MCC.descripcionDe(mcIn.mcc), afil]);
+            else mccIgnorados++;
+          } else if (!mcIn.ok) mccIgnorados++;
         }
         await db.query(`insert into afil_grupo(id_grupo,numero_afiliacion,tasa_pac_tdd,tasa_pac_tdc,tasa_pac_amex,tasa_pac_int,costo_x_trx,pct_banca) values($1,$2,$3,$4,$5,$6,$7,$8)
             on conflict(id_grupo,numero_afiliacion) do update set tasa_pac_tdd=excluded.tasa_pac_tdd,tasa_pac_tdc=excluded.tasa_pac_tdc,tasa_pac_amex=excluded.tasa_pac_amex,tasa_pac_int=excluded.tasa_pac_int,costo_x_trx=excluded.costo_x_trx,pct_banca=excluded.pct_banca`,
@@ -747,7 +774,7 @@ app.post('/api/catalogo/:tipo/import', auth, requiereRol('admin'), upload.single
       }
     } else return res.status(404).json({ error: 'tipo' });
     await bit(req, 'catalogo', `importó ${n} ${req.params.tipo}`);
-    res.json({ ok: true, importadas: n });
+    res.json({ ok: true, importadas: n, mcc_ignorados: mccIgnorados });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1598,8 +1625,9 @@ app.get('/api/cumplimiento/alertas', auth, async (req, res) => {
   if (!dbReady(res)) return;
   const { where, v } = condicionesAlertas(req.query || {});
   const limit = Math.min(parseInt(req.query.limit, 10) || 300, 1000);
-  const rows = (await db.query(`select id, regla, nivel, fecha::text f, hora_ini, hora_fin, terminal, comercio, cliente, numero_afiliacion afil, bin, tarjeta, monto, n_ops, detalle, evidencia, estatus, medida, nota, revisado_por, revisado_at, creada_at
-      from cumplimiento.alertas${where} order by case nivel when 'BLOQUEO' then 0 when 'SUSPENDER' then 1 else 2 end, fecha desc, id desc limit ${limit}`, v)).rows
+  const rows = (await db.query(`select al.id, al.regla, al.nivel, al.fecha::text f, al.hora_ini, al.hora_fin, al.terminal, al.comercio, al.cliente, al.numero_afiliacion afil, al.bin, al.tarjeta, al.monto, al.n_ops, al.detalle, al.evidencia, al.estatus, al.medida, al.nota, al.revisado_por, al.revisado_at, al.creada_at,
+        af.mcc, af.descripcion_giro as giro
+      from cumplimiento.alertas al left join afiliaciones af on af.numero_afiliacion = al.numero_afiliacion${where.replace(/\b(fecha|estatus|nivel|regla)\b/g, 'al.$1')} order by case al.nivel when 'BLOQUEO' then 0 when 'SUSPENDER' then 1 else 2 end, al.fecha desc, al.id desc limit ${limit}`, v)).rows
     .map(r => ({ ...r, monto: E.round2(Number(r.monto)), evidencia: typeof r.evidencia === 'string' ? JSON.parse(r.evidencia) : r.evidencia, accion: PLD.accionEjecutable(r) }));
   const rc = condicionesAlertas(req.query || {}, true);
   const resumen = (await db.query(`select nivel, estatus, count(*)::int n from cumplimiento.alertas${rc.where} group by 1,2`, rc.v)).rows;
@@ -4876,7 +4904,7 @@ app.get('/api/plantilla/:tipo.xlsx', auth, (req, res) => {
   else if (t === 'cumplimiento') sheet = { name: 'Transacciones', aoa: [CI.ENCABEZADOS_GATEWAY,
     ['100001', '05/10/2026', '10:15:22', '2026-10-05T16:15:22Z', 'DEAL', 'Comercio Demo', '7194416', 'APROBADO', '411111', '0234', 'LIQUIDADA', 'VISA', 'T01', 'VENTA', 'Débito', 'F001', 'REF001', '', 'A12345', 0, 1250.5, 0, 0, 'BBVA', 'Polipay', 'STP', 'CHIP'],
     ['100002', '05/10/2026', '10:16:40', '2026-10-05T16:16:40Z', 'DEAL', 'Comercio Demo', '7194416', 'RECHAZADO', '411111', '0234', '', 'VISA', 'T01', 'VENTA', 'Débito', 'F002', 'REF002', '', '', 0, 899, 0, 0, 'BBVA', 'Polipay', 'STP', 'URL']] };
-  else if (t === 'grupos') sheet = { name: 'Grupos', aoa: [['id_grupo', 'nombre_cliente', 'numero_afiliacion', 'razon_social', 'tasa_pac_tdd', 'tasa_pac_tdc', 'tasa_pac_amex', 'tasa_pac_int', 'costo_x_trx', 'pct_banca', 'int_tdd', 'int_tdc', 'int_amex', 'int_int', 'fee_broxel'], [3, 'DEAL', '7194416', 'Deal Comercializadora SA', 0.025, 0.029, 0.035, 0.038, 0, 0.005, 0.011, 0.015, 0.0247, 0.0302, 0.0028]] };
+  else if (t === 'grupos') sheet = { name: 'Grupos', aoa: [['id_grupo', 'nombre_cliente', 'numero_afiliacion', 'razon_social', 'tasa_pac_tdd', 'tasa_pac_tdc', 'tasa_pac_amex', 'tasa_pac_int', 'costo_x_trx', 'pct_banca', 'int_tdd', 'int_tdc', 'int_amex', 'int_int', 'fee_broxel', 'mcc', 'descripcion_giro'], [3, 'DEAL', '7194416', 'Deal Comercializadora SA', 0.025, 0.029, 0.035, 0.038, 0, 0.005, 0.011, 0.015, 0.0247, 0.0302, 0.0028, '5812', 'Restaurante de comida casual']] };
   else if (t === 'cuentas') sheet = { name: 'Cuentas', aoa: [['id_grupo', 'numero_afiliacion', 'nombre_comercial', 'razon_social_beneficiario', 'banco', 'clabe'], [3, '7194416', 'DEAL', 'Deal Comercializadora SA', 'STP', '646180123456789012']] };
   else return res.status(404).json({ error: 'tipo' });
   enviarXLSX(res, `plantilla_${t}.xlsx`, X.buildXLSX([sheet]));
