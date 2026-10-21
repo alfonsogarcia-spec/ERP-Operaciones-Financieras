@@ -1441,7 +1441,7 @@ async function vGrupos(v){
       {num:pct(+ag.tasa_pac_tdd)},{num:pct(+ag.tasa_pac_tdc)},{num:pct(+ag.tasa_pac_amex)},{num:pct(+ag.tasa_pac_int)},{num:pct(+ag.pct_banca||0)},
       co?'<span class="badge ok">sí</span>':'<span class="badge w">no</span>',
     ];
-    if(can('catalogos')) r._onclick=()=>editGrupo(ag,af,co);
+    if(can('catalogos')) r._onclick=()=>editGrupo({...ag,nombre_cliente:g?g.nombre_cliente:''},af,co);
     return r;
   });
   p.append(tableWrap(['',{t:'Grupo'},{t:'Afiliación'},'MCC / giro',{t:'Pac.TDD'},{t:'Pac.TDC'},{t:'Pac.AMEX'},{t:'Pac.INT'},{t:'%Banca'},'Costos'],rows,{empty:'Sin grupos. Usa "Alta guiada" o importa un CSV/Excel.'}));
@@ -1477,7 +1477,14 @@ function editGrupo(ag,af,co){const isNew=!ag;ag=ag||{};af=af||{};co=co||{};const
   const foot=el('div',{});
   if(!isNew)foot.append(el('button',{class:'btn danger',onclick:async()=>{if(confirm('¿Eliminar esta afiliación del grupo?')){await api('DELETE','/api/catalogo/afil-grupo/'+ag.id_grupo+'/'+ag.numero_afiliacion);closeModal();render();}}},'Eliminar'),el('div',{style:'flex:1'}));
   foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
-    try{await api('POST','/api/catalogo/grupo-afiliacion',{id_grupo:idg.value,nombre_cliente:nomInput.value,numero_afiliacion:afil.value,razon_social:razon.value,mcc:mccSel.value,descripcion_giro:giro.value,tasa_pac_tdd:t_tdd.value,tasa_pac_tdc:t_tdc.value,tasa_pac_amex:t_amex.value,tasa_pac_int:t_int.value,costo_x_trx:cxt.value,pct_banca:banca.value,int_tdd:i_tdd.value,int_tdc:i_tdc.value,int_amex:i_amex.value,int_int:i_int.value,fee_broxel:fee.value});
+    const enviar=(extra)=>api('POST','/api/catalogo/grupo-afiliacion',Object.assign({id_grupo:idg.value,nombre_cliente:nomInput.value,numero_afiliacion:afil.value,razon_social:razon.value,mcc:mccSel.value,descripcion_giro:giro.value,tasa_pac_tdd:t_tdd.value,tasa_pac_tdc:t_tdc.value,tasa_pac_amex:t_amex.value,tasa_pac_int:t_int.value,costo_x_trx:cxt.value,pct_banca:banca.value,int_tdd:i_tdd.value,int_tdc:i_tdc.value,int_amex:i_amex.value,int_int:i_int.value,fee_broxel:fee.value},extra||{}));
+    try{
+      try{await enviar();}
+      catch(e){
+        // Renombrar un grupo existente exige confirmación explícita (cambia el nombre de todas sus afiliaciones).
+        if(e.data&&e.data.error==='renombra_grupo'){ if(!confirm(e.data.mensaje+'\n\n¿Renombrar el grupo?')) return; await enviar({confirmar_renombrar:true}); }
+        else throw e;
+      }
       closeModal();toast('Guardado','ok');render();}catch(e){toast('Error: '+errMsg(e),'err');}
   }},'Guardar'));
   modal(isNew?'Alta guiada de grupo/afiliación':'Editar afiliación',body,foot,true);

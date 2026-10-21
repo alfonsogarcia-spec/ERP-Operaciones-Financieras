@@ -607,7 +607,16 @@ app.post('/api/catalogo/grupo-afiliacion', auth, requiereRol('admin'), async (re
   for (const [k, v] of [['tdd', b.tasa_pac_tdd], ['tdc', b.tasa_pac_tdc], ['amex', b.tasa_pac_amex], ['int', b.tasa_pac_int], ['banca', b.pct_banca]]) {
     const val = Number(v) || 0; if (val < 0 || val >= 1) return res.status(400).json({ error: `tasa ${k} fuera de [0,1)` });
   }
-  await db.query('insert into grupos(id_grupo,nombre_cliente,activo) values($1,$2,true) on conflict(id_grupo) do update set nombre_cliente=excluded.nombre_cliente', [idg, String(b.nombre_cliente).trim()]);
+  // Un grupo ya existente NO se renombra en silencio: el upsert cambiaba el nombre de TODAS sus afiliaciones (así "DEAL" apareció como "NOVEK").
+  const nombreNuevo = String(b.nombre_cliente).trim();
+  const existente = (await db.query('select nombre_cliente from grupos where id_grupo=$1', [idg])).rows[0];
+  if (existente && String(existente.nombre_cliente || '').trim() !== nombreNuevo && b.confirmar_renombrar !== true) {
+    const n = (await db.query('select count(*)::int n from afil_grupo where id_grupo=$1', [idg])).rows[0].n;
+    return res.status(409).json({ error: 'renombra_grupo', actual: existente.nombre_cliente, nuevo: nombreNuevo, afiliaciones: n,
+      mensaje: `El grupo #${idg} se llama "${existente.nombre_cliente}". Si continúas, se renombra a "${nombreNuevo}" y el cambio aplica a sus ${n} afiliación(es).` });
+  }
+  await db.query('insert into grupos(id_grupo,nombre_cliente,activo) values($1,$2,true) on conflict(id_grupo) do update set nombre_cliente=excluded.nombre_cliente', [idg, nombreNuevo]);
+  if (existente && String(existente.nombre_cliente || '').trim() !== nombreNuevo) await bit(req, 'catalogo', `RENOMBRÓ el grupo ${idg}: "${existente.nombre_cliente}" → "${nombreNuevo}"`);
   // MCC (4 dígitos) y descripción del giro de la afiliación: solo se tocan si vienen en la petición.
   const mccIn = MCC.normalizarMcc(b.mcc);
   if (!mccIn.ok) return res.status(400).json({ error: 'mcc_invalido', mensaje: 'El MCC debe ser un código de hasta 4 dígitos; elígelo de la lista.' });
@@ -733,12 +742,18 @@ app.post('/api/catalogo/feriados-mx', auth, requiereRol('admin'), async (req, re
 app.post('/api/catalogo/:tipo/import', auth, requiereRol('admin'), upload.single('archivo'), validaArchivo, async (req, res) => {
   if (!dbReady(res)) return;
   const parsed = req.file ? X.parseBuffer(req.file.buffer) : X.parseCSVText((req.body && req.body.csv) || '');
-  const objs = parsed.objs; let n = 0, mccIgnorados = 0;
+  const objs = parsed.objs; let n = 0, mccIgnorados = 0; const gruposNoRenombrados = [];
   try {
     if (req.params.tipo === 'grupos') {
       for (const o of objs) {
         if (!o.id_grupo || !o.numero_afiliacion) continue; const idg = parseInt(o.id_grupo, 10); const afil = String(o.numero_afiliacion).replace(/\D/g, '');
-        await db.query('insert into grupos(id_grupo,nombre_cliente,activo) values($1,$2,true) on conflict(id_grupo) do update set nombre_cliente=excluded.nombre_cliente', [idg, String(o.nombre_cliente || ('Grupo ' + idg))]);
+        // Un grupo que ya existe conserva su nombre (importar un archivo con otro nombre no lo renombra); se avisa en la respuesta.
+        {
+          const nom = String(o.nombre_cliente || ('Grupo ' + idg)).trim();
+          const ex = (await db.query('select nombre_cliente from grupos where id_grupo=$1', [idg])).rows[0];
+          if (!ex) await db.query('insert into grupos(id_grupo,nombre_cliente,activo) values($1,$2,true)', [idg, nom]);
+          else if (String(ex.nombre_cliente || '').trim() !== nom && !gruposNoRenombrados.some(g => g.id_grupo === idg)) gruposNoRenombrados.push({ id_grupo: idg, nombre_actual: ex.nombre_cliente, nombre_archivo: nom });
+        }
         {
           const rzn = String(o.razon_social || '');
           await db.query('insert into afiliaciones(numero_afiliacion,razon_social,ult3,id_afiliacion,razon_social_cifrada) values($1,$2,$3,$4,$5) on conflict(numero_afiliacion) do update set razon_social=excluded.razon_social, razon_social_cifrada=excluded.razon_social_cifrada', [afil, rzn, E.ult3(afil), E.ult3(afil) + 'CPPX00', C.encrypt(rzn)]);
@@ -774,7 +789,7 @@ app.post('/api/catalogo/:tipo/import', auth, requiereRol('admin'), upload.single
       }
     } else return res.status(404).json({ error: 'tipo' });
     await bit(req, 'catalogo', `importó ${n} ${req.params.tipo}`);
-    res.json({ ok: true, importadas: n, mcc_ignorados: mccIgnorados });
+    res.json({ ok: true, importadas: n, mcc_ignorados: mccIgnorados, grupos_no_renombrados: gruposNoRenombrados });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
