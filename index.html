@@ -4,8 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <script>/* aplica modo y paleta antes de pintar (sin parpadeo) */
-    (function(){try{var m=localStorage.getItem("_modoPreview");if(m==="dark"||m==="light")document.documentElement.setAttribute("data-theme",m);var p=localStorage.getItem("_paletaPreview");if(p&&p!=="azul")document.documentElement.setAttribute("data-palette",p);}catch(e){}})();
+  <script>/* aplica modo, paleta y estilo antes de pintar (sin parpadeo) */
+    (function(){try{var m=localStorage.getItem("_modoPreview");if(m==="dark"||m==="light")document.documentElement.setAttribute("data-theme",m);var p=localStorage.getItem("_paletaPreview");if(p&&p!=="azul")document.documentElement.setAttribute("data-palette",p);var e=localStorage.getItem("_estiloPreview");if(e==="fintech")document.documentElement.setAttribute("data-estilo",e);}catch(e){}})();
   </script>
   <link rel="icon" type="image/png" href="/public/logo-symbol.png" />
   <title>Polipay POS Settlement</title>
@@ -48,6 +48,7 @@
       --scrim:rgba(11,18,32,.34); --fade:rgba(15,23,42,.10);
       --logo-filter:none;
       --blur:22px;
+      --strip:rgba(15,23,42,.045); --zebra:rgba(15,23,42,.018);   /* separar sin líneas: encabezado y filas */
 
       /* --- Texto --- */
       --ink:#0B1220; --muted:#5A6580; --on-fill:#fff;
@@ -86,6 +87,7 @@
     @media (prefers-color-scheme:dark){
       :root:not([data-theme="light"]){
         color-scheme:dark;
+          --strip:rgba(255,255,255,.06); --zebra:rgba(255,255,255,.022);
         --brand:#E8ECF8; --accent:#4C9BFF; --accent2:#7DB4FF; --accent-soft:rgba(76,155,255,.15);
         --accent-ink:#8DBEFF; --focus:#7DB4FF;
         --mesh1:rgba(21,123,246,.22); --mesh2:rgba(124,92,230,.16); --mesh3:rgba(14,165,233,.12);
@@ -106,6 +108,7 @@
     }
     :root[data-theme="dark"]{
       color-scheme:dark;
+      --strip:rgba(255,255,255,.06); --zebra:rgba(255,255,255,.022);
       --brand:#E8ECF8; --accent:#4C9BFF; --accent2:#7DB4FF; --accent-soft:rgba(76,155,255,.15);
       --accent-ink:#8DBEFF; --focus:#7DB4FF;
       --mesh1:rgba(21,123,246,.22); --mesh2:rgba(124,92,230,.16); --mesh3:rgba(14,165,233,.12);
@@ -253,17 +256,20 @@
     .grid2{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-5);align-items:start}
 
     table{width:100%;border-collapse:collapse}
-    th,td{text-align:left;padding:14px var(--sp-4);border-bottom:1px solid var(--line);font-size:var(--fs-md);vertical-align:middle}
-    thead th{background:var(--bar);color:var(--muted);font-weight:var(--fw-bold);font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.07em;position:sticky;top:0;backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px) saturate(160%);border-bottom:1px solid var(--line-strong);white-space:nowrap;z-index:1}
-    thead th:first-child{border-top-left-radius:var(--radius)}
-    thead th:last-child{border-top-right-radius:var(--radius)}
+    th,td{text-align:left;padding:14px var(--sp-4);border-bottom:0;font-size:var(--fs-md);vertical-align:middle}
+    thead th{background:var(--strip);color:var(--muted);font-weight:var(--fw-bold);font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.07em;position:sticky;top:0;backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px) saturate(160%);white-space:nowrap;z-index:1}
+    thead th:first-child{border-radius:var(--radius-sm) 0 0 var(--radius-sm)}
+    thead th:last-child{border-radius:0 var(--radius-sm) var(--radius-sm) 0}
+    tbody tr:nth-child(even){background:var(--zebra)}
+    tbody td:first-child{border-radius:var(--radius-sm) 0 0 var(--radius-sm)}
+    tbody td:last-child{border-radius:0 var(--radius-sm) var(--radius-sm) 0}
     tbody tr{transition:background var(--dur-fast) var(--ease),box-shadow var(--dur-fast) var(--ease)}
-    tbody tr:hover{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+    tbody tr:hover{background:var(--accent-tint)}
     tbody tr:last-child td{border-bottom:none}
     td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
     td .tt{font-weight:var(--fw-semibold);color:var(--ink);line-height:1.3}
     td .tt small{display:block;color:var(--muted);font-weight:var(--fw-regular);margin-top:2px;font-size:var(--fs-sm)}
-    .tablewrap{position:relative;overflow:auto;max-height:none;border:1px solid var(--line);border-radius:var(--radius);box-shadow:inset 0 1px 0 var(--edge-hi);scroll-behavior:smooth}
+    .tablewrap{position:relative;overflow:auto;max-height:none;border-radius:var(--radius-sm);scroll-behavior:smooth}
     .tablewrap table{min-width:640px}
     .tablewrap::before,.tablewrap::after{content:'';position:absolute;top:0;bottom:0;width:28px;pointer-events:none;z-index:2;opacity:0;transition:opacity var(--dur) var(--ease)}
     .tablewrap::before{left:0;background:linear-gradient(to right,var(--fade),transparent)}
@@ -325,10 +331,15 @@
     .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 14px;min-width:0}
     .form-grid.c3{grid-template-columns:1fr 1fr 1fr}
     .form-grid>*{min-width:0}
-    .banner{background:var(--accent-tint);border:1px solid var(--accent-edge);color:var(--accent-ink);padding:var(--sp-3) var(--sp-4);border-radius:var(--radius-sm);font-size:var(--fs-md);margin-bottom:var(--sp-4);backdrop-filter:blur(10px)}
-    .banner.warn{background:var(--warn-tint);border-color:var(--warn-edge);color:var(--warn)}
-    .banner.err{background:var(--danger-tint);border-color:var(--danger-edge);color:var(--danger-ink)}
-    .banner.ok{background:var(--ok-tint);border-color:var(--ok-edge);color:var(--ok-ink)}
+    .banner{position:relative;background:transparent;border:0;color:var(--muted);padding:2px 0 2px 28px;border-radius:var(--radius-sm);font-size:var(--fs-md);line-height:1.5;margin-bottom:var(--sp-4)}
+    .banner b,.banner strong{color:var(--ink)}
+    .banner::before{content:'i';position:absolute;left:0;top:2px;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;font:var(--fw-bold) var(--fs-xs)/1 var(--font);background:var(--accent-fill);color:var(--on-fill)}
+    .banner.warn,.banner.err,.banner.ok{padding:10px var(--sp-3) 10px 40px}
+    .banner.warn::before,.banner.err::before,.banner.ok::before{left:var(--sp-3);top:11px}
+    .banner.warn{background:var(--warn-tint);color:var(--warn)} .banner.warn::before{content:'!';background:var(--warn-fill);color:var(--warn-on)}
+    .banner.err{background:var(--danger-tint);color:var(--danger-ink)} .banner.err::before{content:'!';background:var(--danger)}
+    .banner.ok{background:var(--ok-tint);color:var(--ok-ink)} .banner.ok::before{content:'✓';background:var(--ok)}
+    .banner.warn b,.banner.err b,.banner.ok b,.banner.warn strong,.banner.err strong,.banner.ok strong{color:inherit}
     .empty{text-align:center;color:var(--muted);padding:36px}
     .muted{color:var(--muted)}
     .mono{font-family:var(--font-mono)}
@@ -399,6 +410,102 @@
     .theme-dev-menu .opt .check{margin-left:auto;font-size:var(--fs-sm);opacity:0}
     .theme-dev-menu .opt.active .check{opacity:1}
 
+
+    /* =====================================================================
+       ESTILO "FINTECH" (data-estilo="fintech"): mismo vidrio, más preciso.
+       Malla tenue que sigue al acento + verde de dinero, vidrio más opaco con
+       filo de luz, radios medios, barra lateral navy, cifras protagonistas.
+       Las paletas siguen funcionando porque la malla se mezcla desde --accent.
+       ===================================================================== */
+    :root[data-estilo="fintech"]{
+      --radius-xs:6px; --radius-sm:10px; --radius:14px; --radius-lg:18px;
+      --blur:18px;
+      --money:#10B981;                       /* tono "dinero" solo para la malla */
+    }
+    /* Fintech claro */
+    :root[data-estilo="fintech"][data-theme="light"],
+    :root[data-estilo="fintech"]:not([data-theme]){
+      --bg:#F2F5FA;
+      --mesh1:color-mix(in srgb,var(--accent) 18%,transparent);
+      --mesh2:color-mix(in srgb,var(--money) 10%,transparent);
+      --mesh3:color-mix(in srgb,var(--oxford) 8%,transparent);
+      --panel:rgba(255,255,255,.80); --panel-strong:rgba(255,255,255,.94);
+      --glass-2:rgba(255,255,255,.70); --glass-3:rgba(255,255,255,.86);
+      --bar:rgba(248,250,253,.88);
+      --glass-border:rgba(255,255,255,.80); --edge-hi:rgba(255,255,255,.95);
+      --sheen:rgba(255,255,255,.55);
+      --line:rgba(10,17,36,.08); --line-strong:rgba(10,17,36,.14);
+      --ink:#0A1124; --muted:#56607A;
+      --sidebar-a:rgba(6,10,30,.94); --sidebar-b:rgba(6,10,30,.94);
+      --shadow:0 1px 2px rgba(10,17,36,.04),0 10px 28px -10px rgba(10,17,36,.12);
+      --shadow-lg:0 24px 60px -12px rgba(10,17,36,.22),0 2px 6px rgba(10,17,36,.06);
+    }
+    /* Fintech oscuro (sistema oscuro o fijado) */
+    @media (prefers-color-scheme:dark){
+      :root[data-estilo="fintech"]:not([data-theme]){
+        --bg:#050814;
+        --mesh1:color-mix(in srgb,var(--accent) 20%,transparent);
+        --mesh2:color-mix(in srgb,var(--money) 10%,transparent);
+        --mesh3:color-mix(in srgb,var(--accent2) 8%,transparent);
+        --panel:rgba(16,23,42,.62); --panel-strong:rgba(16,23,42,.92);
+        --glass-2:rgba(255,255,255,.05); --glass-3:rgba(255,255,255,.09);
+        --bar:rgba(12,18,34,.86);
+        --glass-border:rgba(255,255,255,.08); --edge-hi:rgba(255,255,255,.07);
+        --sheen:rgba(255,255,255,.035);
+        --line:rgba(255,255,255,.07); --line-strong:rgba(255,255,255,.14);
+        --ink:#E7ECF7; --muted:#95A1BD;
+        --sidebar-a:rgba(8,12,28,.72); --sidebar-b:rgba(8,12,28,.72);
+        --shadow:0 1px 2px rgba(0,0,0,.30),0 12px 32px -12px rgba(0,0,0,.55);
+        --shadow-lg:0 28px 70px -12px rgba(0,0,0,.70),0 2px 6px rgba(0,0,0,.35);
+      }
+    }
+    :root[data-estilo="fintech"][data-theme="dark"]{
+      --bg:#050814;
+      --mesh1:color-mix(in srgb,var(--accent) 20%,transparent);
+      --mesh2:color-mix(in srgb,var(--money) 10%,transparent);
+      --mesh3:color-mix(in srgb,var(--accent2) 8%,transparent);
+      --panel:rgba(16,23,42,.62); --panel-strong:rgba(16,23,42,.92);
+      --glass-2:rgba(255,255,255,.05); --glass-3:rgba(255,255,255,.09);
+      --bar:rgba(12,18,34,.86);
+      --glass-border:rgba(255,255,255,.08); --edge-hi:rgba(255,255,255,.07);
+      --sheen:rgba(255,255,255,.035);
+      --line:rgba(255,255,255,.07); --line-strong:rgba(255,255,255,.14);
+      --ink:#E7ECF7; --muted:#95A1BD;
+      --sidebar-a:rgba(8,12,28,.72); --sidebar-b:rgba(8,12,28,.72);
+      --shadow:0 1px 2px rgba(0,0,0,.30),0 12px 32px -12px rgba(0,0,0,.55);
+      --shadow-lg:0 28px 70px -12px rgba(0,0,0,.70),0 2px 6px rgba(0,0,0,.35);
+    }
+
+    /* Componentes en estilo fintech */
+    [data-estilo="fintech"] body::before{filter:blur(80px) saturate(120%)}
+    [data-estilo="fintech"] .sidebar{margin:12px 0 12px 12px;top:12px;height:calc(100vh - 24px);border:1px solid var(--glass-border);box-shadow:inset 0 1px 0 var(--edge-hi),var(--shadow-lg)}
+    [data-estilo="fintech"] .sidebar nav a{padding:9px var(--sp-3)}
+    [data-estilo="fintech"] .sidebar nav a.active{background:rgba(255,255,255,.08);box-shadow:inset 2px 0 0 var(--accent2)}
+    [data-estilo="fintech"] .card,
+    [data-estilo="fintech"] .panel{background:linear-gradient(180deg,var(--sheen),transparent 46%),var(--panel);border-color:var(--glass-border);box-shadow:inset 0 1px 0 var(--edge-hi),var(--shadow)}
+    [data-estilo="fintech"] .card:hover{transform:none;border-color:var(--line-strong);box-shadow:inset 0 1px 0 var(--edge-hi),var(--shadow)}
+    [data-estilo="fintech"] .card .label{font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.06em}
+    [data-estilo="fintech"] .card .value{font-weight:var(--fw-semibold);letter-spacing:-.02em;font-variant-numeric:tabular-nums slashed-zero}
+    [data-estilo="fintech"] .panel h3{font-size:var(--fs-base)}
+    [data-estilo="fintech"] td.num,[data-estilo="fintech"] th.num{font-variant-numeric:tabular-nums slashed-zero;white-space:nowrap}
+    [data-estilo="fintech"] thead th{font-weight:var(--fw-semibold);letter-spacing:.06em}
+    [data-estilo="fintech"] tbody tr:hover{background:var(--accent-tint)}
+    /* Botón: solo cambia forma y relieve; el color sigue saliendo de cada variante */
+    [data-estilo="fintech"] .btn{border-radius:var(--radius-sm)}
+    [data-estilo="fintech"] .btn:hover{transform:none}
+    [data-estilo="fintech"] .btn:not(.secondary):not(.ghost):not(.danger){box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 1px 2px rgba(0,0,0,.12),0 6px 16px -6px var(--accent-glow)}
+    [data-estilo="fintech"] .btn.secondary,
+    [data-estilo="fintech"] .btn.ghost,
+    [data-estilo="fintech"] .btn.danger{box-shadow:inset 0 1px 0 var(--edge-hi)}
+    [data-estilo="fintech"] .tabs{border-radius:var(--radius-sm);padding:3px}
+    [data-estilo="fintech"] .tab{border-radius:8px;padding:6px var(--sp-3)}
+    [data-estilo="fintech"] .tab.active{background:var(--panel-strong);color:var(--ink);box-shadow:inset 0 1px 0 var(--edge-hi),var(--shadow)}
+    [data-estilo="fintech"] .step{border-radius:var(--radius-sm)}
+    [data-estilo="fintech"] .toast{border-radius:var(--radius-sm)}
+    [data-estilo="fintech"] input:focus,[data-estilo="fintech"] select:focus,[data-estilo="fintech"] textarea:focus{box-shadow:0 0 0 3px var(--accent-tint)}
+    .theme-dev-menu .opt .dot.e-clasico{background:linear-gradient(135deg,#5BA3F9 0%,#7C5CE6 100%)}
+    .theme-dev-menu .opt .dot.e-fintech{background:linear-gradient(135deg,#10B981 0%,#157BF6 55%,#050814 100%)}
+
     /* --- Accesibilidad --- */
     :focus{outline:none}
     :focus-visible{outline:2px solid var(--focus);outline-offset:2px}
@@ -428,6 +535,9 @@
     <button class="opt" data-m="sistema" onclick="setModo('sistema')" type="button" role="menuitemradio"><span class="dot m-sys"></span>Sistema<span class="check">✓</span></button>
     <button class="opt" data-m="claro" onclick="setModo('claro')" type="button" role="menuitemradio"><span class="dot m-light"></span>Claro<span class="check">✓</span></button>
     <button class="opt" data-m="oscuro" onclick="setModo('oscuro')" type="button" role="menuitemradio"><span class="dot m-dark"></span>Oscuro<span class="check">✓</span></button>
+    <span class="lbl sep">Estilo</span>
+    <button class="opt" data-e="clasico" onclick="setEstilo('clasico')" type="button" role="menuitemradio"><span class="dot e-clasico"></span>Clásico<span class="check">✓</span></button>
+    <button class="opt" data-e="fintech" onclick="setEstilo('fintech')" type="button" role="menuitemradio"><span class="dot e-fintech"></span>Fintech<span class="check">✓</span></button>
     <span class="lbl sep">Paleta</span>
     <button class="opt" data-p="azul" onclick="setPaleta('azul',this)" type="button"><span class="dot azul"></span>Ártico<span class="check">✓</span></button>
     <button class="opt" data-p="violeta" onclick="setPaleta('violeta',this)" type="button"><span class="dot violeta"></span>Violeta<span class="check">✓</span></button>
@@ -445,6 +555,14 @@
     else document.documentElement.setAttribute('data-palette', p);
     try{ localStorage.setItem('_paletaPreview', p); }catch(e){}
     document.querySelectorAll('.theme-dev-menu .opt[data-p]').forEach(o=>o.classList.toggle('active', o.dataset.p === p));
+    toggleThemeMenu(false);
+  }
+  // Estilo: "clasico" no fija atributo; "fintech" activa los overrides [data-estilo="fintech"].
+  function setEstilo(e){
+    if (e === 'clasico') document.documentElement.removeAttribute('data-estilo');
+    else document.documentElement.setAttribute('data-estilo', e);
+    try{ if (e === 'clasico') localStorage.removeItem('_estiloPreview'); else localStorage.setItem('_estiloPreview', e); }catch(err){}
+    document.querySelectorAll('.theme-dev-menu .opt[data-e]').forEach(o=>o.classList.toggle('active', o.dataset.e === e));
     toggleThemeMenu(false);
   }
   // Modo: "sistema" no fija atributo (manda prefers-color-scheme); claro/oscuro lo fijan.
@@ -472,6 +590,8 @@
       try{ const s = localStorage.getItem('_modoPreview'); m = s === 'dark' ? 'oscuro' : s === 'light' ? 'claro' : 'sistema'; }catch(e){}
       const om = document.querySelector('.theme-dev-menu .opt[data-m="'+m+'"]');
       if (om) om.classList.add('active');
+      const oe = document.querySelector('.theme-dev-menu .opt[data-e="'+(document.documentElement.getAttribute('data-estilo') || 'clasico')+'"]');
+      if (oe) oe.classList.add('active');
     });
   })();
 
