@@ -3706,10 +3706,9 @@ async function armarInformeHTML(idCorte, opts) {
   // Dispersiones que faltaron en un corte ANTERIOR y se recuperan en ESTE
   // (el correo se manda en el corte donde el pago realmente sale, no en el
   // corte donde falló — ahí solo queda el registro de auditoría interno).
-  const razonPorAfil = new Map(cal.map(x => [String(x.afil), x.razon]));
   const afiliacionesCorte = [...new Set(cal.map(x => String(x.afil)))];
   const pendientesRecuperadas = (await DP.pendientesORecuperadasEnCorte(db, afiliacionesCorte, idCorte))
-    .map(p => ({ razon: razonPorAfil.get(String(p.numero_afiliacion)) || p.grupo_cliente, afil: p.numero_afiliacion, bloque: p.bloque, monto: p.monto, motivo: p.motivo, origenCorteId: p.origen_corte_id }));
+    .map(p => ({ razon: DP.razonDePendiente(p, cal) || '—', afil: p.numero_afiliacion, bloque: p.bloque, monto: p.monto, motivo: p.motivo, origenCorteId: p.origen_corte_id }));
   const totalNoDispersado = pendientesRecuperadas.reduce((s, x) => s + Number(x.monto || 0), 0);
   const layoutPendAdjunto = pendientesRecuperadas.length ? await construirLayoutPendientes(idCorte) : null;
   const hayLayoutRecuperacionAdjunto = !!(layoutPendAdjunto && !layoutPendAdjunto.bloqueado);
