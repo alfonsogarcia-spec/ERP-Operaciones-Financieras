@@ -2037,8 +2037,45 @@ app.post('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res)
 
 app.get('/api/cortes', auth, async (req, res) => {
   if (!dbReady(res)) return;
-  const rows = (await db.query('select * from cortes order by id_corte desc')).rows.map(c => ({ ...c, total_monto: Number(c.total_monto), total_comp: Number(c.total_comp), total_disp: Number(c.total_disp) }));
+  const grp = (await db.query('select corte_id, array_agg(distinct razon order by razon) as grupos from calculos group by corte_id')).rows;
+  const gruposDe = new Map(grp.map(g => [g.corte_id, (g.grupos || []).filter(Boolean)]));
+  const rows = (await db.query('select *, fecha_liq_iso::text as fli from cortes order by id_corte desc')).rows.map(c => ({ ...c, total_monto: Number(c.total_monto), total_comp: Number(c.total_comp), total_disp: Number(c.total_disp), grupos: gruposDe.get(c.id_corte) || [] }));
   res.json(rows);
+});
+// Reporte por cliente de UN corte (?corte=) o HISTÓRICO (?desde=&hasta=&estado=), opcionalmente de un solo
+// cliente (?cliente= razón del grupo). Va antes de /api/cortes/:id para que Express no lo tome como id.
+app.get('/api/cortes/reporte-cliente.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const q = req.query || {};
+  const isoOk = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+  const where = [], args = [];
+  if (q.corte) { args.push(parseInt(q.corte, 10)); where.push(`id_corte=$${args.length}`); }
+  else {
+    if (isoOk(q.desde)) { args.push(q.desde); where.push(`fecha_liq_iso>=$${args.length}`); }
+    if (isoOk(q.hasta)) { args.push(q.hasta); where.push(`fecha_liq_iso<=$${args.length}`); }
+    if (q.estado) { args.push(String(q.estado)); where.push(`estado=$${args.length}`); }
+  }
+  const cortes = (await db.query(`select *, fecha_liq_iso::text as fli from cortes${where.length ? ' where ' + where.join(' and ') : ''} order by fecha_liq_iso, id_corte`, args)).rows;
+  if (!cortes.length) return res.status(404).json({ error: 'sin_datos', mensaje: 'No hay cortes con esos filtros.' });
+  const cliente = q.cliente ? String(q.cliente) : '';
+  const porId = new Map(cortes.map(c => [c.id_corte, c]));
+  let cal = (await db.query('select * from calculos where corte_id = any($1::int[]) order by corte_id, razon, afil', [cortes.map(c => c.id_corte)])).rows
+    .map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc, _corte: x.corte_id, _fli: porId.get(x.corte_id).fli }));
+  if (cliente) cal = cal.filter(x => nrm(x.razon) === nrm(cliente));
+  if (!cal.length) return res.status(404).json({ error: 'sin_datos', mensaje: 'Ese cliente no aparece en los cortes seleccionados.' });
+  const slug = cliente ? '_' + cliente.replace(/[^\w]+/g, '_').slice(0, 40) : '';
+  if (cortes.length === 1) {
+    const c = cortes[0];
+    await bit(req, 'reporte', `exportó reporte por cliente corte #${c.id_corte}${cliente ? ' · ' + cliente : ''}`);
+    const buf = await buildReporteXLSX(c, cal, cliente ? { cliente } : {});
+    return enviarXLSX(res, `reporte_cliente_corte_${c.id_corte}_${c.fli}${slug}.xlsx`, buf);
+  }
+  // Rango y número de cortes según las filas que sí entran (con cliente, solo los cortes donde aparece).
+  const usados = cortes.filter(c => cal.some(x => x._corte === c.id_corte));
+  const desde = usados[0].fli, hasta = usados[usados.length - 1].fli;
+  await bit(req, 'reporte', `exportó reporte por cliente histórico ${desde} a ${hasta} (${usados.length} cortes)${cliente ? ' · ' + cliente : ''}`);
+  const buf = await buildReporteXLSX({ fli: null, creado_por: req.user.nombre }, cal, { historico: { desde, hasta, n: usados.length }, cliente });
+  enviarXLSX(res, `reporte_cliente_historico_${desde}_a_${hasta}${slug}.xlsx`, buf);
 });
 // Auditoría (solo lectura): cortes donde se retuvo de más por afiliaciones compartidas por varios grupos.
 app.get('/api/cortes/auditoria-retenciones', auth, requiereRol('admin', 'tesoreria', 'bancos'), async (req, res) => {
@@ -2493,7 +2530,9 @@ async function buildDetalleTransaccionalXLSX(corte, calculos, txs, cat) {
 
 // Reporte por cliente con el formato+estilo de PLANTILLA REPORTE.xlsx.
 // Se usa exceljs (soporta estilos: fill/font/align/border/numFmt/freeze).
-async function buildReporteXLSX(c, cal) {
+async function buildReporteXLSX(c, cal, opts = {}) {
+  const hist = opts.historico || null;           // { desde, hasta, n }: varias filas de distintos cortes
+  const sumarFilas = !!(hist || opts.cliente);  // con filtro, el total sale de las filas, no del corte
   // Fecha larga en español: "06 de agosto de 2026"
   const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
   const iso = c.fli || (c.fecha_liq_iso && String(c.fecha_liq_iso).slice(0,10));
@@ -2506,8 +2545,10 @@ async function buildReporteXLSX(c, cal) {
   const aj = x => (x.ajustes ? (typeof x.ajustes === 'string' ? JSON.parse(x.ajustes) : x.ajustes) : {});
   const ccOf  = x => { const a = aj(x); return (Number(a.contracargo_solo_dom || 0) + Number(a.contracargo_solo_amex || 0)); };
   const finOf = x => { const a = aj(x); return (Number(a.financiamiento_dom || 0) + Number(a.financiamiento_amex || 0)); };
-  const head = ['Grupo','Afiliación','Concepto','Monto','Débito','Crédito','American Express','Internacional','A Compensar','Banca + IVA','Contracargos','Retenciones','A Dispersar','Diferencia'];
+  const pre = hist ? ['Corte','Fecha liq.'] : [];
+  const head = [...pre, 'Grupo','Afiliación','Concepto','Monto','Débito','Crédito','American Express','Internacional','A Compensar','Banca + IVA','Contracargos','Retenciones','A Dispersar','Diferencia'];
   const dataRows = cal.map(x => { const r = x.calc; return [
+    ...(hist ? [`#${x._corte}`, x._fli] : []),
     x.razon,
     String(x.afil),
     x.concepto,
@@ -2527,19 +2568,22 @@ async function buildReporteXLSX(c, cal) {
   const sumaBanca = cal.reduce((s, x) => s + (Number(x.calc.banca||0) + Number(x.calc.iva_banca||0)), 0);
   const sumaCC    = cal.reduce((s, x) => s + ccOf(x), 0);
   const sumaFin   = cal.reduce((s, x) => s + finOf(x), 0);
-  const totalRow = ['TOTAL','','',
-    Number(c.total_monto),
+  const sum = f => E.round2(cal.reduce((s, x) => s + Number(f(x.calc) || 0), 0));
+  const totalRow = [...pre.map(() => ''), 'TOTAL','','',
+    sumarFilas ? sum(r => r.m_tdd + r.m_tdc + r.m_amex + r.m_int) : Number(c.total_monto),
     E.round2(cal.reduce((s,x)=>s+Number(x.calc.m_tdd||0),0)),
     E.round2(cal.reduce((s,x)=>s+Number(x.calc.m_tdc||0),0)),
     E.round2(cal.reduce((s,x)=>s+Number(x.calc.m_amex||0),0)),
     E.round2(cal.reduce((s,x)=>s+Number(x.calc.m_int||0),0)),
-    Number(c.total_comp),
+    sumarFilas ? sum(r => r.comp_total) : Number(c.total_comp),
     E.round2(sumaBanca),
     E.round2(sumaCC),
     E.round2(sumaFin),
-    Number(c.total_disp),
+    sumarFilas ? sum(r => r.disp_total) : Number(c.total_disp),
     '',
   ];
+  const NC = head.length, TXT = pre.length + 3;          // columnas totales / columnas de texto
+  const ULT = String.fromCharCode(64 + NC);               // última columna (N, o P en histórico)
 
   // Colores/estilos de la plantilla original
   const AZUL_MARINO = 'FF051B3B';  // fila POLIPAY
@@ -2557,6 +2601,7 @@ async function buildReporteXLSX(c, cal) {
 
   // Anchos de columna (los de la plantilla + Contracargos + Retenciones)
   ws.columns = [
+    ...(hist ? [{ width: 9 }, { width: 12 }] : []),
     { width: 24 }, { width: 13 }, { width: 24 }, { width: 15 },
     { width: 14 }, { width: 13 }, { width: 13 }, { width: 13 },
     { width: 15 }, { width: 14 }, { width: 14 }, { width: 14 },
@@ -2566,7 +2611,7 @@ async function buildReporteXLSX(c, cal) {
   const fill = c => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } });
   const setStyle = (row, opts) => {
     if (opts.height) row.height = opts.height;
-    for (let col = 1; col <= 14; col++) {
+    for (let col = 1; col <= NC; col++) {
       const cell = row.getCell(col);
       if (opts.fill) cell.fill = fill(opts.fill);
       if (opts.font) cell.font = Object.assign({ name: FONT_NAME }, opts.font);
@@ -2576,50 +2621,52 @@ async function buildReporteXLSX(c, cal) {
   };
 
   // Fila 1: POLIPAY
-  const r1 = ws.addRow(['POLIPAY']); ws.mergeCells('A1:N1');
+  const r1 = ws.addRow(['POLIPAY']); ws.mergeCells(`A1:${ULT}1`);
   setStyle(r1, { height: 33.75, fill: AZUL_MARINO, font: { color: { argb: BLANCO }, bold: true, size: 20, name: FONT_NAME }, align: { horizontal: 'left', vertical: 'middle', indent: 1 } });
 
   // Fila 2: subtítulo
-  const r2 = ws.addRow(['Reporte por Cliente  ·  Agregado por grupo y afiliación']); ws.mergeCells('A2:N2');
+  const r2 = ws.addRow(['Reporte por Cliente  ·  Agregado por grupo y afiliación']); ws.mergeCells(`A2:${ULT}2`);
   setStyle(r2, { height: 21.75, fill: BLANCO, font: { color: { argb: AZUL_HEADER }, bold: true, size: 12, name: FONT_NAME }, align: { horizontal: 'left', vertical: 'middle', indent: 1 } });
 
   // Fila 3: corte + fecha
-  const r3 = ws.addRow([`Corte ${c.id_corte}   |   ${fechaLarga}   |   Generado ${hoyStr}`]); ws.mergeCells('A3:N3');
+  const largo = iso => { const [y, m, d] = String(iso || '').split('-'); return y ? `${d} de ${MESES[+m - 1]} de ${y}` : ''; };
+  const alcance = hist ? `Histórico · ${hist.n} cortes · ${largo(hist.desde)} a ${largo(hist.hasta)}` : `Corte ${c.id_corte}   |   ${fechaLarga}`;
+  const r3 = ws.addRow([`${alcance}${opts.cliente ? '   |   Cliente: ' + opts.cliente : ''}   |   Generado ${hoyStr}`]); ws.mergeCells(`A3:${ULT}3`);
   setStyle(r3, { height: 15.75, fill: BLANCO, font: { color: { argb: GRIS_META }, size: 9, name: FONT_NAME }, align: { horizontal: 'left', vertical: 'middle', indent: 1 } });
 
   // Fila 4: separador
-  const r4 = ws.addRow(['']); ws.mergeCells('A4:N4');
+  const r4 = ws.addRow(['']); ws.mergeCells(`A4:${ULT}4`);
   setStyle(r4, { height: 3.75, fill: BLANCO });
 
   // Fila 5: encabezados
   const r5 = ws.addRow(head);
   r5.height = 30;
-  for (let col = 1; col <= 14; col++) {
+  for (let col = 1; col <= NC; col++) {
     const cell = r5.getCell(col);
     cell.fill = fill(AZUL_HEADER);
     cell.font = { name: FONT_NAME, color: { argb: BLANCO }, bold: true, size: 10 };
-    cell.alignment = { horizontal: col <= 3 ? 'left' : 'center', vertical: 'middle', indent: col <= 3 ? 1 : 0 };
+    cell.alignment = { horizontal: col <= TXT ? 'left' : 'center', vertical: 'middle', indent: col <= TXT ? 1 : 0 };
   }
 
   // Filas de datos
   for (const dr of dataRows) {
     const rr = ws.addRow(dr); rr.height = 18;
-    for (let col = 1; col <= 14; col++) {
+    for (let col = 1; col <= NC; col++) {
       const cell = rr.getCell(col);
       cell.fill = fill(BLANCO);
       cell.font = { name: FONT_NAME, color: { argb: NEGRO_TXT }, size: 10 };
-      if (col <= 3) cell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+      if (col <= TXT) cell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
       else { cell.alignment = { horizontal: 'right', vertical: 'middle' }; cell.numFmt = NUMFMT; }
     }
   }
 
   // Fila TOTAL
   const rt = ws.addRow(totalRow); rt.height = 22;
-  for (let col = 1; col <= 14; col++) {
+  for (let col = 1; col <= NC; col++) {
     const cell = rt.getCell(col);
     cell.fill = fill(BLANCO);
     cell.font = { name: FONT_NAME, color: { argb: NEGRO_TXT }, bold: true, size: 10 };
-    if (col <= 3) cell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+    if (col <= TXT) cell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
     else { cell.alignment = { horizontal: 'right', vertical: 'middle' }; cell.numFmt = NUMFMT; }
     cell.border = { top: { style: 'thin', color: { argb: 'FFE4E6E7' } } };
   }
@@ -2629,7 +2676,7 @@ async function buildReporteXLSX(c, cal) {
 
   // Pie
   const rp = ws.addRow([`Polipay POS Settlement · Generado ${hoyStr} por ${c.creado_por || '—'}   ·   Todas las cifras en MXN`]);
-  const pieRow = rp.number; ws.mergeCells(`A${pieRow}:N${pieRow}`);
+  const pieRow = rp.number; ws.mergeCells(`A${pieRow}:${ULT}${pieRow}`);
   setStyle(rp, { height: 25.5, font: { color: { argb: GRIS_META }, size: 8, name: FONT_NAME }, align: { horizontal: 'left', vertical: 'top', indent: 1 } });
 
   const buf = await wb.xlsx.writeBuffer();

@@ -1498,15 +1498,80 @@ async function vCortes(v){
   const cortes=await api('GET','/api/cortes');
   if(can('notificar'))$('#pageAction').prepend(el('button',{class:'btn ghost sm',onclick:openAuditoriaRetenciones},'🔎 Auditar retenciones'),el('span',{},' '));
   if(can('corte')&&cortes.length)$('#pageAction').prepend(el('button',{class:'btn ghost sm',onclick:async()=>{if(await confirmar('¿Vaciar TODOS los cortes?')){await api('DELETE','/api/cortes');render();}}},'Vaciar cortes'),el('span',{},' '));
-  v.innerHTML='';const p=el('div',{class:'panel'});p.append(el('h3',{},'Cortes'));
+  v.innerHTML='';const p=el('div',{class:'panel'});
   const puedeCorte=can('corte');
-  const head=['Corte','Fecha liq.','Estado',{t:'Trx'},'Grupos',{t:'Monto'},{t:'A compensar'},{t:'A dispersar'},'Cuadre'];
-  if(puedeCorte)head.push('');
-  p.append(tableWrap(head,cortes.map(c=>{
-    const r=[`#${c.id_corte}`,c.fecha_liq,badgeEstado(c.estado),{num:c.n_trx},'',{num:mxn(c.total_monto)},{num:mxn(c.total_comp)},{num:mxn(c.total_disp)},c.cuadra?'<span class="flagok">✓</span>':'<span class="flagbad">✗</span>'];
-    if(puedeCorte)r.push(el('button',{class:'btn danger sm',onclick:async(e)=>{e.stopPropagation();if(await confirmar(`¿Eliminar el corte #${c.id_corte} (${c.fecha_liq})? No se puede deshacer.`)){try{await api('DELETE','/api/cortes/'+c.id_corte);toast('Corte eliminado','ok');render();}catch(err){toast(errMsg(err),'err');}}}},'Eliminar'));
-    r._onclick=()=>abrirCorte(c.id_corte);return r;}),{empty:'Aún no hay cortes. Crea uno con “+ Nuevo corte”.'}));
+  // Filtros (se aplican en el navegador; se recuerdan mientras dure la sesión de la pestaña)
+  const F=CORTES_FILTRO;
+  const clientes=[...new Set(cortes.flatMap(c=>c.grupos||[]))].sort((a,b)=>a.localeCompare(b,'es'));
+  const estados=['Borrador','Validado','Dispersado','Cerrado'];
+  const fBuscar=el('input',{type:'search',placeholder:'# corte',value:F.q,style:'width:110px'});
+  const fEstado=el('select',{style:'width:150px'},el('option',{value:''},'Todos los estados'),...estados.map(e=>el('option',{value:e},e)));fEstado.value=F.estado;
+  const fCliente=el('select',{style:'width:240px'},el('option',{value:''},'Todos los clientes'),...clientes.map(c=>el('option',{value:c},c)));fCliente.value=F.cliente;
+  const fDesde=el('input',{type:'date',value:F.desde,style:'width:150px',title:'Fecha de liquidación desde'});
+  const fHasta=el('input',{type:'date',value:F.hasta,style:'width:150px',title:'Fecha de liquidación hasta'});
+  const cuenta=el('span',{class:'muted',style:'font-size:12px'});
+  const filtrar=()=>cortes.filter(c=>(!F.q||String(c.id_corte).includes(F.q.replace('#','').trim()))&&(!F.estado||c.estado===F.estado)&&(!F.cliente||(c.grupos||[]).includes(F.cliente))&&(!F.desde||c.fli>=F.desde)&&(!F.hasta||c.fli<=F.hasta));
+  const tabla=el('div',{});
+  const pintar=()=>{
+    Object.assign(F,{q:fBuscar.value,estado:fEstado.value,cliente:fCliente.value,desde:fDesde.value,hasta:fHasta.value});
+    const lista=filtrar();
+    const sum=k=>lista.reduce((s,c)=>s+Number(c[k]||0),0);
+    cuenta.innerHTML=`${lista.length} de ${cortes.length} corte(s) · a dispersar <b>${mxn(sum('total_disp'))}</b>`;
+    const head=['Corte','Fecha liq.','Estado',{t:'Trx'},'Grupos',{t:'Monto'},{t:'A compensar'},{t:'A dispersar'},'Cuadre',''];
+    tabla.innerHTML='';
+    tabla.append(tableWrap(head,lista.map(c=>{
+      const n=(c.grupos||[]).length;
+      const acc=el('span',{style:'display:inline-flex;gap:6px'});
+      acc.append(el('button',{class:'btn secondary sm',title:'Reporte por cliente de este corte',onclick:e=>{e.stopPropagation();descargarReporteCliente({corte:c.id_corte,cliente:F.cliente},c);}},'⬇ Reporte'));
+      if(puedeCorte)acc.append(el('button',{class:'btn danger sm',onclick:async(e)=>{e.stopPropagation();if(await confirmar(`¿Eliminar el corte #${c.id_corte} (${c.fecha_liq})? No se puede deshacer.`)){try{await api('DELETE','/api/cortes/'+c.id_corte);toast('Corte eliminado','ok');render();}catch(err){toast(errMsg(err),'err');}}}},'Eliminar'));
+      const r=[`#${c.id_corte}`,c.fecha_liq,badgeEstado(c.estado),{num:c.n_trx},n?`<span title="${esc((c.grupos||[]).join(', '))}">${n}</span>`:'—',{num:mxn(c.total_monto)},{num:mxn(c.total_comp)},{num:mxn(c.total_disp)},c.cuadra?'<span class="flagok">✓</span>':'<span class="flagbad">✗</span>',acc];
+      r._onclick=()=>abrirCorte(c.id_corte);return r;}),{empty:cortes.length?'Ningún corte coincide con los filtros.':'Aún no hay cortes. Crea uno con “+ Nuevo corte”.'}));
+  };
+  [fBuscar,fEstado,fCliente,fDesde,fHasta].forEach(x=>x.addEventListener('input',pintar));
+  const limpiar=el('button',{class:'btn ghost sm',onclick:()=>{fBuscar.value=fEstado.value=fCliente.value=fDesde.value=fHasta.value='';pintar();}},'Limpiar');
+  p.append(el('h3',{},'Cortes',el('span',{class:'right'},el('button',{class:'btn secondary sm',onclick:()=>openReporteCliente(cortes,clientes)},'⬇ Reporte por cliente'))));
+  p.append(el('div',{class:'filters'},fBuscar,fEstado,fCliente,el('span',{class:'muted',style:'font-size:12px'},'Liquidación'),fDesde,el('span',{class:'muted'},'a'),fHasta,limpiar,el('span',{class:'spacer'}),cuenta));
+  p.append(tabla);pintar();
   v.append(p);
+}
+const CORTES_FILTRO={q:'',estado:'',cliente:'',desde:'',hasta:''};
+// Descarga el reporte por cliente: {corte} = un corte; {desde,hasta,estado} = histórico. {cliente} opcional.
+async function descargarReporteCliente(q,c){
+  const qs=new URLSearchParams(Object.entries(q).filter(([,v])=>v!==''&&v!=null)).toString();
+  const sufijo=q.cliente?'_'+q.cliente.replace(/\W+/g,'_').slice(0,40):'';
+  const nombre=q.corte?`reporte_cliente_corte_${q.corte}_${(c&&c.fli)||''}${sufijo}.xlsx`:`reporte_cliente_historico_${q.desde||'inicio'}_a_${q.hasta||'hoy'}${sufijo}.xlsx`;
+  try{await withBusy('Generando reporte…',()=>descargar('/api/cortes/reporte-cliente.xlsx?'+qs,nombre));}
+  catch(e){toast(e.status===404?((e.data&&e.data.mensaje)||'Sin datos para esos filtros'):errMsg(e),'err');}
+}
+function openReporteCliente(cortes,clientes){
+  const F=CORTES_FILTRO;
+  const body=el('div',{});
+  let alcance='historico';
+  const tabs=el('div',{class:'tabs',role:'tablist'});
+  const tH=el('button',{class:'tab active',type:'button',role:'tab'},'Histórico');
+  const tC=el('button',{class:'tab',type:'button',role:'tab'},'Un corte');
+  tabs.append(tH,tC);
+  const selCorte=el('select',{},...cortes.map(c=>el('option',{value:c.id_corte},`#${c.id_corte} · ${c.fecha_liq} · ${c.estado} · ${mxn(c.total_disp)}`)));
+  const desde=el('input',{type:'date',value:F.desde}),hasta=el('input',{type:'date',value:F.hasta});
+  const estado=el('select',{},el('option',{value:''},'Todos'),...['Borrador','Validado','Dispersado','Cerrado'].map(e=>el('option',{value:e},e)));estado.value=F.estado;
+  const cliente=el('select',{},el('option',{value:''},'Todos los clientes'),...clientes.map(c=>el('option',{value:c},c)));cliente.value=F.cliente;
+  const bloqueH=el('div',{class:'form-grid c3'},el('label',{class:'field'},'Liquidación desde',desde),el('label',{class:'field'},'Hasta',hasta),el('label',{class:'field'},'Estado del corte',estado));
+  const bloqueC=el('div',{style:'display:none'},el('label',{class:'field'},'Corte',selCorte));
+  const nota=el('div',{class:'banner'});
+  const pintaNota=()=>{nota.innerHTML=alcance==='corte'
+    ?'Mismo formato que el reporte del detalle del corte. Si eliges un cliente, solo trae sus afiliaciones y el total se recalcula.'
+    :'Una sola hoja con todas las filas de los cortes del rango, con columnas <b>Corte</b> y <b>Fecha liq.</b> y el total del periodo. Deja las fechas vacías para traer todo el histórico.';};
+  const set=a=>{alcance=a;tH.classList.toggle('active',a==='historico');tC.classList.toggle('active',a==='corte');bloqueH.style.display=a==='historico'?'':'none';bloqueC.style.display=a==='corte'?'':'none';pintaNota();};
+  tH.onclick=()=>set('historico');tC.onclick=()=>set('corte');
+  body.append(tabs,nota,bloqueH,bloqueC,el('label',{class:'field'},'Cliente',cliente));
+  pintaNota();
+  const foot=el('div',{});
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    if(alcance==='historico'&&desde.value&&hasta.value&&desde.value>hasta.value){toast('La fecha “desde” es posterior a “hasta”','err');return;}
+    const q=alcance==='corte'?{corte:selCorte.value,cliente:cliente.value}:{desde:desde.value,hasta:hasta.value,estado:estado.value,cliente:cliente.value};
+    await descargarReporteCliente(q,cortes.find(c=>String(c.id_corte)===String(selCorte.value)));
+  }},'⬇ Descargar'));
+  modal('Reporte por cliente',body,foot);
 }
 async function openNuevoCorte(){
   const {fechas,sinLiq}=await api('GET','/api/cortes/fechas');
