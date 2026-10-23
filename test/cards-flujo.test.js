@@ -17,10 +17,15 @@ test('un CEP de Banxico que cuadra se acepta y trae lo que se aplicará a la sol
   assert.deepEqual(r.aplicar, { monto: 301740, fecha: '2026-10-22', clave_rastreo: 'RAST0001', banco_ordenante: 'BANCO EJEMPLO', ordenante_nombre: 'ACME SA DE CV', ordenante_rfc: 'ACM010101AAA' });
 });
 test('solo se aceptan CEP: consulta de estado, imagen, PDF sin texto, genérico o ilegible se rechazan', () => {
-  for (const formato of ['consulta_estado_banxico', 'imagen', 'pdf_sin_texto', 'pdf_generico', 'error', 'desconocido']) {
+  for (const formato of ['consulta_estado_banxico', 'imagen', 'pdf_sin_texto', 'pdf_generico', 'desconocido']) {
     const r = FL.evaluarCep(cep({ top: { formato, es_cep: formato === 'consulta_estado_banxico' ? false : null } }), ctx());
     assert.equal(r.ok, false, formato); assert.equal(r.errores[0].codigo, 'no_es_cep'); assert.match(r.errores[0].mensaje, /Solo se aceptan CEP/);
   }
+});
+test('si el sistema falla al abrir el archivo, no se culpa al documento', () => {
+  const r = FL.evaluarCep(cep({ top: { formato: 'error', avisos: ['No se pudo leer el archivo.'] } }), ctx());
+  assert.equal(r.ok, false); assert.equal(r.errores[0].codigo, 'lectura_fallida');
+  assert.match(r.errores[0].mensaje, /No se pudo leer el archivo.*fallo temporal/); assert.doesNotMatch(r.errores[0].mensaje, /Solo se aceptan CEP/);
 });
 test('el XML y el comprobante de dispersión de Polipay sí cuentan (este último con aviso)', () => {
   assert.equal(FL.evaluarCep(cep({ top: { formato: 'xml' } }), ctx()).ok, true);
