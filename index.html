@@ -1159,7 +1159,7 @@ let VIEW='dashboard';
    WORKSPACES: 'conciliacion' (todo lo original) | 'tareas' (microsistema)
    ========================================================================= */
 const WORKSPACES={
-  conciliacion:{nombre:'Conciliación',ic:'CS',sub:'Polipay POS Settlement',color:'var(--accent-fill)',vista:'dashboard',ok:()=>!(SES&&SES.rol==='comercial')},
+  conciliacion:{nombre:'Polipay POS Settlement',ic:'CS',sub:'Conciliación y liquidación',color:'var(--accent-fill)',vista:'dashboard',ok:()=>!(SES&&SES.rol==='comercial')},
   tareas:{nombre:'Tareas Ops',ic:'TQ',sub:'Tareas de Operaciones',color:'var(--c-teal)',vista:'tar_mis_rutinas',ok:()=>!(SES&&SES.rol==='comercial')},
   cards:{nombre:'Polipay Cards Settlement',ic:'CB',sub:'Fondeos y tesorería de Cards',color:'var(--c-indigo)',vista:'cards_panel',ok:()=>can('cards_ver')},
 };
