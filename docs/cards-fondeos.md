@@ -61,6 +61,11 @@ Tesorería no puede asignar un fondeo con alertas sin escribir una **nota** con 
 Lectura de los documentos (probada con 43 PDF reales): CEP de Banxico vía su *cadena original* firmada, comprobante de Polipay,
 XML (mejor esfuerzo; falta validarlo con un XML real). Dependencia: `unpdf`.
 
+## Comprobante del saldo asignado
+
+Tesorería puede subir, en el detalle del fondeo, el **comprobante del sistema donde se ve el saldo ya asignado** (captura PNG/JPG, PDF o Excel; hasta 5 por fondeo, 10 MB cada uno, cifrados igual que el CEP). Es **opcional** y se puede subir **antes de confirmar** (queda listo para el aviso) o **después**, con el saldo ya asignado.
+Lo ve y descarga el comercial que solicitó; el correo de **“Saldo asignado”** lo lleva adjunto junto con el CEP. Quitarlo es libre mientras el fondeo está por asignar; una vez asignado, solo un administrador. Todo queda en el historial y en la bitácora.
+
 ## Candado de asignación
 
 **Sin un CEP validado por el sistema no se puede poner “saldo asignado”**, ni con nota, ni siendo administrador. Se exige en tres capas:

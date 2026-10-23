@@ -131,3 +131,22 @@ test('correo con CEP: indica si va adjunto, el resultado de la validación y cad
   assert.match(armarCorreoFondeo({ tipo: 'por_asignar', fondeo: f, ceps: [{ ...ok, validado: false }] }).html, /No validado por el sistema/);
   assert.doesNotMatch(armarCorreoFondeo({ tipo: 'solicitado', fondeo: f }).html, /CEP y validación/);   // aún no hay CEP
 });
+
+test('comprobante del saldo asignado: lo sube tesorería (por asignar o asignado); quitarlo ya asignado, solo un administrador', () => {
+  const p = (est, rol) => FL.permisos(est, rol, true);
+  for (const rol of ['tesoreria', 'cards_tesoreria', 'admin', 'cards_admin']) {
+    assert.equal(p('POR_ASIGNAR', rol).comprobante, true, rol); assert.equal(p('ASIGNADO', rol).comprobante, true, rol);
+    assert.equal(p('POR_ASIGNAR', rol).quitar_comprobante, true, rol);
+  }
+  assert.deepEqual(['admin', 'cards_admin', 'tesoreria', 'cards_tesoreria'].map(r => p('ASIGNADO', r).quitar_comprobante), [true, true, false, false]);
+  for (const est of ['SOLICITADO', 'RECHAZADO', 'CANCELADO']) assert.equal(p(est, 'cards_tesoreria').comprobante, false, est);
+  for (const rol of ['comercial', 'operador', 'consulta', 'cards_consulta']) assert.equal(p('ASIGNADO', rol).comprobante, false, rol);
+});
+test('correo de saldo asignado: menciona el comprobante y si va adjunto', () => {
+  const f = { folio: 'F1', ruta: 'Acme', empresa_nombre: 'Acme', fondeo: 1000, comision: 5, iva: 0.8, monto_recibido: 1005.8, solicitante_nombre: 'Ana Pérez' };
+  const c = armarCorreoFondeo({ tipo: 'asignado', fondeo: f, comprobantes: [{ filename: 'saldo.png', adjunto: true }, { filename: 'grande.pdf', adjunto: false }] });
+  assert.match(c.html, /Comprobante del saldo asignado/); assert.match(c.html, /saldo\.png/); assert.match(c.html, /adjunto a este correo/); assert.match(c.html, /no se adjuntó/);
+  assert.match(c.html, /Va adjunto el comprobante del sistema/); assert.match(c.text, /saldo\.png \(adjunto\)/);
+  const sin = armarCorreoFondeo({ tipo: 'asignado', fondeo: f });
+  assert.doesNotMatch(sin.html, /Comprobante del saldo asignado/); assert.doesNotMatch(sin.html, /Va adjunto/);
+});

@@ -5206,7 +5206,7 @@ const CARDS_ESTATUS={SOLICITADO:['info','Esperando CEP'],POR_ASIGNAR:['warn','Po
 const CARDS_NIVEL={EMPRESA:'Empresa',UN:'Unidad de negocio',TARJETA:'Tarjeta'};
 const CEP_FORMATO={cep_banxico:'CEP de Banxico',dispersion_polipay:'Comprobante de dispersión Polipay',xml:'XML del CEP',pdf_generico:'PDF (formato no reconocido)',consulta_estado_banxico:'Consulta de estado de Banxico',imagen:'Imagen',pdf_sin_texto:'PDF sin texto',error:'No legible',desconocido:'Sin lectura'};
 const CEP_CONF={alta:['ok','Lectura confiable'],media:['warn','Revisa los datos'],baja:['danger','Lectura incierta']};
-const EVT_TXT={solicitado:'Solicitado',registrado:'Registrado',edicion:'Editado',cep_alta:'CEP cargado',cep_baja:'CEP quitado',cep_rechazado:'CEP no aceptado',por_asignar:'Pasó a tesorería',esperando_cep:'Esperando CEP',asignado:'Saldo asignado',rechazado:'Rechazado',cancelado:'Cancelado',notificado:'Aviso por correo'};
+const EVT_TXT={solicitado:'Solicitado',registrado:'Registrado',edicion:'Editado',cep_alta:'CEP cargado',cep_baja:'CEP quitado',cep_rechazado:'CEP no aceptado',comprobante_alta:'Comprobante del saldo cargado',comprobante_baja:'Comprobante del saldo quitado',por_asignar:'Pasó a tesorería',esperando_cep:'Esperando CEP',asignado:'Saldo asignado',rechazado:'Rechazado',cancelado:'Cancelado',notificado:'Aviso por correo'};
 const badgeFondeo=e=>{const [c,l]=CARDS_ESTATUS[e]||['neutral',esc(e)];return `<span class="badge ${c}">${l}</span>`;};
 const hoyMX=()=>new Date().toLocaleDateString('en-CA',{timeZone:'America/Mexico_City'});
 const pctTxt=n=>Number(n).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:4})+'%';
@@ -5470,6 +5470,22 @@ async function abrirFondeo(id){
       catch(e){errBox.append(el('div',{class:'banner err'},el('b',{},'No se aceptó el archivo. '),errMsg(e)));z.limpiar();}
     }});
     der.append(zf,errBox);
+  }
+  // Comprobante del saldo asignado (tesorería): captura, PDF o Excel del sistema donde se ve el saldo ya asignado.
+  if(pu.comprobante||(f.comprobantes&&f.comprobantes.length)){
+    der.append(el('h4',{style:'margin-top:18px'},'Comprobante del saldo asignado'));
+    (f.comprobantes||[]).forEach(c=>der.append(el('div',{class:'cep-item'},
+      el('div',{},el('b',{},c.filename),el('small',{class:'muted'},(c.bytes_size<1024?c.bytes_size+' B':(c.bytes_size/1024).toFixed(0)+' KB')+' · '+c.subido_por+' · '+new Date(c.subido_at).toLocaleString('es-MX'))),
+      el('button',{class:'btn ghost sm',type:'button',onclick:async()=>{try{await descargar('/api/cards/comprobantes/'+c.id+'/download',c.filename);}catch(e){toast(errMsg(e),'err');}}},'Descargar'),
+      pu.quitar_comprobante?el('button',{class:'btn danger sm',type:'button','aria-label':'Quitar '+c.filename,onclick:async()=>{if(!await confirmar('¿Quitar el comprobante '+c.filename+'?'))return;try{await api('DELETE','/api/cards/comprobantes/'+c.id);toast('Comprobante quitado','ok');render();abrirFondeo(id);}catch(e){toast(errMsg(e),'err');}}},'Quitar'):'')));
+    if(pu.comprobante){
+      const errC=el('div',{'aria-live':'polite'});
+      der.append(zonaArchivos({compacta:true,accept:'.pdf,.png,.jpg,.jpeg,.xlsx',titulo:'Arrastra aquí el comprobante o haz clic',ayuda:'Captura, PDF o Excel del sistema donde se ve el saldo asignado',sinLista:true,onFiles:async(fs,z)=>{
+        errC.innerHTML='';
+        try{const fd=new FormData();fd.append('archivo',fs[0]);await api('POST',`/api/cards/fondeos/${id}/comprobantes`,fd);toast('Comprobante cargado','ok');render();abrirFondeo(id);}
+        catch(e){errC.append(el('div',{class:'banner err'},errMsg(e)));z.limpiar();}
+      }}),errC);
+    }
   }
   der.append(el('h4',{style:'margin-top:18px'},'Historial'));
   der.append(el('ol',{class:'timeline'},...f.eventos.map(ev=>el('li',{},el('b',{},EVT_TXT[ev.tipo]||ev.tipo),el('small',{class:'muted'},new Date(ev.ts).toLocaleString('es-MX')+' · '+(ev.actor||'—')+(ev.detalle?' · '+ev.detalle:''))))));

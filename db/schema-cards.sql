@@ -196,3 +196,18 @@ create table if not exists cards.destinatarios (
   creado_por     text,
   creado_at      timestamptz not null default now()
 );
+
+-- ===== COMPROBANTE DEL SALDO ASIGNADO =====
+-- Evidencia que tesorería sube del sistema donde se ve el saldo ya asignado (captura, PDF o Excel). Cifrada igual que el CEP.
+create table if not exists cards.fondeo_comprobantes (
+  id            serial primary key,
+  fondeo_id     integer not null references cards.fondeos(id) on delete cascade,
+  filename      text not null,
+  mime          text,
+  bytes_cifrado bytea not null,
+  bytes_size    integer,
+  sha256_hash   text,
+  subido_por    text,
+  subido_at     timestamptz not null default now()
+);
+create index if not exists idx_cards_comp_fon on cards.fondeo_comprobantes(fondeo_id);
