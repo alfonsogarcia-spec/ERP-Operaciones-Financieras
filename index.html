@@ -805,6 +805,10 @@ async function api(method,path,body){
   if(body instanceof FormData){b=body;} else if(body!=null){headers['content-type']='application/json';b=JSON.stringify(body);}
   const r=await fetch(path,{method,headers,body:b});
   if(r.status===401){forzarLogout();throw new Error('sesión expirada');}
+  // El servidor manda el rol vigente: si cambió (lo editó un administrador), se actualiza el menú sin cerrar sesión.
+  const xr=r.headers.get('X-Rol');
+  if(SES&&xr&&xr!==SES.rol){SES.rol=xr;try{const u=JSON.parse(localStorage.getItem('cl_user')||'{}');u.rol=xr;localStorage.setItem('cl_user',JSON.stringify(u));}catch(_e){/* nada */}
+    setTimeout(()=>{if(!WORKSPACES[WORKSPACE]||!WORKSPACES[WORKSPACE].ok()){WORKSPACE=Object.keys(WORKSPACES).find(k=>WORKSPACES[k].ok())||'conciliacion';localStorage.setItem('cl_workspace',WORKSPACE);VIEW=vistaInicial(WORKSPACE);}renderWs();render();toast('Tu rol cambió a '+(ROLES[xr]||xr),'ok');},0);}
   if(!r.ok){let e;try{e=await r.json();}catch(_){e={error:r.statusText};}const err=new Error(e.error||'error');err.status=r.status;err.data=e;throw err;}
   const ct=r.headers.get('content-type')||''; return ct.includes('application/json')?r.json():r;
 }
@@ -824,11 +828,11 @@ function can(cap){if(!SES)return false;const M={
   validar:['admin','tesoreria'],dispersar:['admin','bancos'],cerrar:['admin','bancos'],
   notificar:['admin','tesoreria','bancos'],
   params:['admin'],
-  usuarios:['admin'],
+  usuarios:['admin'],admin_panel:['admin','cards_admin'],
   disputas:['admin','operador'],
   disputas_ver:['admin','operador','tesoreria','bancos','consulta'],
   cards_ver:['admin','operador','tesoreria','bancos','consulta','comercial','cards_admin','cards_tesoreria','cards_consulta'],cards_panel:['admin','operador','tesoreria','bancos','consulta','cards_admin','cards_tesoreria','cards_consulta'],cards_solicitar:['admin','operador','tesoreria','comercial','cards_admin','cards_tesoreria'],
-  cards_manual:['admin','operador','tesoreria','cards_admin','cards_tesoreria'],cards_asignar:['admin','tesoreria','cards_admin','cards_tesoreria'],cards_estructura:['admin','tesoreria','cards_admin','cards_tesoreria'],cards_mis:['comercial'],cards_usuarios:['admin','cards_admin'],
+  cards_manual:['admin','operador','tesoreria','cards_admin','cards_tesoreria'],cards_asignar:['admin','tesoreria','cards_admin','cards_tesoreria'],cards_estructura:['admin','tesoreria','cards_admin','cards_tesoreria'],cards_mis:['comercial'],
   ver:['admin','operador','tesoreria','bancos','consulta']
 };return (M[cap]||[]).includes(SES.rol);}
 
@@ -1165,6 +1169,7 @@ const WORKSPACES={
   conciliacion:{nombre:'Polipay POS Settlement',ic:'CS',sub:'Conciliación y liquidación',color:'var(--accent-fill)',vista:'dashboard',ok:()=>!soloCards()},
   tareas:{nombre:'Tareas Ops',ic:'TQ',sub:'Tareas de Operaciones',color:'var(--c-teal)',vista:'tar_mis_rutinas',ok:()=>!soloCards()},
   cards:{nombre:'Polipay Cards Settlement',ic:'CB',sub:'Fondeos y tesorería de Cards',color:'var(--c-indigo)',vista:'cards_panel',ok:()=>can('cards_ver')},
+  admin:{nombre:'Administración',ic:'AD',sub:'Usuarios y accesos',color:'var(--c-neutral)',vista:'adm_usuarios',ok:()=>can('admin_panel')},
 };
 let WORKSPACE = localStorage.getItem('cl_workspace') || 'conciliacion';
 if(!WORKSPACES[WORKSPACE]) WORKSPACE = 'conciliacion';
@@ -1176,7 +1181,7 @@ function setWorkspace(k){
 }
 // Menú con los espacios que el rol puede ver (antes alternaba entre dos).
 function toggleWorkspace(){
-  if(SES&&(SES.rol==='inventario'||soloCards())) return;
+  if(SES&&SES.rol==='inventario') return;
   const m=document.getElementById('wsMenu'), sw=document.getElementById('wsSwitch');
   if(m.classList.contains('open')){ cerrarWsMenu(); return; }
   m.innerHTML='';
@@ -1193,7 +1198,7 @@ function renderWs(){
   const sw=document.getElementById('wsSwitch');
   // Rol "inventario": no hay nada a lo que "cambiar" — se oculta el switch.
   if(SES&&SES.rol==='inventario'){ if(sw)sw.style.display='none'; const sub=document.getElementById('wsSubtitle'); if(sub)sub.textContent='Polipay POS Settlement'; return; }
-  if(sw)sw.style.display=soloCards()?'none':'';
+  if(sw)sw.style.display=Object.keys(WORKSPACES).filter(k=>WORKSPACES[k].ok()).length<2?'none':'';
   const w=WORKSPACES[WORKSPACE];
   const nameEl=document.getElementById('wsName'); if(nameEl) nameEl.innerHTML = w.nombre+'<small>Cambiar de espacio</small>';
   const icon=document.getElementById('wsIcon'); if(icon){ icon.textContent = w.ic; icon.style.background = w.color; }
@@ -1235,8 +1240,11 @@ const NAV_CONCILIACION=[
   {id:'dest_alertas',t:'Alertas de transaccionalidad',ic:'ic_17'},
   {id:'umbrales',t:'Parametrización de umbrales',ic:'ic_16'},
   {id:'parametros',t:'Parámetros',ic:'ic_16'},
-  {id:'usuarios',t:'Usuarios',ic:'ic_20',cap:'usuarios'},
   {id:'bitacora',t:'Bitácora',ic:'ic_20'},
+];
+const NAV_ADMIN=[
+  {sec:'Acceso'},
+  {id:'adm_usuarios',t:'Usuarios',ic:'ic_20'},
 ];
 const NAV_TAREAS=[
   {sec:'Vistas'},
@@ -1266,10 +1274,8 @@ const NAV_CARDS=[
   {id:'cards_bancos',t:'Bancos',ic:'ic_12',cap:'cards_estructura'},
   {sec:'Avisos',cap:'cards_estructura'},
   {id:'cards_destinatarios',t:'Destinatarios',ic:'ic_17',cap:'cards_estructura'},
-  {sec:'Acceso',cap:'cards_usuarios'},
-  {id:'cards_usuarios',t:'Usuarios',ic:'ic_20',cap:'cards_usuarios'},
 ];
-Object.defineProperty(window,'NAV',{ get(){ return WORKSPACE==='tareas' ? NAV_TAREAS : WORKSPACE==='cards' ? NAV_CARDS : NAV_CONCILIACION; } });
+Object.defineProperty(window,'NAV',{ get(){ return WORKSPACE==='tareas' ? NAV_TAREAS : WORKSPACE==='cards' ? NAV_CARDS : WORKSPACE==='admin' ? NAV_ADMIN : NAV_CONCILIACION; } });
 function navSecKey(name){ return 'cl_nav_'+String(name).toLowerCase().replace(/[^a-z0-9]+/g,'-'); }
 function renderNav(){
   const nav=$('#nav');nav.innerHTML='';
@@ -1309,8 +1315,8 @@ function renderNav(){
     (curBody || nav).append(link);
   }
 }
-const TITLES={cards_bandeja:['Por asignar','Fondeos con CEP aceptado, esperando que tesorería confirme la asignación del saldo'],cards_solicitudes:['Mis solicitudes','Solicita fondeos a tus empresas y sube el CEP del depósito'],cards_panel:['Polipay Cards Settlement · Panel','Fondeos recibidos, comisión e IVA y pendientes de control'],cards_fondeos:['Fondeos','Solicitudes de fondeo y depósitos recibidos de empresas, unidades de negocio y tarjetas, con su CEP'],cards_estructura:['Empresas, unidades de negocio y tarjetas','Estructura de Cards y la cuenta de fondeo (CLABE, beneficiario y banco) de cada una'],cards_bancos:['Bancos','Catálogo de bancos de Cards: identifica el banco de cada CLABE y se compara con el CEP'],cards_destinatarios:['Destinatarios','Quién recibe el correo cada vez que se registra una solicitud de fondeo'],cards_usuarios:['Usuarios','Quién entra a Polipay Cards Settlement y con qué rol'],dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],inventario:['Inventario de terminales','Terminales POS activas por grupo de cliente y afiliación, derivado de las transacciones ya ingestadas'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],retenciones:['Retenciones','Retenciones por financiamiento y revenue share aplicadas al monto a dispersar'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],
-cumplimiento:['PLD y antifraude','KPIs de cumplimiento por grupo de cliente y afiliación — monto procesado, operaciones inusuales, tasa de contracargos, duplicadas y devoluciones sospechosas'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],umbrales:['Parametrización de umbrales','Umbrales de PLD y antifraude que controlan las alertas automáticas y los indicadores de riesgo'],destinatarios:['Destinatarios','Correos que reciben el aviso automático de corte'],usuarios:['Usuarios','Quién tiene acceso a la plataforma y con qué rol'],bitacora:['Bitácora','Trazabilidad de acciones'],
+const TITLES={cards_bandeja:['Por asignar','Fondeos con CEP aceptado, esperando que tesorería confirme la asignación del saldo'],cards_solicitudes:['Mis solicitudes','Solicita fondeos a tus empresas y sube el CEP del depósito'],cards_panel:['Polipay Cards Settlement · Panel','Fondeos recibidos, comisión e IVA y pendientes de control'],cards_fondeos:['Fondeos','Solicitudes de fondeo y depósitos recibidos de empresas, unidades de negocio y tarjetas, con su CEP'],cards_estructura:['Empresas, unidades de negocio y tarjetas','Estructura de Cards y la cuenta de fondeo (CLABE, beneficiario y banco) de cada una'],cards_bancos:['Bancos','Catálogo de bancos de Cards: identifica el banco de cada CLABE y se compara con el CEP'],cards_destinatarios:['Destinatarios','Quién recibe el correo cada vez que se registra una solicitud de fondeo'],dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],inventario:['Inventario de terminales','Terminales POS activas por grupo de cliente y afiliación, derivado de las transacciones ya ingestadas'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],retenciones:['Retenciones','Retenciones por financiamiento y revenue share aplicadas al monto a dispersar'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],
+cumplimiento:['PLD y antifraude','KPIs de cumplimiento por grupo de cliente y afiliación — monto procesado, operaciones inusuales, tasa de contracargos, duplicadas y devoluciones sospechosas'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],umbrales:['Parametrización de umbrales','Umbrales de PLD y antifraude que controlan las alertas automáticas y los indicadores de riesgo'],destinatarios:['Destinatarios','Correos que reciben el aviso automático de corte'],adm_usuarios:['Usuarios y accesos','Quién entra a cada sistema (POS Settlement, Tareas Ops y Cards) y con qué rol'],bitacora:['Bitácora','Trazabilidad de acciones'],
 disp_dashboard:['Panel de disputas','KPIs de contracargos, devoluciones y duplicados'],
 disp_chargebacks:['Disputas','Ciclo completo de disputa: 1er contracargo → representación → arbitraje'],
 disp_refunds:['Devoluciones sospechosas','Notificación al comercio y respuesta procede / no procede'],
@@ -1360,10 +1366,10 @@ async function render(){renderNav();if(WORKSPACE==='cards')cardsContadores();
   }
   const[t,s]=TITLES[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
   const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
-  try{await ({dashboard:vDashboard,ingesta:vIngesta,inventario:vInventario,contracargos:vContracargos,retenciones:vRetenciones,cortes:vCortes,contable:vContabilidadCortes,cumplimiento:vCumplimiento,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,umbrales:vUmbrales,destinatarios:vDestinatarios,usuarios:vUsuarios,bitacora:vBitacora,
+  try{await ({dashboard:vDashboard,ingesta:vIngesta,inventario:vInventario,contracargos:vContracargos,retenciones:vRetenciones,cortes:vCortes,contable:vContabilidadCortes,cumplimiento:vCumplimiento,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,umbrales:vUmbrales,destinatarios:vDestinatarios,bitacora:vBitacora,
     disp_dashboard:vDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC,disp_providers:vDispProviders,disp_reports:vDispReports,
     dest_liquidacion:vDestinatariosCorte,dest_liquidacion_cli:vDestinatariosCliente,dest_contabilidad:vDestinatariosContabilidad,dest_disputas:vDestDisputas,dest_alertas:vDestinatariosAlertas,
-    cards_panel:vCardsPanel,cards_fondeos:vCardsFondeos,cards_bandeja:vCardsBandeja,cards_solicitudes:vCardsSolicitudes,cards_estructura:vCardsEstructura,cards_bancos:vCardsBancos,cards_destinatarios:vCardsDestinatarios,cards_usuarios:vCardsUsuarios,
+    cards_panel:vCardsPanel,cards_fondeos:vCardsFondeos,cards_bandeja:vCardsBandeja,cards_solicitudes:vCardsSolicitudes,cards_estructura:vCardsEstructura,cards_bancos:vCardsBancos,cards_destinatarios:vCardsDestinatarios,adm_usuarios:vAdmUsuarios,
     tar_mis_rutinas:vTarMisRutinas,tar_mis_tareas:vTarMisTareas,tar_tablero:vTarTablero,tar_emisor:vTarPorProducto,tar_spei:vTarPorProducto,tar_agregador:vTarPorProducto,tar_calendario:vTarCalendario,tar_entregables:vEntregables,tar_reportes:vTarReportes,tar_miembros:vTarMiembros}[VIEW]||vDashboard)(v);}
   catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
 }
@@ -3012,63 +3018,77 @@ function editDestinatario(d){
 }
 
 /* ---------- USUARIOS (solo admin) ---------- */
-async function vUsuarios(v){
-  if(!can('usuarios')){v.innerHTML='';v.append(el('div',{class:'banner err'},'Solo un administrador puede gestionar usuarios.'));return;}
-  $('#pageAction').append(el('button',{class:'btn',onclick:()=>editUsuario()},'+ Usuario'));
-  const list=await api('GET','/api/usuarios');
+/* ---------- Administración · usuarios y accesos de todos los sistemas ---------- */
+const ROL_BADGE={admin:'violet',operador:'info',tesoreria:'ok',bancos:'danger',consulta:'neutral',inventario:'orange',comercial:'info',cards_admin:'violet',cards_tesoreria:'ok',cards_consulta:'neutral'};
+const chipsSistemas=(ids,nombres)=>(ids||[]).map(k=>`<span class="badge soft">${esc(nombres[k]||k)}</span>`).join(' ');
+async function vAdmUsuarios(v){
+  if(!can('admin_panel')){v.innerHTML='';v.append(el('div',{class:'banner err'},'Solo un administrador puede gestionar usuarios.'));return;}
+  const [list,meta]=await Promise.all([api('GET','/api/usuarios'),api('GET','/api/admin/roles')]);
   v.innerHTML='';
+  cardsAcciones(el('button',{class:'btn',onclick:()=>editUsuarioAdm(null,meta)},'+ Usuario'));
+  const q=el('input',{id:'auQ',type:'search',placeholder:'Buscar por nombre o correo…','aria-label':'Buscar usuario',autocomplete:'off'});
+  const sis=el('select',{id:'auSis','aria-label':'Sistema'},el('option',{value:''},'Todos los sistemas'),...Object.entries(meta.sistemas).map(([k,n])=>el('option',{value:k},n)));
+  const est=el('select',{id:'auEst','aria-label':'Estado'},el('option',{value:''},'Activos e inactivos'),el('option',{value:'1'},'Solo activos'),el('option',{value:'0'},'Solo inactivos'));
+  const cont=el('div',{});
+  const cnt=el('span',{class:'muted'});
+  const pintar=()=>{
+    const t=q.value.trim().toLowerCase();
+    const rows=list.filter(u=>(!t||(u.email+' '+(u.nombre||'')).toLowerCase().includes(t))&&(!sis.value||(u.sistemas||[]).includes(sis.value))&&(!est.value||(est.value==='1')===u.activo));
+    cnt.textContent=rows.length+' de '+list.length+' usuario(s) · '+list.filter(u=>u.activo).length+' activo(s)';
+    cont.innerHTML='';
+    cont.append(tableWrap(['Correo','Nombre','Rol','Entra a','Estado','Último acceso'],rows.map(u=>{
+      const r=[esc(u.email),esc(u.nombre||''),`<span class="badge ${ROL_BADGE[u.rol]||'neutral'}">${esc((ROLES[u.rol]||u.rol).replace(/ \(.*\)$/,''))}</span>`,chipsSistemas(u.sistemas,meta.sistemas),u.activo?'<span class="badge ok">Activo</span>':'<span class="badge neutral">Inactivo</span>',u.ultimo_login_at?new Date(u.ultimo_login_at).toLocaleString('es-MX'):'—'];
+      r._onclick=()=>editUsuarioAdm(u,meta);return r;}),{empty:'Ningún usuario coincide.'}));
+  };
+  [q,sis,est].forEach(x=>{x.addEventListener('input',pintar);x.addEventListener('change',pintar);});
   const p=el('div',{class:'panel'});
-  const activos=list.filter(u=>u.activo).length;
-  p.append(el('h3',{},'Usuarios con acceso',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},activos+' activo(s) de '+list.length))));
-  p.append(el('div',{class:'banner',html:'La plataforma acepta login <b>solo con Google</b> y los correos aquí registrados. Roles: <b>admin</b> (todo, incluidos usuarios), <b>operador</b> (ingesta y cortes), <b>tesorería</b> (validar y dispersar), <b>consulta</b> (solo lectura).'}));
-  const rolBadge=r=>({admin:'<span class="badge violet">Admin</span>',operador:'<span class="badge info">Operador</span>',tesoreria:'<span class="badge ok">Tesorería</span>',bancos:'<span class="badge danger">Bancos</span>',consulta:'<span class="badge neutral">Consulta</span>'}[r]||('<span class="pill">'+esc(r)+'</span>'));
-  const rows=list.map(u=>{
-    const st = u.activo ? '<span class="badge ok">Activo</span>' : '<span class="badge neutral">Inactivo</span>';
-    const last = u.ultimo_login_at ? new Date(u.ultimo_login_at).toLocaleString('es-MX') : '—';
-    return [esc(u.email),esc(u.nombre||''),rolBadge(u.rol),st,last,el('button',{class:'btn ghost sm',onclick:e=>{e.stopPropagation();editUsuario(u);}},'Editar')];
-  });
-  p.append(tableWrap(['Correo','Nombre','Rol','Estado','Último acceso',''],rows,{empty:'Sin usuarios registrados.'}));
-  v.append(p);
+  p.append(el('div',{class:'banner',html:SES.rol==='admin'
+    ?'Un solo lugar para los usuarios de <b>POS Settlement</b>, <b>Tareas Ops</b> y <b>Cards</b>. Entran <b>solo con Google</b> y con el correo registrado aquí. El <b>rol</b> define a qué sistemas entra; los roles de Cards solo ven Cards. Los cambios de rol y las desactivaciones aplican en menos de un minuto, sin que la persona tenga que volver a iniciar sesión.'
+    :'Administras a los usuarios de <b>Polipay Cards Settlement</b>: entran <b>solo con Google</b> y con el correo registrado aquí, y únicamente ven Cards. No ves ni modificas a los usuarios de POS Settlement.'}));
+  p.append(el('div',{class:'filtros cards-filtros'},fld('Buscar',q),fld('Sistema',sis),fld('Estado',est),cnt),cont);
+  v.append(p);pintar();
 }
-function editUsuario(u){
-  const isNew=!u; u=u||{};
-  const body=el('div',{});
-  const email=el('input',{type:'email',value:u.email||'',placeholder:'nombre@polipay.io'});
-  const nombre=el('input',{value:u.nombre||'',placeholder:'Nombre y apellido'});
-  const rol=el('select');
-  Object.entries(ROLES).forEach(([k,label])=>rol.append(el('option',{value:k},label)));
-  rol.value = u.rol || 'operador';
-  const activo=el('input',{type:'checkbox'}); activo.checked = u.activo !== false;
-  body.append(fld('Correo (Google)',email),fld('Nombre',nombre),fld('Rol',rol),el('label',{class:'field',style:'flex-direction:row;align-items:center;gap:8px'},activo,el('span',{},'Activo (puede iniciar sesión)')));
-  body.append(el('div',{class:'req-note'},'El correo debe coincidir exactamente con la cuenta Google del usuario. Marcar como inactivo bloquea el acceso sin borrar el registro.'));
+function editUsuarioAdm(u,meta){
+  const nuevo=!u;u=u||{};
+  const email=el('input',{id:'auEmail',type:'email',autocomplete:'off',value:u.email||'',placeholder:'nombre@polipay.io'});
+  const nombre=el('input',{id:'auNombre',maxlength:'120',autocomplete:'off',value:u.nombre||'',placeholder:'Nombre y apellido'});
+  const rol=el('select',{id:'auRol'});
+  const grupos=[['pos','POS Settlement y Tareas Ops'],['cards','Solo Polipay Cards Settlement']];
+  grupos.forEach(([g,tit])=>{const rs=meta.roles.filter(r=>r.grupo===g);if(!rs.length)return;rol.append(el('optgroup',{label:tit},...rs.map(r=>el('option',{value:r.id},r.nombre))));});
+  rol.value=u.rol||(meta.roles.find(r=>r.id==='comercial')?'comercial':meta.roles[0].id);
+  const entra=el('div',{class:'req-note','aria-live':'polite'});
+  const pintaEntra=()=>{const r=meta.roles.find(x=>x.id===rol.value);entra.innerHTML='Entra a: '+(r?chipsSistemas(r.sistemas,meta.sistemas):'—');};
+  rol.addEventListener('change',pintaEntra);pintaEntra();
+  const activo=el('input',{id:'auActivo',type:'checkbox'});activo.checked=u.activo!==false;
+  const yo=!nuevo&&SES&&u.id===SES.id;
+  if(yo){rol.disabled=true;activo.disabled=true;}
+  const body=el('div',{},fld('Correo (Google)',email),fld('Nombre',nombre),fld('Rol',rol),entra,el('label',{class:'chk'},activo,' Activo (puede iniciar sesión)'),
+    el('div',{class:'req-note'},yo?'Es tu propio usuario: no puedes cambiar tu rol ni desactivarte.':'El correo debe coincidir exactamente con la cuenta de Google del usuario. Marcar como inactivo bloquea el acceso sin borrar el registro. Al darlo de alta recibe un correo de bienvenida.'));
   const foot=el('div',{});
-  if(!isNew && u.id !== (SES&&SES.id)) foot.append(el('button',{class:'btn danger',onclick:async()=>{
-    if(!await confirmar('¿Eliminar a '+u.email+'? Esto revoca su acceso definitivamente.'))return;
+  if(!nuevo&&!yo)foot.append(el('button',{class:'btn danger',type:'button',style:'margin-right:auto',onclick:async()=>{
+    if(!await confirmar('¿Eliminar a '+u.email+'? Pierde su acceso definitivamente.'))return;
     try{await api('DELETE','/api/usuarios/'+u.id);closeModal();toast('Usuario eliminado','ok');render();}
-    catch(e){toast(e.data&&e.data.mensaje?e.data.mensaje:errMsg(e),'err');}
-  }},'Eliminar'),el('div',{style:'flex:1'}));
-  if(isNew){
-    foot.append(el('button',{class:'btn ghost sm',onclick:()=>{
-      const params=new URLSearchParams({nombre:nombre.value||'Nombre Apellido',email:email.value||'nuevo@polipay.io',rol:rol.value}).toString();
-      window.open('/api/usuarios/bienvenida-preview.html?'+params+'&token='+encodeURIComponent(TOKEN()),'_blank');
-    }},'Previsualizar correo'));
-  }
-  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
-    try{
-      const resp=await api('POST','/api/usuarios',{id:u.id,email:email.value,nombre:nombre.value,rol:rol.value,activo:activo.checked});
-      closeModal();
-      if(isNew){
-        if(resp.mail&&resp.mail.ok) toast('Usuario creado y correo de bienvenida enviado','ok');
-        else if(resp.mail&&resp.mail.motivo==='ses_no_configurado') toast('Usuario creado. SES no configurado: no se envió correo.','err');
-        else if(resp.mail&&resp.mail.motivo==='usuario_inactivo') toast('Usuario creado como inactivo (sin correo).','ok');
-        else toast('Usuario creado. No se pudo enviar correo: '+(resp.mail&&resp.mail.error?resp.mail.error:'error SES'),'err');
-      } else toast('Guardado','ok');
-      render();
-    }catch(e){toast(e.data&&e.data.mensaje?e.data.mensaje:(e.data&&e.data.error==='email_duplicado'?'Ese correo ya está registrado':errMsg(e)),'err');}
-  }},'Guardar'));
-  modal(isNew?'Nuevo usuario':'Editar usuario',body,foot);
+    catch(er){toast(er.data&&er.data.mensaje?er.data.mensaje:errMsg(er),'err');}
+  }},'Eliminar'));
+  if(nuevo)foot.append(el('button',{class:'btn ghost sm',type:'button',onclick:()=>{
+    const params=new URLSearchParams({nombre:nombre.value||'Nombre Apellido',email:email.value||'nuevo@polipay.io',rol:rol.value}).toString();
+    window.open('/api/usuarios/bienvenida-preview.html?'+params+'&token='+encodeURIComponent(TOKEN()),'_blank');
+  }},'Previsualizar correo'));
+  const guardar=el('button',{class:'btn',type:'button'},'Guardar');
+  foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),guardar);
+  guardar.onclick=async()=>{guardar.disabled=true;try{
+    const r=await api('POST','/api/usuarios',{id:u.id,email:email.value,nombre:nombre.value,rol:rol.value,activo:activo.checked});
+    closeModal();
+    if(nuevo){
+      if(r.mail&&r.mail.ok)toast('Usuario creado y correo de bienvenida enviado','ok');
+      else if(r.mail&&r.mail.motivo==='ses_no_configurado')toast('Usuario creado. SES no configurado: no se envió correo.','err');
+      else if(r.mail&&r.mail.motivo==='usuario_inactivo')toast('Usuario creado como inactivo (sin correo).','ok');
+      else toast('Usuario creado. No se pudo enviar correo: '+(r.mail&&r.mail.error?r.mail.error:'error SES'),'err');
+    }else toast('Guardado','ok');
+    render();
+  }catch(er){toast(er.data&&er.data.mensaje?er.data.mensaje:(er.data&&er.data.error==='email_duplicado'?'Ese correo ya está registrado':errMsg(er)),'err');guardar.disabled=false;}};
+  modal(nuevo?'Nuevo usuario':'Editar usuario',body,foot);(nuevo?email:nombre).focus();
 }
-
 const BIT={usuario:'',accion:'',resource_type:'',ip:'',success:'',desde:'',hasta:'',q:'',offset:0,limit:100};
 /* ============================================================================
    DISPUTAS · UI conectada al backend real /api/disputa/*
@@ -5561,42 +5581,6 @@ async function editEntidad(e,nuevo,ents){
     closeModal();toast('Guardado','ok');render();
   }catch(er){toast(errMsg(er),'err');guardar.disabled=false;}};
   modal((esNueva?'Nueva ':'Editar ')+CARDS_NIVEL[nivel].toLowerCase(),body,foot);
-}
-
-/* ---------- Usuarios de Polipay Cards Settlement ---------- */
-const ROL_CARDS_BADGE={cards_admin:'<span class="badge violet">Administrador Cards</span>',cards_tesoreria:'<span class="badge ok">Tesorería Cards</span>',comercial:'<span class="badge info">Comercial</span>',cards_consulta:'<span class="badge neutral">Consulta Cards</span>'};
-async function vCardsUsuarios(v){
-  if(!can('cards_usuarios')){v.innerHTML='';v.append(el('div',{class:'banner err'},'Solo un administrador de Cards puede gestionar usuarios.'));return;}
-  const d=await api('GET','/api/cards/usuarios');
-  v.innerHTML='';
-  cardsAcciones(el('button',{class:'btn',onclick:()=>editUsuarioCards(null,d.roles)},'+ Usuario'));
-  const p=el('div',{class:'panel'});
-  p.append(el('h3',{},'Usuarios de Polipay Cards Settlement',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},d.usuarios.filter(u=>u.activo).length+' activo(s) de '+d.usuarios.length))));
-  p.append(el('div',{class:'banner',html:'Entran <b>solo con Google</b> y con el correo registrado aquí, y <b>únicamente ven Cards</b>. Roles: <b>Administrador Cards</b> (usuarios, estructura y asignación), <b>Tesorería Cards</b> (asigna o rechaza el saldo), <b>Comercial</b> (solicita fondeos y ve solo las suyas) y <b>Consulta Cards</b> (solo lectura). Los administradores de POS Settlement también tienen acceso a Cards.'}));
-  p.append(tableWrap(['Correo','Nombre','Rol','Estado','Último acceso'],d.usuarios.map(u=>{
-    const r=[esc(u.email),esc(u.nombre||''),ROL_CARDS_BADGE[u.rol]||esc(u.rol),u.activo?'<span class="badge ok">Activo</span>':'<span class="badge neutral">Inactivo</span>',u.ultimo_login_at?new Date(u.ultimo_login_at).toLocaleString('es-MX'):'—'];
-    r._onclick=()=>editUsuarioCards(u,d.roles);return r;}),{empty:'Aún no hay usuarios de Cards. Agrega al primero con “+ Usuario”.'}));
-  v.append(p);
-}
-function editUsuarioCards(u,roles){
-  const nuevo=!u;u=u||{};
-  const email=el('input',{id:'ucEmail',type:'email',autocomplete:'off',value:u.email||'',placeholder:'nombre@polipay.io'});
-  const nombre=el('input',{id:'ucNombre',maxlength:'120',autocomplete:'off',value:u.nombre||'',placeholder:'Nombre y apellido'});
-  const rol=el('select',{id:'ucRol'},...roles.map(r=>el('option',{value:r.id},r.nombre)));rol.value=u.rol||'comercial';
-  const activo=el('input',{id:'ucActivo',type:'checkbox'});activo.checked=u.activo!==false;
-  const yo=!nuevo&&SES&&u.id===SES.id;
-  if(yo){rol.disabled=true;activo.disabled=true;}
-  const body=el('div',{},fld('Correo (Google)',email),fld('Nombre',nombre),fld('Rol',rol),el('label',{class:'chk'},activo,' Activo (puede iniciar sesión)'),
-    el('div',{class:'req-note'},yo?'Es tu propio usuario: no puedes cambiar tu rol ni desactivarte.':'El correo debe coincidir exactamente con la cuenta de Google del usuario. Al darlo de alta recibe un correo de bienvenida.'));
-  const foot=el('div',{});
-  if(!nuevo&&!yo)foot.append(el('button',{class:'btn danger',type:'button',style:'margin-right:auto',onclick:async()=>{if(!await confirmar('¿Eliminar a '+u.email+'? Pierde su acceso definitivamente.'))return;try{await api('DELETE','/api/cards/usuarios/'+u.id);closeModal();toast('Usuario eliminado','ok');render();}catch(er){toast(errMsg(er),'err');}}},'Eliminar'));
-  const guardar=el('button',{class:'btn',type:'button'},'Guardar');
-  foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),guardar);
-  guardar.onclick=async()=>{guardar.disabled=true;try{
-    const r=await api('POST','/api/cards/usuarios',{id:u.id,email:email.value,nombre:nombre.value,rol:rol.value,activo:activo.checked});
-    closeModal();toast(nuevo?(r.mail&&r.mail.ok?'Usuario creado: se le envió la bienvenida':'Usuario creado'):'Guardado','ok');render();
-  }catch(er){toast(er.data&&er.data.mensaje?er.data.mensaje:errMsg(er),'err');guardar.disabled=false;}};
-  modal(nuevo?'Nuevo usuario de Cards':'Editar usuario',body,foot);(nuevo?email:nombre).focus();
 }
 
 /* ---------- Destinatarios del aviso de nueva solicitud ---------- */

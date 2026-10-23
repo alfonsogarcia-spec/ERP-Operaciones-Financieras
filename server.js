@@ -165,25 +165,46 @@ function rutaPermitidaRolInventario(path) {
   return path === '/api/yo' || path.startsWith('/api/inventario/');
 }
 // Roles solo-Cards: únicamente el espacio Polipay Cards Settlement. Tampoco se limita solo en pantalla: se bloquea en la API.
+// Además de /api/cards, el Administrador Cards usa el panel de Administración (usuarios) acotado a los roles de Cards.
 function rutaPermitidaRolComercial(path) {
-  return path === '/api/yo' || path === '/api/logout' || path.startsWith('/api/cards/');
+  return path === '/api/yo' || path === '/api/logout' || path.startsWith('/api/cards/') || path === '/api/usuarios' || path.startsWith('/api/usuarios/') || path === '/api/admin/roles';
 }
-function auth(req, res, next) {
+// Rol y estado VIGENTES del usuario (no los del token): un cambio de rol, o desactivar a alguien, aplica en menos de un minuto
+// sin que tenga que volver a iniciar sesión. Memoria de 60 s; se limpia al editar o borrar un usuario.
+const ROL_CACHE = new Map();
+const ROL_TTL_MS = 60 * 1000;
+async function rolVigente(id) {
+  const c = ROL_CACHE.get(id);
+  if (c && Date.now() - c.ts < ROL_TTL_MS) return c;
+  const r = (await db.query('select rol, activo from usuarios where id=$1', [id])).rows[0];
+  const v = { rol: r ? r.rol : null, activo: !!(r && r.activo), ts: Date.now() };
+  ROL_CACHE.set(id, v);
+  return v;
+}
+const olvidarRol = id => ROL_CACHE.delete(Number(id));
+async function auth(req, res, next) {
   const h = req.headers.authorization || '';
   const tok = h.startsWith('Bearer ') ? h.slice(7) : (req.query.token || null);
   if (!tok) return res.status(401).json({ error: 'sin_token' });
-  try {
-    const p = jwt.verify(tok, JWT_SECRET);
-    if (p.jti && REVOKED_JTI.has(p.jti)) return res.status(401).json({ error: 'sesion_revocada' });
-    if (p.rol === 'inventario' && !rutaPermitidaRolInventario(req.path)) {
-      return res.status(403).json({ error: 'rol_no_autorizado', mensaje: 'Este usuario solo tiene acceso a Inventario de terminales.' });
-    }
-    if (ROLES_SOLO_CARDS.includes(p.rol) && !rutaPermitidaRolComercial(req.path)) {
-      return res.status(403).json({ error: 'rol_no_autorizado', mensaje: 'Este usuario solo tiene acceso a Polipay Cards Settlement.' });
-    }
-    req.user = p; next();
-  }
+  let p;
+  try { p = jwt.verify(tok, JWT_SECRET); }
   catch { return res.status(401).json({ error: 'token_invalido' }); }
+  if (p.jti && REVOKED_JTI.has(p.jti)) return res.status(401).json({ error: 'sesion_revocada' });
+  if (db.isReady() && p.sub != null) {
+    try {
+      const v = await rolVigente(Number(p.sub));
+      if (!v.rol || !v.activo) return res.status(401).json({ error: 'usuario_inactivo', mensaje: 'Tu acceso fue desactivado.' });
+      p.rol = v.rol;
+    } catch (_e) { /* sin base de datos: se usa el rol del token */ }
+  }
+  if (p.rol === 'inventario' && !rutaPermitidaRolInventario(req.path)) {
+    return res.status(403).json({ error: 'rol_no_autorizado', mensaje: 'Este usuario solo tiene acceso a Inventario de terminales.' });
+  }
+  if (ROLES_SOLO_CARDS.includes(p.rol) && !rutaPermitidaRolComercial(req.path)) {
+    return res.status(403).json({ error: 'rol_no_autorizado', mensaje: 'Este usuario solo tiene acceso a Polipay Cards Settlement.' });
+  }
+  res.setHeader('X-Rol', p.rol);        // la pantalla lo compara para refrescar menús si el rol cambió
+  req.user = p; next();
 }
 const requiereRol = (...roles) => (req, res, next) =>
   roles.includes(req.user.rol) ? next() : res.status(403).json({ error: 'rol_no_autorizado', necesita: roles });
@@ -415,49 +436,67 @@ app.post('/api/logout', auth, (req, res) => {
   res.json({ ok: true });
 });
 
-/* ---------- gestión de usuarios (solo admin) ---------- */
-app.get('/api/usuarios', auth, requiereRol('admin'), async (_req, res) => {
+/* ---------- Administración de usuarios (panel único) ----------
+   Un solo lugar para los usuarios de todos los sistemas: POS Settlement, Tareas Ops y Polipay Cards Settlement.
+   Administrador → todos los roles. Administrador Cards → solo los usuarios con rol de Cards (no ve ni toca los demás). */
+const SISTEMAS = { pos: 'POS Settlement', tareas: 'Tareas Ops', cards: 'Cards', admin: 'Administración' };
+const SISTEMAS_ROL = {
+  admin: ['pos', 'tareas', 'cards', 'admin'], operador: ['pos', 'tareas', 'cards'], tesoreria: ['pos', 'tareas', 'cards'], bancos: ['pos', 'tareas', 'cards'],
+  consulta: ['pos', 'tareas', 'cards'], inventario: ['pos'],
+  comercial: ['cards'], cards_admin: ['cards', 'admin'], cards_tesoreria: ['cards'], cards_consulta: ['cards'],
+};
+const rolesGestionables = req => req.user.rol === 'admin' ? ROLES_VALIDOS : ROLES_SOLO_CARDS;
+app.get('/api/admin/roles', auth, requiereRol('admin', 'cards_admin'), (req, res) => {
+  res.json({ sistemas: SISTEMAS, roles: rolesGestionables(req).map(id => ({ id, nombre: ROLES[id], grupo: ROLES_SOLO_CARDS.includes(id) ? 'cards' : 'pos', sistemas: SISTEMAS_ROL[id] || [] })) });
+});
+app.get('/api/usuarios', auth, requiereRol('admin', 'cards_admin'), async (req, res) => {
   if (!dbReady(res)) return;
-  const rows = (await db.query('select id,email,email_cifrado,nombre,nombre_cifrado,rol,activo,ultimo_login_at,creado_at,creado_por,foto_url from usuarios order by activo desc, rol, email')).rows;
+  const rows = (await db.query('select id,email,email_cifrado,nombre,nombre_cifrado,rol,activo,ultimo_login_at,creado_at,creado_por,foto_url from usuarios where rol = any($1::text[]) order by activo desc, rol, email', [rolesGestionables(req)])).rows;
   res.json(rows.map(u => ({
     id: u.id,
     email: descifraTexto(u.email_cifrado, u.email),
     nombre: descifraTexto(u.nombre_cifrado, u.nombre),
-    rol: u.rol, activo: u.activo,
+    rol: u.rol, activo: u.activo, sistemas: SISTEMAS_ROL[u.rol] || [],
     ultimo_login_at: u.ultimo_login_at, creado_at: u.creado_at, creado_por: u.creado_por, foto_url: u.foto_url,
   })));
 });
-app.post('/api/usuarios', auth, requiereRol('admin'), async (req, res) => {
+app.post('/api/usuarios', auth, requiereRol('admin', 'cards_admin'), async (req, res) => {
   if (!dbReady(res)) return;
   const b = req.body || {};
   const email = String(b.email || '').trim().toLowerCase();
   const nombre = String(b.nombre || '').trim();
   const rol = String(b.rol || '').trim();
   const activo = b.activo === false ? false : true;
+  const gestionables = rolesGestionables(req);
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'email_invalido' });
   if (!nombre) return res.status(400).json({ error: 'nombre_requerido' });
-  if (!ROLES_VALIDOS.includes(rol)) return res.status(400).json({ error: 'rol_invalido', validos: ROLES_VALIDOS });
+  if (!gestionables.includes(rol)) return res.status(400).json({ error: 'rol_invalido', validos: gestionables });
   if (b.id) {
     // Edición
     const id = parseInt(b.id, 10);
     const existente = (await db.query('select id,rol from usuarios where id=$1', [id])).rows[0];
-    if (!existente) return res.status(404).json({ error: 'no_existe' });
+    if (!existente || !gestionables.includes(existente.rol)) return res.status(404).json({ error: 'no_existe', mensaje: 'Ese usuario no existe o no lo puedes administrar.' });
+    if (id === parseInt(req.user.sub, 10) && (existente.rol !== rol || !activo))
+      return res.status(409).json({ error: 'no_te_edites', mensaje: 'No puedes cambiar tu propio rol ni desactivarte.' });
     // Regla: no permitas quedarte sin admins activos.
     if ((existente.rol === 'admin') && (rol !== 'admin' || !activo)) {
       const admins = (await db.query("select count(*)::int as n from usuarios where rol='admin' and activo=true and id<>$1", [id])).rows[0].n;
       if (admins === 0) return res.status(409).json({ error: 'ultimo_admin', mensaje: 'No puedes dejar el sistema sin al menos un administrador activo.' });
     }
+    const dupE = (await db.query('select id from usuarios where id<>$1 and (email_hash=$2 or lower(email)=lower($3))', [id, C.hmacEmail(email), email])).rows[0];
+    if (dupE) return res.status(409).json({ error: 'email_duplicado', mensaje: 'Ese correo ya pertenece a otro usuario.' });
     await db.query(
       'update usuarios set email=$2, nombre=$3, rol=$4, activo=$5, email_hash=$6, email_cifrado=$7, nombre_cifrado=$8 where id=$1',
       [id, email, nombre, rol, activo, C.hmacEmail(email), C.encrypt(email), C.encrypt(nombre)]
     );
+    olvidarRol(id);
     await bit(req, 'usuario_editar', `email=${email} rol=${rol} activo=${activo}`, { resource_type: 'usuario', resource_id: id });
     return res.json({ ok: true, id });
   }
   // Alta (dedupe por hash + fallback a lower(email) para legacy)
   const eHash = C.hmacEmail(email);
-  const dup = (await db.query('select id from usuarios where email_hash=$1 or lower(email)=lower($2)', [eHash, email])).rows[0];
-  if (dup) return res.status(409).json({ error: 'email_duplicado' });
+  const dup = (await db.query('select id, rol from usuarios where email_hash=$1 or lower(email)=lower($2)', [eHash, email])).rows[0];
+  if (dup) return res.status(409).json({ error: 'email_duplicado', mensaje: gestionables.includes(dup.rol) ? 'Ese correo ya tiene usuario.' : 'Ese correo ya tiene un usuario con acceso a POS Settlement. Un administrador debe cambiarle el rol.' });
   const r = await db.query(
     'insert into usuarios(email,nombre,rol,activo,creado_por,email_hash,email_cifrado,nombre_cifrado) values($1,$2,$3,$4,$5,$6,$7,$8) returning id',
     [email, nombre, rol, activo, req.user.nombre || req.user.email, C.hmacEmail(email), C.encrypt(email), C.encrypt(nombre)]
@@ -472,7 +511,7 @@ app.post('/api/usuarios', auth, requiereRol('admin'), async (req, res) => {
       const logoPath = path.join(__dirname, 'public', 'logo.png');
       const logoBuf = require('fs').readFileSync(logoPath);
       const inlineImages = [{ cid: 'polipay-logo', filename: 'polipay-logo.png', contentType: 'image/png', content: logoBuf }];
-      const messageId = await sendSES({ to: [`"${nombre}" <${email}>`], subject, html, textFallback, inlineImages });
+      const messageId = await sendSES({ to: [`"${nombre.replace(/["<>\r\n,;]/g, ' ')}" <${email}>`], subject, html, textFallback, inlineImages });
       mail = { ok: true, messageId };
       await bit(req, 'usuario_bienvenida', `→ ${email} (${messageId})`);
     } catch (e) {
@@ -484,17 +523,18 @@ app.post('/api/usuarios', auth, requiereRol('admin'), async (req, res) => {
   }
   res.json({ ok: true, id: r.rows[0].id, mail });
 });
-app.delete('/api/usuarios/:id', auth, requiereRol('admin'), async (req, res) => {
+app.delete('/api/usuarios/:id', auth, requiereRol('admin', 'cards_admin'), async (req, res) => {
   if (!dbReady(res)) return;
   const id = parseInt(req.params.id, 10);
-  if (id === req.user.sub) return res.status(409).json({ error: 'no_te_borres', mensaje: 'No puedes borrar tu propio usuario.' });
+  if (id === parseInt(req.user.sub, 10)) return res.status(409).json({ error: 'no_te_borres', mensaje: 'No puedes borrar tu propio usuario.' });
   const u = (await db.query('select rol,email from usuarios where id=$1', [id])).rows[0];
-  if (!u) return res.status(404).json({ error: 'no_existe' });
+  if (!u || !rolesGestionables(req).includes(u.rol)) return res.status(404).json({ error: 'no_existe', mensaje: 'Ese usuario no existe o no lo puedes administrar.' });
   if (u.rol === 'admin') {
     const admins = (await db.query("select count(*)::int as n from usuarios where rol='admin' and activo=true and id<>$1", [id])).rows[0].n;
     if (admins === 0) return res.status(409).json({ error: 'ultimo_admin', mensaje: 'No puedes borrar al último administrador activo.' });
   }
   await db.query('delete from usuarios where id=$1', [id]);
+  olvidarRol(id);
   await bit(req, 'usuario_baja', `email=${u.email}`, { resource_type: 'usuario', resource_id: id });
   res.json({ ok: true });
 });
@@ -4127,7 +4167,7 @@ function armarBienvenidaHTML(user, invitadoPor, opts) {
 }
 
 // Preview HTML del correo de bienvenida (solo admin; para diseñar sin enviar).
-app.get('/api/usuarios/bienvenida-preview.html', auth, requiereRol('admin'), (req, res) => {
+app.get('/api/usuarios/bienvenida-preview.html', auth, requiereRol('admin', 'cards_admin'), (req, res) => {
   const nombre = String(req.query.nombre || 'Nombre Apellido');
   const email = String(req.query.email || 'nuevo.usuario@polipay.io');
   const rol = ROLES_VALIDOS.includes(String(req.query.rol || '')) ? String(req.query.rol) : 'operador';
@@ -5109,7 +5149,7 @@ mountTareasRoutes(app, { auth, requiereRol, bit, db, X });
 
 /* ---------- Módulo CARDS (BSO) · fondeos de empresas, UN y tarjetas ---------- */
 const { mountCardsRoutes } = require('./lib/cards-routes.js');
-mountCardsRoutes(app, { auth, requiereRol, bit, db, C, X, enviarXLSX, sesEnabled, sendSES, ROLES, descifraTexto, armarBienvenidaHTML, logoBienvenida: () => require('fs').readFileSync(path.join(__dirname, 'public', 'logo.png')) });
+mountCardsRoutes(app, { auth, requiereRol, bit, db, C, X, enviarXLSX, sesEnabled, sendSES });
 
 /* ---------- Módulo ENTREGABLES · Portal de solicitudes (fase 5) ---------- */
 const { mountEntregablesRoutes } = require('./lib/entregables-routes.js');

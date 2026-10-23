@@ -116,9 +116,16 @@ verificador) y su comisión/IVA (UN y tarjeta heredan de la empresa si no tienen
 | **Comercial** (`comercial`) | Solicita y gestiona solo lo suyo |
 | **Consulta Cards** (`cards_consulta`) | Solo lectura |
 
-## Usuarios de Cards
+## Usuarios y accesos (panel de Administración)
 
-Cards → **Usuarios** (Administrador Cards y administradores de POS): alta, edición, desactivación y baja de usuarios con rol de Cards, con correo de bienvenida “Polipay Cards Settlement”. Mismo login con Google y misma tabla de usuarios, pero **solo se ven y se editan los de Cards**: un Administrador Cards no puede crear ni tocar administradores o usuarios de POS, ni cambiarse el rol o desactivarse a sí mismo. Un correo que ya existe en POS no se puede dar de alta aquí (lo ajusta un administrador de POS). Si se usa `MFA_REQUIRED_ROLES`, agregar `cards_admin,cards_tesoreria` para exigir la verificación en dos pasos.
+Todos los usuarios —POS Settlement, Tareas Ops y Cards— se administran en **un solo lugar**: el espacio **Administración → Usuarios** (en el selector de espacios). Ya no hay pantallas de Usuarios sueltas en POS ni en Cards.
+La lista muestra, por usuario, su **rol** y a **qué sistemas entra** (el rol define el acceso), con búsqueda y filtros por sistema y estado. Al dar de alta recibe el correo de bienvenida de su sistema (“Polipay Cards Settlement” para los roles de Cards).
+
+- **Administrador**: ve y administra todos los usuarios y roles.
+- **Administrador Cards**: entra al mismo panel, pero **solo ve y edita usuarios con rol de Cards** (no puede crear ni tocar administradores o usuarios de POS). Un correo que ya existe en POS no se puede dar de alta desde ahí.
+- Nadie puede cambiarse el rol, desactivarse ni borrarse a sí mismo; no se puede dejar el sistema sin un administrador activo.
+- **Los cambios de rol y las desactivaciones aplican al instante** (hasta 1 minuto): el servidor consulta el rol vigente en cada petición, no el que traía la sesión. La pantalla se entera sola (avisa “Tu rol cambió a…” y ajusta el menú); un usuario desactivado o borrado pierde la sesión.
+- Si se usa `MFA_REQUIRED_ROLES`, agregar `cards_admin,cards_tesoreria` para exigir la verificación en dos pasos.
 
 ## Quién solicita
 
