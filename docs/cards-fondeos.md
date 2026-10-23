@@ -107,6 +107,19 @@ verificador) y su comisión/IVA (UN y tarjeta heredan de la empresa si no tienen
 | Operador | Solicitar, subir CEP y registrar fondeos ya recibidos; no asigna |
 | Bancos · Consulta | Solo lectura de Cards |
 
+**Roles propios de Cards** (solo entran a Polipay Cards Settlement; no ven POS Settlement ni Tareas, y la API lo bloquea):
+
+| Rol | Qué puede |
+|---|---|
+| **Administrador Cards** (`cards_admin`) | Todo en Cards: usuarios de Cards, estructura, bancos, destinatarios, solicitar, asignar/rechazar y cancelar incluso un fondeo asignado |
+| **Tesorería Cards** (`cards_tesoreria`) | Asignar o rechazar, registrar fondeos recibidos, mantener estructura y bancos; recibe el aviso de “por asignar” |
+| **Comercial** (`comercial`) | Solicita y gestiona solo lo suyo |
+| **Consulta Cards** (`cards_consulta`) | Solo lectura |
+
+## Usuarios de Cards
+
+Cards → **Usuarios** (Administrador Cards y administradores de POS): alta, edición, desactivación y baja de usuarios con rol de Cards, con correo de bienvenida “Polipay Cards Settlement”. Mismo login con Google y misma tabla de usuarios, pero **solo se ven y se editan los de Cards**: un Administrador Cards no puede crear ni tocar administradores o usuarios de POS, ni cambiarse el rol o desactivarse a sí mismo. Un correo que ya existe en POS no se puede dar de alta aquí (lo ajusta un administrador de POS). Si se usa `MFA_REQUIRED_ROLES`, agregar `cards_admin,cards_tesoreria` para exigir la verificación en dos pasos.
+
 ## Quién solicita
 
 El **solicitante es quien tiene la sesión abierta** cuando registra la solicitud: si la captura Fátima, la solicitante es Fátima (queda en el fondeo, en el historial, en el correo y en el Excel). Ya no se asigna un comercial por empresa; cada comercial ve y gestiona únicamente sus propias solicitudes.

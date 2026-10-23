@@ -146,7 +146,9 @@ function validaArchivo(req, res, next) {
 const N = v => (v == null || v === '') ? null : Number(v);
 const nrm = s => String(s == null ? '' : s).trim().toLowerCase();
 const safeUser = u => ({ id: u.id, email: u.email, nombre: u.nombre, rol: u.rol, foto_url: u.foto_url || null });
-const ROLES = { admin: 'Administrador', operador: 'Operador (Operaciones)', tesoreria: 'Tesorería (valida)', bancos: 'Bancos (dispersa y cierra)', consulta: 'Consulta (solo lectura)', inventario: 'Inventario (solo esa sección)', comercial: 'Comercial (solicita fondeos de Cards)' };
+const ROLES = { admin: 'Administrador', operador: 'Operador (Operaciones)', tesoreria: 'Tesorería (valida)', bancos: 'Bancos (dispersa y cierra)', consulta: 'Consulta (solo lectura)', inventario: 'Inventario (solo esa sección)', comercial: 'Comercial (solicita fondeos de Cards)', cards_admin: 'Administrador Cards (usuarios y tesorería de Cards)', cards_tesoreria: 'Tesorería Cards (asigna el saldo)', cards_consulta: 'Consulta Cards (solo lectura)' };
+// Roles que solo entran a Polipay Cards Settlement (no ven POS Settlement ni Tareas).
+const ROLES_SOLO_CARDS = ['comercial', 'cards_admin', 'cards_tesoreria', 'cards_consulta'];
 const ROLES_VALIDOS = Object.keys(ROLES);
 
 // jti único por sesión — permite revocarla al cerrar sesión (blacklist en memoria).
@@ -162,7 +164,7 @@ function firmar(u) {
 function rutaPermitidaRolInventario(path) {
   return path === '/api/yo' || path.startsWith('/api/inventario/');
 }
-// Rol "comercial": solo el espacio Cards (sus solicitudes de fondeo). Tampoco se limita solo en pantalla: se bloquea en la API.
+// Roles solo-Cards: únicamente el espacio Polipay Cards Settlement. Tampoco se limita solo en pantalla: se bloquea en la API.
 function rutaPermitidaRolComercial(path) {
   return path === '/api/yo' || path === '/api/logout' || path.startsWith('/api/cards/');
 }
@@ -176,8 +178,8 @@ function auth(req, res, next) {
     if (p.rol === 'inventario' && !rutaPermitidaRolInventario(req.path)) {
       return res.status(403).json({ error: 'rol_no_autorizado', mensaje: 'Este usuario solo tiene acceso a Inventario de terminales.' });
     }
-    if (p.rol === 'comercial' && !rutaPermitidaRolComercial(req.path)) {
-      return res.status(403).json({ error: 'rol_no_autorizado', mensaje: 'Este usuario solo tiene acceso a Cards (solicitudes de fondeo).' });
+    if (ROLES_SOLO_CARDS.includes(p.rol) && !rutaPermitidaRolComercial(req.path)) {
+      return res.status(403).json({ error: 'rol_no_autorizado', mensaje: 'Este usuario solo tiene acceso a Polipay Cards Settlement.' });
     }
     req.user = p; next();
   }
@@ -3989,6 +3991,27 @@ function permisosPorRol(rol) {
       'Ver todos los cortes, catálogos y bitácora.',
       'No puede generar cortes ni validar.',
     ],
+    cards_admin: [
+      'Administrar los usuarios de Polipay Cards Settlement: altas, roles y accesos.',
+      'Definir empresas, unidades de negocio, tarjetas, bancos y destinatarios de los avisos.',
+      'Asignar o rechazar el saldo de los fondeos con CEP validado.',
+      'Solo ves Cards: no tienes acceso a POS Settlement.',
+    ],
+    cards_tesoreria: [
+      'Revisar los fondeos con CEP y confirmar que el saldo se asignó (o rechazarlos con motivo).',
+      'Registrar fondeos ya recibidos y mantener empresas, unidades de negocio y tarjetas.',
+      'Recibir el aviso por correo de cada fondeo por asignar.',
+      'Solo ves Cards: no tienes acceso a POS Settlement.',
+    ],
+    comercial: [
+      'Solicitar fondeos a las empresas: el sistema calcula comisión e IVA y el total a depositar.',
+      'Subir el CEP del depósito (solo se aceptan CEP) y dar seguimiento a tus solicitudes.',
+      'Ves únicamente las solicitudes que tú registras.',
+    ],
+    cards_consulta: [
+      'Solo lectura de Cards: fondeos, empresas, panel y CEP.',
+      'No puedes solicitar, asignar ni modificar nada.',
+    ],
     consulta: [
       'Solo lectura: puede ver toda la operación.',
       'Descargar layouts SPEI, reportes por cliente y registro contable.',
@@ -4005,7 +4028,8 @@ function armarBienvenidaHTML(user, invitadoPor, opts) {
   const bullets = permisosPorRol(user.rol);
   const appUrl = opts.appUrl || process.env.APP_URL || 'https://polipay-conciliacion-liquidacion.onrender.com';
   const logo = opts.logoSrc || 'cid:polipay-logo';
-  const subject = `Bienvenido/a a Polipay POS Settlement — acceso ${rolLabel}`;
+  const sistema = ROLES_SOLO_CARDS.includes(user.rol) ? 'Polipay Cards Settlement' : 'Polipay POS Settlement';
+  const subject = `Bienvenido/a a ${sistema} — acceso ${rolLabel}`;
   const html = `<!doctype html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(subject)}</title>
@@ -4018,7 +4042,7 @@ function armarBienvenidaHTML(user, invitadoPor, opts) {
         <tr><td style="background:#ffffff;padding:26px 32px;border-bottom:1px solid ${line}">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
             <td><img src="${logo}" alt="Polipay" height="34" style="display:block;height:34px;border:0"></td>
-            <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:${brand};letter-spacing:.12em;text-transform:uppercase">Polipay POS Settlement</td>
+            <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:${brand};letter-spacing:.12em;text-transform:uppercase">${sistema}</td>
           </tr></table>
         </td></tr>
 
@@ -4029,7 +4053,7 @@ function armarBienvenidaHTML(user, invitadoPor, opts) {
         <tr><td style="padding:34px 40px 8px">
           <div style="font:700 22px/1.25 Montserrat,Arial,sans-serif;color:${brand};margin:0 0 8px">¡Bienvenido/a, ${escapeHtml(user.nombre)}!</div>
           <div style="font:400 14px/1.6 Montserrat,Arial,sans-serif;color:${muted};margin:0 0 22px">
-            Te dieron acceso al sistema de conciliación <b style="color:${ink}">POLIPAY POS SETTLEMENT</b> | MCEB S.A de C.V.
+            Te dieron acceso al sistema ${ROLES_SOLO_CARDS.includes(user.rol) ? 'de fondeos' : 'de conciliación'} <b style="color:${ink}">${sistema.toUpperCase()}</b> | MCEB S.A de C.V.
           </div>
 
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid ${line};border-radius:10px;overflow:hidden;margin:0 0 24px">
@@ -4098,7 +4122,7 @@ function armarBienvenidaHTML(user, invitadoPor, opts) {
     </td></tr>
   </table>
 </body></html>`;
-  const textFallback = `Bienvenido/a a Polipay POS Settlement.\nAcceso: ${user.email} (rol ${rolLabel}). Entra con Google en ${appUrl}.`;
+  const textFallback = `Bienvenido/a a ${sistema}.\nAcceso: ${user.email} (rol ${rolLabel}). Entra con Google en ${appUrl}.`;
   return { subject, html, textFallback };
 }
 
@@ -5085,7 +5109,7 @@ mountTareasRoutes(app, { auth, requiereRol, bit, db, X });
 
 /* ---------- Módulo CARDS (BSO) · fondeos de empresas, UN y tarjetas ---------- */
 const { mountCardsRoutes } = require('./lib/cards-routes.js');
-mountCardsRoutes(app, { auth, requiereRol, bit, db, C, X, enviarXLSX, sesEnabled, sendSES });
+mountCardsRoutes(app, { auth, requiereRol, bit, db, C, X, enviarXLSX, sesEnabled, sendSES, ROLES, descifraTexto, armarBienvenidaHTML, logoBienvenida: () => require('fs').readFileSync(path.join(__dirname, 'public', 'logo.png')) });
 
 /* ---------- Módulo ENTREGABLES · Portal de solicitudes (fase 5) ---------- */
 const { mountEntregablesRoutes } = require('./lib/entregables-routes.js');

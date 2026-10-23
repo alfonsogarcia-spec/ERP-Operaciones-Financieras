@@ -58,6 +58,10 @@ test('permisos por rol y estatus', () => {
   assert.equal(p('SOLICITADO', 'tesoreria').asignar, false);
   assert.equal(p('ASIGNADO', 'tesoreria').cancelar, false); assert.equal(p('ASIGNADO', 'admin').cancelar, true);
   assert.equal(p('CANCELADO', 'admin').cancelar, false);
+  // roles propios de Cards: el administrador y la tesorería de Cards actúan como tesorería; la consulta de Cards solo mira
+  for (const rol of ['cards_admin', 'cards_tesoreria']) { assert.equal(p('POR_ASIGNAR', rol).asignar, true, rol); assert.equal(p('SOLICITADO', rol).subir_cep, true, rol); }
+  assert.equal(p('ASIGNADO', 'cards_admin').cancelar, true); assert.equal(p('ASIGNADO', 'cards_tesoreria').cancelar, false);
+  assert.equal(Object.values(p('POR_ASIGNAR', 'cards_consulta')).some(Boolean), false);
   // los demás roles solo miran
   for (const rol of ['consulta', 'bancos']) assert.equal(Object.values(p('POR_ASIGNAR', rol)).some(Boolean), false, rol);
 });
