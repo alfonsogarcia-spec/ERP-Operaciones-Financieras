@@ -82,6 +82,13 @@ async function migrate() {
     await backend.exec(fs.readFileSync(path.join(__dirname, 'schema-cumplimiento.sql'), 'utf8'));
     await backend.query(`set search_path to ${SCHEMA}`);
   } catch (e) { console.warn('⚠ schema-cumplimiento migrate:', e.message); }
+  // Cards (BSO): fondeos de empresas, unidades de negocio y tarjetas (control interno de tesorería).
+  try {
+    await backend.exec(fs.readFileSync(path.join(__dirname, 'schema-cards.sql'), 'utf8'));
+    await backend.query(`set search_path to ${SCHEMA}`);
+    // Catálogo de bancos de Cards: copia de "Bancos SPEI" (tabla `bancos` del sistema) + participantes SPEI.
+    await require('../lib/cards-bancos').sembrarBancos((sql, params) => backend.query(sql, params), { origen: `${SCHEMA}.bancos` });
+  } catch (e) { console.warn('⚠ schema-cards migrate:', e.message); }
   await seedUsuarios();
   await seedReasonCodes();
 }

@@ -407,6 +407,7 @@
     .theme-dev-menu .opt .dot.m-sys{background:linear-gradient(90deg,#EFF3F8 50%,#090E1C 50%)}
     .theme-dev-menu .opt .dot.m-light{background:#EFF3F8}
     .theme-dev-menu .opt .dot.m-dark{background:#090E1C}
+    .theme-dev-menu .devusers{max-height:168px;overflow:auto;display:flex;flex-direction:column;gap:2px}
     .theme-dev-menu .opt .check{margin-left:auto;font-size:var(--fs-sm);opacity:0}
     .theme-dev-menu .opt.active .check{opacity:1}
 
@@ -521,6 +522,102 @@
 
     @media(max-width:980px){.grid2,.form-grid,.form-grid.c3{grid-template-columns:1fr}.layout{flex-direction:column}
       .sidebar{width:auto;height:auto;position:relative;margin:10px;top:0}}
+      /* ===== Cards (BSO) ===== */
+    .grid2>*{min-width:0}
+    .tablewrap.compacta table{min-width:0}
+    .ws{position:relative}
+    .ws-menu{display:none;position:absolute;z-index:30;left:22px;right:22px;flex-direction:column;gap:2px;padding:var(--sp-2);border-radius:var(--radius);background:rgba(11,18,32,.94);border:1px solid rgba(255,255,255,.16);box-shadow:var(--shadow-lg);backdrop-filter:blur(18px)}
+    .ws-menu.open{display:flex}
+    .ws-opt{display:flex;align-items:center;gap:10px;width:100%;padding:var(--sp-2) 10px;border:none;border-radius:var(--radius-xs);background:transparent;color:#fff;font:var(--fw-semibold) var(--fs-sm) var(--font);text-align:left}
+    .ws-opt:hover,.ws-opt.active{background:rgba(255,255,255,.12)}
+    .ws-opt .ws-ic{width:24px;height:24px;border-radius:var(--radius-xs);display:grid;place-items:center;font-size:var(--fs-xs);font-weight:var(--fw-bold);color:#fff;flex:none}
+    .ws-opt .check{margin-left:auto;opacity:0}.ws-opt.active .check{opacity:1}
+    .clabe{font:var(--fw-medium) var(--fs-sm) var(--font-mono);letter-spacing:.03em;padding:3px 8px;border-radius:var(--radius-xs);border:1px dashed var(--line-strong);background:var(--glass-1);color:var(--ink);white-space:nowrap}
+    .clabe:hover{border-color:var(--accent);background:var(--accent-soft)}
+    .ctl-fila{display:flex;align-items:center;gap:var(--sp-3);padding:10px 0;border-bottom:1px solid var(--line)}
+    .ctl-fila:last-child{border-bottom:none}.ctl-fila .badge{min-width:34px;text-align:center}.ctl-fila .btn{margin-left:auto}
+    .arbol .rama{color:var(--muted);margin-right:2px}
+    td .acciones{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+    .desglose table,table.kv{width:100%;border-collapse:collapse}
+    .desglose{margin:var(--sp-2) 0 var(--sp-3);padding:var(--sp-2) var(--sp-3);border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--glass-1)}
+    .desglose td{padding:6px 0;border-bottom:1px solid var(--line);font-size:var(--fs-md)}.desglose tr:last-child td{border-bottom:none}
+    .desglose td.num{text-align:right;font-variant-numeric:tabular-nums}.desglose tr.tot td{font-weight:var(--fw-bold)}
+    .desglose:empty{display:none}
+    .clabe-info{margin-bottom:var(--sp-3)}
+    .banco-det{display:flex;align-items:center;flex-wrap:wrap;gap:var(--sp-2);min-height:38px;padding:7px 12px;border:1px dashed var(--line-strong);border-radius:var(--radius-sm);background:var(--glass-1);color:var(--ink);font-size:var(--fs-md)}
+    .banco-det.vacio{color:var(--muted)}.banco-det select{flex:1 1 180px;min-width:0}
+    table.kv tbody tr:nth-child(even),table.kv tbody tr:hover{background:none;box-shadow:none}
+    table.kv th{width:42%;text-align:left;padding:7px 10px 7px 0;color:var(--muted);font:var(--fw-semibold) var(--fs-sm) var(--font);vertical-align:top;border-bottom:1px solid var(--line)}
+    table.kv td{padding:7px 0;font-size:var(--fs-md);border-bottom:1px solid var(--line)}
+    .detalle-head{display:flex;align-items:center;gap:var(--sp-2);margin-bottom:var(--sp-3)}
+    .detalle-cols{gap:var(--sp-5)}.panel-in h4{margin:0 0 var(--sp-2);font-size:var(--fs-sm);text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+    .cep-item{display:flex;align-items:center;gap:var(--sp-2);padding:var(--sp-2) 0;border-bottom:1px solid var(--line)}
+    .cep-item>div{flex:1;min-width:0;display:flex;flex-direction:column}.cep-item b{overflow-wrap:anywhere;font-size:var(--fs-md)}
+    .cep-up{display:flex;gap:var(--sp-2);align-items:center;margin-top:var(--sp-3)}
+    .timeline{list-style:none;margin:0;padding:0;border-left:2px solid var(--line);padding-left:var(--sp-4)}
+    .timeline li{display:flex;flex-direction:column;margin-bottom:var(--sp-3);position:relative;font-size:var(--fs-md)}
+    .timeline li::before{content:'';position:absolute;left:calc(-1 * var(--sp-4) - 5px);top:5px;width:8px;height:8px;border-radius:50%;background:var(--accent)}
+    .card .value{font-size:clamp(var(--fs-xl),4.2vw,var(--fs-3xl));overflow-wrap:anywhere}
+    .cards-filtros{gap:var(--sp-2)}
+    .cards-filtros select,.cards-filtros input{width:auto;flex:0 1 190px;min-width:150px;max-width:100%}
+    .cards-filtros input[type=date]{flex-basis:150px;min-width:140px}
+    .cards-filtros input[type=search]{flex:1 1 220px;max-width:340px}
+    .ck-req{display:flex;gap:var(--sp-4);flex-wrap:wrap;margin:0 0 var(--sp-3);font-size:var(--fs-sm);color:var(--text-secondary)}
+    .ck-req .ck-ok{color:var(--ok-ink);font-weight:var(--fw-bold)}
+    .ck-req .ck-no{color:var(--muted)}
+    .instr{margin:0;padding:var(--sp-3);border-radius:var(--radius-sm);background:var(--glass-2);border:1px dashed var(--line-strong);font-size:var(--fs-md);line-height:1.5}
+    h4.sub-h{margin:var(--sp-4) 0 var(--sp-2);font-size:var(--fs-sm);text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+    /* ===== Filtro de fechas (un campo + calendario con atajos) ===== */
+    .fd{position:relative;display:inline-flex;align-items:center;max-width:100%;border:1px solid var(--line-strong);border-radius:var(--radius-sm);background:var(--glass-2);transition:border-color var(--dur-fast) var(--ease),background var(--dur-fast) var(--ease)}
+    .fd:hover,.fd:focus-within{border-color:var(--accent)}
+    .fd-campo{display:inline-flex;align-items:center;gap:var(--sp-2);min-height:34px;padding:7px 12px;border:0;background:transparent;color:var(--ink);font:var(--fw-regular) var(--fs-md) var(--font);cursor:pointer;white-space:nowrap;min-width:0}
+    .fd-campo[aria-expanded="true"]{color:var(--accent-ink)}
+    .fd-txt{overflow:hidden;text-overflow:ellipsis}
+    .fd-ico{display:inline-flex;color:var(--muted);flex:none}
+    .fd-x{border:0;background:transparent;color:var(--muted);font-size:var(--fs-lg);line-height:1;padding:0 10px 0 2px;cursor:pointer}
+    .fd-x:hover{color:var(--ink)}
+    .fd-pop{position:fixed;z-index:3500;display:flex;max-width:calc(100vw - 16px);background:var(--panel-strong);border:1px solid var(--glass-border);border-radius:var(--radius);box-shadow:var(--shadow-lg);backdrop-filter:blur(var(--blur)) saturate(160%);-webkit-backdrop-filter:blur(var(--blur)) saturate(160%);overflow:hidden}
+    .fd-pre{display:flex;flex-direction:column;gap:2px;min-width:164px;padding:var(--sp-2);border-right:1px solid var(--line)}
+    .fd-item{display:block;width:100%;text-align:left;padding:7px 10px;border:0;border-radius:var(--radius-xs);background:transparent;color:var(--ink);font:var(--fw-regular) var(--fs-md) var(--font);cursor:pointer}
+    .fd-item:hover{background:var(--accent-soft)}
+    .fd-item.on{background:var(--accent-soft);color:var(--accent-ink);font-weight:var(--fw-semibold)}
+    .fd-item.off{color:var(--muted);opacity:.5;cursor:not-allowed}
+    .fd-der{width:288px;padding:var(--sp-3)}
+    .fd-cab{display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--sp-2)}
+    .fd-mes{font-weight:var(--fw-semibold);font-size:var(--fs-md)}
+    .fd-nav{display:grid;place-items:center;width:32px;height:32px;border:0;border-radius:var(--radius-xs);background:transparent;color:var(--muted);cursor:pointer}
+    .fd-nav:hover{background:var(--glass-3);color:var(--ink)}
+    .fd-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+    .fd-dow{padding:4px 0;font-size:var(--fs-xs);color:var(--muted);text-align:center}
+    .fd-dia{height:34px;border:0;border-radius:var(--radius-xs);background:transparent;color:var(--ink);font:var(--fw-regular) var(--fs-md) var(--font);cursor:pointer;font-variant-numeric:tabular-nums}
+    .fd-dia:hover:not(:disabled){background:var(--glass-3)}
+    .fd-dia.r{background:var(--accent-soft);color:var(--accent-ink);border-radius:0}
+    .fd-dia.e{background:var(--accent-fill);color:var(--on-fill);border-radius:var(--radius-xs)}
+    .fd-dia.hoy:not(.e){font-weight:var(--fw-bold);box-shadow:inset 0 0 0 1px var(--accent)}
+    .fd-dia:disabled{color:var(--muted);opacity:.35;cursor:not-allowed}
+    .fd-pie{margin-top:var(--sp-2);min-height:18px;font-size:var(--fs-sm);color:var(--muted)}
+    @media (max-width:640px){
+      .fd-pop{left:8px!important;right:8px;top:auto!important;bottom:8px;flex-direction:column;max-height:86vh;overflow:auto}
+      .fd-pre{flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line);min-width:0}
+      .fd-item{width:auto}.fd-der{width:auto}
+    }
+    .dz-wrap{margin-bottom:var(--sp-3)}
+    .dz{position:relative;display:block;border:2px dashed var(--line-strong);border-radius:var(--radius);padding:26px var(--sp-4);text-align:center;background:var(--glass-1);cursor:pointer;transition:border-color var(--dur-fast) var(--ease),background var(--dur-fast) var(--ease)}
+    .dz:hover{border-color:var(--accent)}
+    .dz.over,.dz:focus-within{border-color:var(--accent);background:var(--accent-soft)}
+    .dz .dz-t{font-weight:var(--fw-bold);font-size:var(--fs-base);color:var(--brand)}
+    .dz .dz-h{font-size:var(--fs-sm);color:var(--muted);margin-top:4px}
+    .dz input[type=file]{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;padding:0;border:0}
+    .dz.compacta{padding:var(--sp-3) var(--sp-4);text-align:left}
+    .dz.compacta .dz-t{font-size:var(--fs-md)}
+    .dz-f{display:flex;flex-direction:column;gap:6px;margin-top:var(--sp-2)}
+    .dz-item{display:flex;align-items:center;gap:var(--sp-2);padding:6px 10px;border:1px solid var(--line);border-radius:var(--radius-xs);font-size:var(--fs-sm);background:var(--glass-1)}
+    .dz-item .dz-n{flex:1;min-width:0;overflow-wrap:anywhere;font-weight:var(--fw-semibold)}
+    .cep-lect{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 2px}
+    ul.checks{list-style:none;margin:4px 0 0;padding:0;font-size:var(--fs-sm)}
+    ul.checks li{display:flex;gap:6px;padding:2px 0}
+    ul.checks li.ok{color:var(--ok-ink)}ul.checks li.difiere{color:var(--danger-ink);font-weight:var(--fw-semibold)}
+    label.chk{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-md);margin-bottom:var(--sp-3)}
   </style>
 </head>
 <body>
@@ -595,6 +692,25 @@
     });
   })();
 
+  // Solo desarrollo local (el servidor responde devMode=false en producción): entrar como cualquier usuario para probar cada rol.
+  fetch('/api/config-publica').then(r=>r.json()).then(cfg=>{
+    if(!cfg.devMode) return;
+    return fetch('/api/login/dev/usuarios').then(r=>r.ok?r.json():[]).then(us=>{
+      const menu=document.getElementById('themeDevMenu'); if(!menu||!us.length) return;
+      menu.append(Object.assign(document.createElement('span'),{className:'lbl sep',textContent:'Entrar como (solo desarrollo)'}));
+      const caja=Object.assign(document.createElement('div'),{className:'devusers'}); menu.append(caja);
+      us.forEach(u=>{
+        const b=Object.assign(document.createElement('button'),{type:'button',className:'opt',textContent:u.nombre+' · '+u.rol,title:u.email});
+        b.onclick=async()=>{
+          const r=await fetch('/api/login/dev',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:u.email})}).then(x=>x.json());
+          if(!r.token) return;
+          localStorage.setItem('cl_token',r.token); localStorage.setItem('cl_user',JSON.stringify(r.user)); localStorage.removeItem('cl_workspace'); location.reload();
+        };
+        caja.append(b);
+      });
+    });
+  }).catch(()=>{});
+
   // Indicador de scroll horizontal en tablas (el scrollbar nativo está oculto por diseño).
   function updateTableFades(){
     document.querySelectorAll('.tablewrap').forEach(w=>{
@@ -629,11 +745,12 @@
   <aside class="sidebar">
     <img class="brand-logo" src="/public/logo.png" alt="Polipay" />
     <div class="sub" id="wsSubtitle">Polipay POS Settlement</div>
-    <div class="ws" id="wsSwitch" onclick="toggleWorkspace()">
+    <div class="ws" id="wsSwitch" role="button" tabindex="0" aria-haspopup="menu" aria-label="Cambiar de espacio de trabajo" onclick="toggleWorkspace()">
       <div class="ws-ic" id="wsIcon">CS</div>
       <div class="ws-name" id="wsName">Conciliación<small>Cambiar a Tareas Ops →</small></div>
       <div class="caret">▾</div>
     </div>
+    <div class="ws-menu" id="wsMenu" role="menu" aria-label="Espacios de trabajo"></div>
     <nav id="nav"></nav>
     <div class="sidebar-foot">
       <div class="who"><span class="avatar" id="whoAv">?</span><div><div id="whoName">—</div><div class="rolech" id="whoRole"></div></div></div>
@@ -698,7 +815,7 @@ async function descargar(path,filename){
 }
 
 /* ---------- roles ---------- */
-const ROLES={admin:'Administrador',operador:'Operador (Operaciones)',tesoreria:'Tesorería (valida)',bancos:'Bancos (dispersa y cierra)',consulta:'Consulta (solo lectura)',inventario:'Inventario (solo esa sección)'};
+const ROLES={admin:'Administrador',operador:'Operador (Operaciones)',tesoreria:'Tesorería (valida)',bancos:'Bancos (dispersa y cierra)',consulta:'Consulta (solo lectura)',inventario:'Inventario (solo esa sección)',comercial:'Comercial (solicita fondeos de Cards)'};
 function can(cap){if(!SES)return false;const M={
   catalogos:['admin'],ingesta:['admin','operador'],corte:['admin','operador'],
   validar:['admin','tesoreria'],dispersar:['admin','bancos'],cerrar:['admin','bancos'],
@@ -707,6 +824,8 @@ function can(cap){if(!SES)return false;const M={
   usuarios:['admin'],
   disputas:['admin','operador'],
   disputas_ver:['admin','operador','tesoreria','bancos','consulta'],
+  cards_ver:['admin','operador','tesoreria','bancos','consulta','comercial'],cards_panel:['admin','operador','tesoreria','bancos','consulta'],cards_solicitar:['admin','operador','tesoreria','comercial'],
+  cards_manual:['admin','operador','tesoreria'],cards_asignar:['admin','tesoreria'],cards_estructura:['admin','tesoreria'],cards_mis:['comercial'],
   ver:['admin','operador','tesoreria','bancos','consulta']
 };return (M[cap]||[]).includes(SES.rol);}
 
@@ -790,6 +909,7 @@ function closeModal(){_ovClose('#ov');}
 $('#ov').addEventListener('click',e=>{if(e.target.id==='ov')closeModal();});
 $('#ovc').addEventListener('click',e=>{if(e.target.id==='ovc'&&e.currentTarget._cancel)e.currentTarget._cancel();});
 document.addEventListener('keydown',e=>{
+  if(document.querySelector('.fd-pop'))return;   // con el calendario de fechas abierto, Escape y Tab los maneja él
   const top=['#ovc','#ov'].map(s=>$(s)).find(o=>o&&o.classList.contains('show'));
   if(!top)return;
   if(e.key==='Escape'){e.preventDefault();if(top.id==='ovc'){top._cancel&&top._cancel();}else closeModal();return;}
@@ -825,6 +945,201 @@ function pedir(msg,opts){opts=opts||{};return new Promise(res=>{
   _ovOpen('#ovc',ta);});}
 function fld(label,input){return el('label',{class:'field'},label,input);}
 function cards(items){const c=el('div',{class:'cards'});items.forEach(([label,value,hint])=>c.append(el('div',{class:'card'},el('div',{class:'label'},label),el('div',{class:'value'},String(value)),hint?el('div',{class:'hint'},hint):'')));return c;}
+
+/* ---------- Zona de arrastrar y soltar archivos: UN solo componente para toda la app ----------
+   zonaArchivos({titulo, ayuda, accept:'.xlsx,.csv', multiple, compacta, sinLista, id, onFiles(files, zona)})
+   Devuelve el contenedor. `zona.input` es el <input type=file> (se sigue leyendo .files como siempre; dispara 'change')
+   y `zona.limpiar()` lo vacía. Solo acepta las extensiones de `accept` (también al soltar). */
+const tamArchivo=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(0)+' KB':(n/1048576).toFixed(1)+' MB';
+function zonaArchivos(o){
+  o=o||{};
+  const exts=String(o.accept||'').split(',').map(s=>s.trim().toLowerCase()).filter(s=>s[0]==='.');
+  const valido=f=>!exts.length||exts.some(x=>f.name.toLowerCase().endsWith(x));
+  const input=el('input',{type:'file',accept:o.accept||'','aria-label':o.titulo||'Elegir archivo'});
+  if(o.multiple)input.multiple=true;
+  if(o.id)input.id=o.id;
+  const area=el('div',{class:'dz'+(o.compacta?' compacta':'')},
+    el('div',{class:'dz-t'},o.titulo||(o.multiple?'Arrastra aquí tus archivos':'Arrastra aquí el archivo')),
+    el('div',{class:'dz-h'},o.ayuda||('O haz clic para elegir'+(o.multiple?'los':'lo')+(exts.length?' · '+exts.join(' '):''))),input);
+  const lista=el('div',{class:'dz-f'});
+  const caja=el('div',{class:'dz-wrap'},area,lista);
+  caja.input=input;
+  const poner=fs=>{const dt=new DataTransfer();fs.forEach(f=>dt.items.add(f));input.files=dt.files;};
+  const pintar=()=>{
+    lista.innerHTML='';
+    if(!o.sinLista)[...input.files].forEach((f,i)=>lista.append(el('div',{class:'dz-item'},el('span',{class:'dz-n'},f.name),el('small',{class:'muted'},tamArchivo(f.size)),
+      el('button',{type:'button',class:'x','aria-label':'Quitar '+f.name,onclick:()=>{const fs=[...input.files];fs.splice(i,1);poner(fs);pintar();input.dispatchEvent(new Event('change',{bubbles:true}));}},'×'))));
+  };
+  caja.limpiar=()=>{input.value='';pintar();};
+  input.addEventListener('change',()=>{
+    let fs=[...input.files];
+    const malos=fs.filter(f=>!valido(f));
+    if(malos.length){toast(malos.length+' archivo(s) omitido(s): solo '+exts.join(', '),'err');fs=fs.filter(valido);poner(fs);}
+    if(!o.multiple&&fs.length>1){fs=fs.slice(0,1);poner(fs);}
+    pintar();
+    if(o.onFiles&&fs.length)o.onFiles(fs,caja);
+  });
+  const conArchivos=e=>e.dataTransfer&&[...(e.dataTransfer.types||[])].includes('Files');
+  ['dragenter','dragover'].forEach(ev=>area.addEventListener(ev,e=>{if(!conArchivos(e))return;e.preventDefault();e.stopPropagation();area.classList.add('over');}));
+  area.addEventListener('dragleave',e=>{e.preventDefault();area.classList.remove('over');});
+  area.addEventListener('drop',e=>{
+    e.preventDefault();e.stopPropagation();area.classList.remove('over');
+    const fs=[...(e.dataTransfer&&e.dataTransfer.files||[])];
+    if(!fs.length)return;
+    poner(o.multiple?fs:fs.slice(0,1));
+    input.dispatchEvent(new Event('change',{bubbles:true}));
+  });
+  return caja;
+}
+// Si se suelta un archivo fuera de una zona, el navegador no debe abrirlo ni sacar al usuario de la app.
+
+/* ---------- Filtro de fechas: UN solo componente para todos los filtros por fecha del sistema ----------
+   filtroFechas({desde, hasta, modo:'rango'|'dia', min, max, presets, permiteVacio, placeholder, onChange(desde,hasta)})
+   Un solo campo ("1 oct – 23 oct 2026") que abre un calendario con atajos (Hoy, Ayer, Últimos 7 días, Mes en curso…).
+   Compatible con el código anterior: `f.desde.value` / `f.hasta.value` (ISO aaaa-mm-dd o '') se leen y se asignan como un <input>,
+   y `f.desde.addEventListener('change',fn)` también funciona. `f.fijar(desde,hasta,notificar)` cambia el valor. */
+const MES_LARGO=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+const MES_CORTO=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+const fdISO=(y,m,d)=>y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+const fdParse=s=>{const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s||'');return m?{y:+m[1],m:+m[2]-1,d:+m[3]}:null;};
+const fdCorta=s=>{const p=fdParse(s);return p?p.d+' '+MES_CORTO[p.m]+' '+p.y:'';};
+const fdSumar=(s,n)=>{const p=fdParse(s),d=new Date(Date.UTC(p.y,p.m,p.d+n));return fdISO(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate());};
+const fdDiasMes=(y,m)=>new Date(Date.UTC(y,m+1,0)).getUTCDate();
+const fdSemana=(y,m,d)=>(new Date(Date.UTC(y,m,d)).getUTCDay()+6)%7;   // 0 = lunes
+const FD_ICONOS={
+  cal:'<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>',
+  abajo:'<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
+  izq:'<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>',
+  der:'<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>',
+};
+const fdIcono=k=>{const s=document.createElement('span');s.className='fd-ico';s.innerHTML=FD_ICONOS[k];return s;};
+function fdPresets(hoy){
+  const p=fdParse(hoy),ant=new Date(Date.UTC(p.y,p.m-1,1));
+  const a=ant.getUTCFullYear(),am=ant.getUTCMonth();
+  return {
+    hoy:['Hoy',hoy,hoy],ayer:['Ayer',fdSumar(hoy,-1),fdSumar(hoy,-1)],
+    '7d':['Últimos 7 días',fdSumar(hoy,-6),hoy],'30d':['Últimos 30 días',fdSumar(hoy,-29),hoy],
+    mes:['Mes en curso',fdISO(p.y,p.m,1),hoy],mesAnt:['Mes anterior',fdISO(a,am,1),fdISO(a,am,fdDiasMes(a,am))],
+    anio:['Año en curso',fdISO(p.y,0,1),hoy],
+  };
+}
+function filtroFechas(o){
+  o=o||{};
+  const dia=o.modo==='dia', min=o.min||'', max=o.max||'', vacioOk=o.permiteVacio!==false&&!dia;
+  let desde=o.desde||'', hasta=dia?(o.desde||''):(o.hasta||'');
+  const cambios=[];
+  const texto=el('span',{class:'fd-txt'});
+  const campo=el('button',{type:'button',class:'fd-campo','aria-haspopup':'dialog','aria-expanded':'false'},fdIcono('cal'),texto,fdIcono('abajo'));
+  const quitar=el('button',{type:'button',class:'fd-x','aria-label':'Quitar fechas',title:'Quitar fechas'},'×');
+  if(o.titulo)campo.title=o.titulo;
+  const caja=el('div',{class:'fd'+(dia?' dia':'')},campo,quitar);
+  const etiqueta=()=>dia?(desde?fdCorta(desde):(o.placeholder||'Elegir fecha'))
+    :(desde&&hasta?(desde===hasta?fdCorta(desde):fdCorta(desde)+' – '+fdCorta(hasta)):desde?'Desde '+fdCorta(desde):hasta?'Hasta '+fdCorta(hasta):(o.placeholder||'Todas las fechas'));
+  const pintar=()=>{texto.textContent=etiqueta();campo.setAttribute('aria-label',(o.titulo?o.titulo+': ':'')+etiqueta());quitar.style.display=vacioOk&&(desde||hasta)?'':'none';};
+  const avisar=()=>{if(o.onChange)o.onChange(desde,hasta);cambios.forEach(fn=>fn({target:caja.desde}));};
+  const fijar=(d,h,notificar)=>{desde=d||'';hasta=dia?desde:(h||'');pintar();if(notificar)avisar();};
+  const pseudo=(get,set)=>({get value(){return get();},set value(v){set(v||'');pintar();},addEventListener(t,fn){if(t==='change'||t==='input')cambios.push(fn);}});
+  caja.desde=pseudo(()=>desde,v=>{desde=v;if(dia)hasta=v;});
+  caja.hasta=pseudo(()=>hasta,v=>{hasta=v;});
+  caja.fijar=fijar;
+  pintar();
+  quitar.addEventListener('click',e=>{e.stopPropagation();fijar('','',true);});
+
+  const fuera=iso=>(min&&iso<min)||(max&&iso>max);
+  let pop=null;
+  const cerrar=(devolverFoco)=>{
+    if(!pop)return;
+    pop.remove();pop=null;campo.setAttribute('aria-expanded','false');
+    document.removeEventListener('pointerdown',alFuera,true);document.removeEventListener('keydown',alTeclado,true);window.removeEventListener('scroll',alScroll,true);window.removeEventListener('resize',alScroll);
+    if(devolverFoco)campo.focus();
+  };
+  const alFuera=e=>{if(pop&&!pop.contains(e.target)&&!campo.contains(e.target))cerrar(false);};
+  const alScroll=e=>{if(pop&&!(e.target&&e.target.nodeType===1&&pop.contains(e.target)))cerrar(false);};
+  const alTeclado=e=>{if(e.key==='Escape'&&pop){e.preventDefault();e.stopPropagation();cerrar(true);}};
+
+  const abrir=()=>{
+    if(pop){cerrar(true);return;}
+    const hoy=hoyMx();
+    let a=desde,b=dia?'':hasta;                       // selección en curso: a = inicio, b = fin
+    if(!dia&&a&&b&&a===b){/* un solo día elegido: se puede ampliar */}
+    const base=fdParse(desde||hasta)||fdParse(hoy);
+    let vy=base.y,vm=base.m,hover='';
+    pop=el('div',{class:'fd-pop',role:'dialog','aria-label':'Elegir fechas'});
+    const pres=fdPresets(hoy);
+    let claves=o.presets||(dia?['hoy','ayer']:['hoy','ayer','7d','30d','mes','mesAnt']);
+    const lista=el('div',{class:'fd-pre'});
+    const cuerpo=el('div',{class:'fd-cal'});
+    const pie=el('div',{class:'fd-pie'});
+    pop.append(lista,el('div',{class:'fd-der'},cuerpo,pie));
+    const aplicar=(d,h)=>{fijar(d,h,true);cerrar(true);};
+    const dibujarPresets=()=>{
+      lista.innerHTML='';
+      claves.forEach(k=>{
+        const p=pres[k];if(!p)return;
+        let [etq,d,h]=p;
+        if(min&&d<min)d=min; if(max&&h>max)h=max; if(max&&d>max||min&&h<min||d>h){lista.append(el('span',{class:'fd-item off','aria-disabled':'true'},etq));return;}
+        const on=desde===d&&hasta===h;
+        lista.append(el('button',{type:'button',class:'fd-item'+(on?' on':''),onclick:()=>aplicar(d,dia?d:h)},etq));
+      });
+      if(!dia&&min&&max)lista.append(el('button',{type:'button',class:'fd-item'+(desde===min&&hasta===max?' on':''),onclick:()=>aplicar(min,max)},'Todo el rango disponible'));
+      if(vacioOk&&o.sinTodas!==true)lista.append(el('button',{type:'button',class:'fd-item'+(!desde&&!hasta?' on':''),onclick:()=>aplicar('','')},'Todas las fechas'));
+    };
+    const enRango=iso=>{const f=b||hover;return !dia&&a&&f&&((iso>=a&&iso<=f)||(iso>=f&&iso<=a));};
+    const elegir=iso=>{
+      if(fuera(iso))return;
+      if(dia){aplicar(iso,iso);return;}
+      if(!a||(a&&b)){a=iso;b='';hover='';dibujar();return;}
+      if(iso<a){b=a;a=iso;}else b=iso;
+      aplicar(a,b);
+    };
+    const dibujar=(focoIso)=>{
+      cuerpo.innerHTML='';
+      const cab=el('div',{class:'fd-cab'},
+        el('button',{type:'button',class:'fd-nav','aria-label':'Mes anterior',onclick:()=>{vm--;if(vm<0){vm=11;vy--;}dibujar();}},fdIcono('izq')),
+        el('div',{class:'fd-mes','aria-live':'polite'},MES_LARGO[vm][0].toUpperCase()+MES_LARGO[vm].slice(1)+' '+vy),
+        el('button',{type:'button',class:'fd-nav','aria-label':'Mes siguiente',onclick:()=>{vm++;if(vm>11){vm=0;vy++;}dibujar();}},fdIcono('der')));
+      const grid=el('div',{class:'fd-grid',role:'grid'});
+      ['L','M','M','J','V','S','D'].forEach(x=>grid.append(el('span',{class:'fd-dow','aria-hidden':'true'},x)));
+      const lead=fdSemana(vy,vm,1),n=fdDiasMes(vy,vm);
+      for(let i=0;i<lead;i++)grid.append(el('span',{class:'fd-vacio'}));
+      const foco=focoIso||(a&&fdParse(a)&&fdParse(a).y===vy&&fdParse(a).m===vm?a:(fdParse(hoy).y===vy&&fdParse(hoy).m===vm?hoy:fdISO(vy,vm,1)));
+      for(let d=1;d<=n;d++){
+        const iso=fdISO(vy,vm,d);
+        const cls=['fd-dia'];
+        if(enRango(iso))cls.push('r'); if(iso===a||iso===b)cls.push('e'); if(iso===hoy)cls.push('hoy');
+        const btn=el('button',{type:'button',class:cls.join(' '),tabindex:iso===foco?'0':'-1','data-iso':iso,'aria-label':d+' de '+MES_LARGO[vm]+' de '+vy,'aria-pressed':String(iso===a||iso===b),
+          onclick:()=>elegir(iso),onpointerenter:()=>{if(!dia&&a&&!b&&!fuera(iso)){hover=iso;marcar();}}},String(d));
+        if(fuera(iso))btn.disabled=true;
+        grid.append(btn);
+      }
+      grid.addEventListener('keydown',e=>{
+        const act=document.activeElement&&document.activeElement.dataset&&document.activeElement.dataset.iso;if(!act)return;
+        const mover={ArrowLeft:-1,ArrowRight:1,ArrowUp:-7,ArrowDown:7}[e.key];
+        if(mover!==undefined){e.preventDefault();const nuevo=fdSumar(act,mover),p=fdParse(nuevo);vy=p.y;vm=p.m;dibujar(nuevo);return;}
+        if(e.key==='PageUp'||e.key==='PageDown'){e.preventDefault();const p=fdParse(act),dm=e.key==='PageUp'?-1:1,t=new Date(Date.UTC(p.y,p.m+dm,1)),dd=Math.min(p.d,fdDiasMes(t.getUTCFullYear(),t.getUTCMonth()));const nuevo=fdISO(t.getUTCFullYear(),t.getUTCMonth(),dd);vy=t.getUTCFullYear();vm=t.getUTCMonth();dibujar(nuevo);}
+      });
+      cuerpo.append(cab,grid);
+      pie.textContent=dia?'Elige el día':(a&&!b?'Elige la fecha final':(a&&b?fdCorta(a)+' – '+fdCorta(b):'Elige la fecha inicial y la final'));
+      dibujarPresets();
+      if(focoIso){const t=grid.querySelector('[data-iso="'+focoIso+'"]');if(t)t.focus();}
+    };
+    const marcar=()=>{ // vista previa del rango al pasar el cursor (sin redibujar)
+      cuerpo.querySelectorAll('.fd-dia').forEach(btn=>{const iso=btn.dataset.iso;btn.classList.toggle('r',enRango(iso));});
+    };
+    dibujar();
+    document.body.append(pop);
+    campo.setAttribute('aria-expanded','true');
+    // posición: bajo el campo; si no cabe, arriba
+    const r=campo.getBoundingClientRect(),pw=pop.offsetWidth,ph=pop.offsetHeight;
+    pop.style.left=Math.max(8,Math.min(r.left,innerWidth-pw-8))+'px';
+    pop.style.top=(r.bottom+6+ph>innerHeight&&r.top-6-ph>8?r.top-6-ph:r.bottom+6)+'px';
+    document.addEventListener('pointerdown',alFuera,true);document.addEventListener('keydown',alTeclado,true);window.addEventListener('scroll',alScroll,true);window.addEventListener('resize',alScroll);
+    const foc=pop.querySelector('.fd-dia[tabindex="0"]');if(foc)foc.focus();
+  };
+  campo.addEventListener('click',abrir);
+  return caja;
+}
+if(!window.__dzGuard){window.__dzGuard=true;const con=e=>e.dataTransfer&&[...(e.dataTransfer.types||[])].includes('Files');['dragover','drop'].forEach(ev=>window.addEventListener(ev,e=>{if(con(e))e.preventDefault();}));}
 function tableWrap(head,rows,opts){const w=el('div',{class:'tablewrap'});const t=el('table');const thead=el('thead');const htr=el('tr');
   head.forEach(h=>{const isNum=typeof h==='object';htr.append(el('th',{class:(isNum?'num':'')},isNum?h.t:h));});thead.append(htr);t.append(thead);
   const tb=el('tbody');
@@ -843,17 +1158,43 @@ let VIEW='dashboard';
 /* ============================================================================
    WORKSPACES: 'conciliacion' (todo lo original) | 'tareas' (microsistema)
    ========================================================================= */
+const WORKSPACES={
+  conciliacion:{nombre:'Conciliación',ic:'CS',sub:'Polipay POS Settlement',color:'var(--accent-fill)',vista:'dashboard',ok:()=>!(SES&&SES.rol==='comercial')},
+  tareas:{nombre:'Tareas Ops',ic:'TQ',sub:'Tareas de Operaciones',color:'var(--c-teal)',vista:'tar_mis_rutinas',ok:()=>!(SES&&SES.rol==='comercial')},
+  cards:{nombre:'Polipay Cards Settlement',ic:'CB',sub:'Fondeos y tesorería de Cards',color:'var(--c-indigo)',vista:'cards_panel',ok:()=>can('cards_ver')},
+};
 let WORKSPACE = localStorage.getItem('cl_workspace') || 'conciliacion';
-function toggleWorkspace(){ if(SES&&SES.rol==='inventario')return; WORKSPACE = (WORKSPACE==='conciliacion') ? 'tareas' : 'conciliacion'; localStorage.setItem('cl_workspace', WORKSPACE); VIEW = (WORKSPACE==='tareas') ? 'tar_mis_rutinas' : 'dashboard'; renderWs(); render(); }
+if(!WORKSPACES[WORKSPACE]) WORKSPACE = 'conciliacion';
+const vistaInicial=k=>k==='cards'?(can('cards_panel')?'cards_panel':'cards_solicitudes'):WORKSPACES[k].vista;
+function cerrarWsMenu(){ const m=document.getElementById('wsMenu'); if(m) m.classList.remove('open'); const s=document.getElementById('wsSwitch'); if(s) s.setAttribute('aria-expanded','false'); }
+function setWorkspace(k){
+  if(!WORKSPACES[k]||!WORKSPACES[k].ok()) return;
+  WORKSPACE=k; localStorage.setItem('cl_workspace',k); VIEW=vistaInicial(k); cerrarWsMenu(); renderWs(); render();
+}
+// Menú con los espacios que el rol puede ver (antes alternaba entre dos).
+function toggleWorkspace(){
+  if(SES&&(SES.rol==='inventario'||SES.rol==='comercial')) return;
+  const m=document.getElementById('wsMenu'), sw=document.getElementById('wsSwitch');
+  if(m.classList.contains('open')){ cerrarWsMenu(); return; }
+  m.innerHTML='';
+  Object.keys(WORKSPACES).filter(k=>WORKSPACES[k].ok()).forEach(k=>{ const w=WORKSPACES[k];
+    m.append(el('button',{type:'button',role:'menuitemradio','aria-checked':String(k===WORKSPACE),class:'ws-opt'+(k===WORKSPACE?' active':''),onclick:()=>setWorkspace(k)},
+      el('span',{class:'ws-ic',style:'background:'+w.color},w.ic),el('span',{},w.nombre),el('span',{class:'check','aria-hidden':'true'},'✓'))); });
+  m.style.top=(sw.offsetTop+sw.offsetHeight+6)+'px';
+  m.classList.add('open'); sw.setAttribute('aria-expanded','true');
+  const act=m.querySelector('.ws-opt.active'); if(act) act.focus();
+}
+document.addEventListener('click',e=>{ const m=document.getElementById('wsMenu'); if(m&&m.classList.contains('open')&&!e.target.closest('#wsMenu,#wsSwitch')) cerrarWsMenu(); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ const m=document.getElementById('wsMenu'); if(m&&m.classList.contains('open')){ cerrarWsMenu(); const s=document.getElementById('wsSwitch'); if(s) s.focus(); } } });
 function renderWs(){
   const sw=document.getElementById('wsSwitch');
   // Rol "inventario": no hay nada a lo que "cambiar" — se oculta el switch.
   if(SES&&SES.rol==='inventario'){ if(sw)sw.style.display='none'; const sub=document.getElementById('wsSubtitle'); if(sub)sub.textContent='Polipay POS Settlement'; return; }
-  if(sw)sw.style.display='';
-  const isTareas = WORKSPACE==='tareas';
-  const nameEl=document.getElementById('wsName'); if(nameEl) nameEl.innerHTML = isTareas ? 'Tareas Ops<small>Cambiar a Conciliación →</small>' : 'Conciliación<small>Cambiar a Tareas Ops →</small>';
-  const icon=document.getElementById('wsIcon'); if(icon){ icon.textContent = isTareas ? 'TQ' : 'CS'; icon.style.background = isTareas ? 'var(--c-teal)' : 'var(--accent-fill)'; }
-  const sub=document.getElementById('wsSubtitle'); if(sub) sub.textContent = isTareas ? 'Tareas de Operaciones' : 'Polipay POS Settlement';
+  if(sw)sw.style.display=(SES&&SES.rol==='comercial')?'none':'';
+  const w=WORKSPACES[WORKSPACE];
+  const nameEl=document.getElementById('wsName'); if(nameEl) nameEl.innerHTML = w.nombre+'<small>Cambiar de espacio</small>';
+  const icon=document.getElementById('wsIcon'); if(icon){ icon.textContent = w.ic; icon.style.background = w.color; }
+  const sub=document.getElementById('wsSubtitle'); if(sub) sub.textContent = w.sub;
 }
 
 const NAV_CONCILIACION=[
@@ -910,7 +1251,20 @@ const NAV_TAREAS=[
   {id:'tar_entregables',t:'Entregables',ic:'ic_15'},
   {id:'tar_miembros',t:'Miembros',ic:'ic_20'},
 ];
-Object.defineProperty(window,'NAV',{ get(){ return WORKSPACE==='tareas' ? NAV_TAREAS : NAV_CONCILIACION; } });
+const NAV_CARDS=[
+  {sec:'Resumen',cap:'cards_panel'},
+  {id:'cards_panel',t:'Panel',ic:'ic_01',cap:'cards_panel'},
+  {sec:'Tesorería'},
+  {id:'cards_bandeja',t:'Por asignar',ic:'ic_04',cap:'cards_asignar',n:()=>CARDS_CONT.por_asignar},
+  {id:'cards_solicitudes',t:'Mis solicitudes',ic:'ic_04',cap:'cards_mis',n:()=>CARDS_CONT.rechazadas},
+  {id:'cards_fondeos',t:'Fondeos',ic:'ic_11',cap:'cards_panel'},
+  {sec:'Catálogo',cap:'cards_estructura'},
+  {id:'cards_estructura',t:'Empresas, UN y tarjetas',ic:'ic_09',cap:'cards_estructura'},
+  {id:'cards_bancos',t:'Bancos',ic:'ic_12',cap:'cards_estructura'},
+  {sec:'Avisos',cap:'cards_estructura'},
+  {id:'cards_destinatarios',t:'Destinatarios',ic:'ic_17',cap:'cards_estructura'},
+];
+Object.defineProperty(window,'NAV',{ get(){ return WORKSPACE==='tareas' ? NAV_TAREAS : WORKSPACE==='cards' ? NAV_CARDS : NAV_CONCILIACION; } });
 function navSecKey(name){ return 'cl_nav_'+String(name).toLowerCase().replace(/[^a-z0-9]+/g,'-'); }
 function renderNav(){
   const nav=$('#nav');nav.innerHTML='';
@@ -946,10 +1300,11 @@ function renderNav(){
     if(hidden) continue;
     if(item.cap && !can(item.cap)) continue;
     const link = el('a',{class:VIEW===item.id?'active':'',onclick:()=>go(item.id)},el('img',{src:`/public/brand-icons/${item.ic}.png`,alt:''}),el('span',{},item.t));
+    if(item.n){ const n=item.n(); if(n>0) link.append(el('span',{class:'count','aria-label':n+' pendientes'},String(n))); }
     (curBody || nav).append(link);
   }
 }
-const TITLES={dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],inventario:['Inventario de terminales','Terminales POS activas por grupo de cliente y afiliación, derivado de las transacciones ya ingestadas'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],retenciones:['Retenciones','Retenciones por financiamiento y revenue share aplicadas al monto a dispersar'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],
+const TITLES={cards_bandeja:['Por asignar','Fondeos con CEP aceptado, esperando que tesorería confirme la asignación del saldo'],cards_solicitudes:['Mis solicitudes','Solicita fondeos a tus empresas y sube el CEP del depósito'],cards_panel:['Polipay Cards Settlement · Panel','Fondeos recibidos, comisión e IVA y pendientes de control'],cards_fondeos:['Fondeos','Solicitudes de fondeo y depósitos recibidos de empresas, unidades de negocio y tarjetas, con su CEP'],cards_estructura:['Empresas, unidades de negocio y tarjetas','Estructura de Cards y la cuenta de fondeo (CLABE, beneficiario y banco) de cada una'],cards_bancos:['Bancos','Catálogo de bancos de Cards: identifica el banco de cada CLABE y se compara con el CEP'],cards_destinatarios:['Destinatarios','Quién recibe el correo cada vez que se registra una solicitud de fondeo'],dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],inventario:['Inventario de terminales','Terminales POS activas por grupo de cliente y afiliación, derivado de las transacciones ya ingestadas'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],retenciones:['Retenciones','Retenciones por financiamiento y revenue share aplicadas al monto a dispersar'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],
 cumplimiento:['PLD y antifraude','KPIs de cumplimiento por grupo de cliente y afiliación — monto procesado, operaciones inusuales, tasa de contracargos, duplicadas y devoluciones sospechosas'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],umbrales:['Parametrización de umbrales','Umbrales de PLD y antifraude que controlan las alertas automáticas y los indicadores de riesgo'],destinatarios:['Destinatarios','Correos que reciben el aviso automático de corte'],usuarios:['Usuarios','Quién tiene acceso a la plataforma y con qué rol'],bitacora:['Bitácora','Trazabilidad de acciones'],
 disp_dashboard:['Panel de disputas','KPIs de contracargos, devoluciones y duplicados'],
 disp_chargebacks:['Disputas','Ciclo completo de disputa: 1er contracargo → representación → arbitraje'],
@@ -975,7 +1330,7 @@ tar_entregables:['Entregables','Informes con flujo de aprobación'],
 tar_reportes:['Reportes','Cumplimiento, throughput y SLA'],
 tar_miembros:['Miembros','Usuarios que operan Tareas Ops · rol y productos que pueden atender']};
 function go(v){VIEW=v;render();}
-async function render(){renderNav();
+async function render(){renderNav();if(WORKSPACE==='cards')cardsContadores();
   // Sub-vistas parametrizadas: "disp_cb_<id>" → vista detalle CB pantalla completa.
   const mCB = /^disp_cb_(\d+)$/.exec(VIEW);
   if(mCB){ const[t,s]=['Contracargo','Detalle del caso'];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
@@ -1003,6 +1358,7 @@ async function render(){renderNav();
   try{await ({dashboard:vDashboard,ingesta:vIngesta,inventario:vInventario,contracargos:vContracargos,retenciones:vRetenciones,cortes:vCortes,contable:vContabilidadCortes,cumplimiento:vCumplimiento,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,umbrales:vUmbrales,destinatarios:vDestinatarios,usuarios:vUsuarios,bitacora:vBitacora,
     disp_dashboard:vDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC,disp_providers:vDispProviders,disp_reports:vDispReports,
     dest_liquidacion:vDestinatariosCorte,dest_liquidacion_cli:vDestinatariosCliente,dest_contabilidad:vDestinatariosContabilidad,dest_disputas:vDestDisputas,dest_alertas:vDestinatariosAlertas,
+    cards_panel:vCardsPanel,cards_fondeos:vCardsFondeos,cards_bandeja:vCardsBandeja,cards_solicitudes:vCardsSolicitudes,cards_estructura:vCardsEstructura,cards_bancos:vCardsBancos,cards_destinatarios:vCardsDestinatarios,
     tar_mis_rutinas:vTarMisRutinas,tar_mis_tareas:vTarMisTareas,tar_tablero:vTarTablero,tar_emisor:vTarPorProducto,tar_spei:vTarPorProducto,tar_agregador:vTarPorProducto,tar_calendario:vTarCalendario,tar_entregables:vEntregables,tar_reportes:vTarReportes,tar_miembros:vTarMiembros}[VIEW]||vDashboard)(v);}
   catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
 }
@@ -1036,8 +1392,8 @@ async function vDashboard(v){
   const barra=el('div',{style:'display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px'});
   const selAf=el('select',{id:'dashAfil'});selAf.append(el('option',{value:''},'Todas las afiliaciones'));
   (rs?rs.opciones:[]).forEach(o=>selAf.append(el('option',{value:o.afil},o.afil+(o.razon?' · '+o.razon:''))));selAf.value=F.afil;
-  const inDesde=el('input',{type:'date',id:'dashDesde',value:rs?rs.desde:F.desde}),inHasta=el('input',{type:'date',id:'dashHasta',value:rs?rs.hasta:F.hasta});
-  barra.append(el('label',{class:'field',style:'margin:0;min-width:240px'},'Afiliación',selAf),el('label',{class:'field',style:'margin:0'},'Fecha de liquidación · desde',inDesde),el('label',{class:'field',style:'margin:0'},'Fecha de liquidación · hasta',inHasta),
+  const fFechas=filtroFechas({desde:rs?rs.desde:F.desde,hasta:rs?rs.hasta:F.hasta,permiteVacio:false,placeholder:'Mes en curso',titulo:'Fecha de liquidación'});const inDesde=fFechas.desde,inHasta=fFechas.hasta;
+  barra.append(el('label',{class:'field',style:'margin:0;min-width:240px'},'Afiliación',selAf),el('label',{class:'field',style:'margin:0'},'Fecha de liquidación',fFechas),
     el('button',{class:'btn',onclick:()=>{
       if(inDesde.value&&inHasta.value&&inDesde.value>inHasta.value){toast('La fecha "desde" no puede ser posterior a "hasta"','err');return;}
       vDashboard._f={desde:inDesde.value,hasta:inHasta.value,afil:selAf.value};render();}},'Aplicar'),
@@ -1198,8 +1554,8 @@ function diagIngesta(v,dg){
 function openCompletarTarjeta(){
   const body=el('div',{});
   body.append(el('div',{class:'banner',html:'Agrega <b>BIN, Últimos 4, Cashback, Emisor y Modo Entrada</b> a transacciones <b>ya cargadas</b>, sin duplicarlas ni tocar montos, fechas o liquidaciones.<br>1) Descarga el layout. 2) Llena las 5 columnas finales (guarda BIN y Últimos 4 como texto). 3) Súbelo aquí: primero verás una vista previa y solo se escribe al confirmar. <b>No quites la columna "ID Sistema".</b>'}));
-  const dDesde=el('input',{type:'date'}),dHasta=el('input',{type:'date'});
-  const g=el('div',{class:'form-grid'});g.append(el('label',{class:'field'},'Fecha de liquidación · desde',dDesde),el('label',{class:'field'},'Fecha de liquidación · hasta',dHasta));
+  const fFechas=filtroFechas({placeholder:'Todas las fechas',titulo:'Fecha de liquidación'});const dDesde=fFechas.desde,dHasta=fFechas.hasta;
+  const g=el('div',{});g.append(el('label',{class:'field'},'Fecha de liquidación',fFechas));
   const aviso=el('div',{class:'req-note',style:'margin:-6px 0 10px'},'El layout se descarga por rango de fechas (máx. 10,000 filas por archivo). Para historia larga, descarga y completa por semanas o por mes.');
   body.append(g,aviso,el('button',{class:'btn secondary sm',style:'margin-bottom:12px',onclick:async()=>{
     const qs='faltantes=1'+(dDesde.value?'&desde='+dDesde.value:'')+(dHasta.value?'&hasta='+dHasta.value:'');
@@ -1211,9 +1567,9 @@ function openCompletarTarjeta(){
       await descargar('/api/transacciones/export.xlsx?'+qs,'transacciones_para_completar.xlsx');
     }catch(e){toast(e.data&&e.data.mensaje?e.data.mensaje:errMsg(e),'err');}
   }},'⬇ Descargar layout (solo con datos faltantes)'));
-  const file=el('input',{type:'file',accept:'.xlsx,.xls'});
+  const zf=zonaArchivos({accept:'.xlsx,.xls',titulo:'Arrastra aquí el layout completado',ayuda:'El .xlsx que descargaste arriba, ya con los datos de tarjeta llenos · o haz clic para elegirlo'});const file=zf.input;
   const out=el('div',{style:'margin-top:12px'});
-  body.append(el('label',{class:'field'},'Layout completado (.xlsx)',file),out);
+  body.append(zf,out);
   const foot=el('div',{});
   const btnAplicar=el('button',{class:'btn ok',style:'display:none'},'Aplicar cambios');
   const enviar=async(confirmar)=>{
@@ -1252,11 +1608,11 @@ async function openAuditoriaRetenciones(){
 function openIngesta(){
   const body=el('div',{});
   body.append(el('div',{class:'banner'},'Sube el Excel (.xlsx) del gateway o pega CSV. El servidor lo parsea. Columnas: fecha, cliente, numero_afiliacion, estatus, producto, monto (hora recomendada).'));
-  const file=el('input',{type:'file',accept:'.xlsx,.xls,.csv,.tsv,.txt'});
+  const zf=zonaArchivos({accept:'.xlsx,.xls,.csv,.tsv,.txt',titulo:'Arrastra aquí el Excel o CSV del gateway',ayuda:'.xlsx, .xls, .csv, .tsv o .txt · o haz clic para elegirlo'});const file=zf.input;
   const info=el('div',{class:'req-note'}); file.addEventListener('change',()=>{info.innerHTML=file.files[0]?`Archivo: <b>${esc(file.files[0].name)}</b>. Da clic en Procesar.`:'';});
   const modo=(()=>{const s=el('select');s.append(el('option',{value:'append'},'Agregar a lo existente'),el('option',{value:'replace'},'Reemplazar todo'));return s;})();
   const ta=el('textarea',{style:'min-height:150px',placeholder:'fecha,hora,cliente,...'});
-  body.append(el('label',{class:'field'},'Archivo Excel (.xlsx) o CSV',file),info,el('label',{class:'field'},'Modo de carga',modo),el('label',{class:'field'},'…o pega CSV',ta));
+  body.append(zf,info,el('label',{class:'field'},'Modo de carga',modo),el('label',{class:'field'},'…o pega CSV',ta));
   const foot=el('div',{});
   foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'),el('button',{class:'btn',onclick:async()=>{
     const fd=new FormData();fd.append('modo',modo.value);
@@ -1309,9 +1665,8 @@ async function vContracargos(v){
   v.innerHTML='';
   // filtro por fecha
   const filtro=el('div',{class:'filters'});
-  const inp=el('input',{type:'date',value:fecha,onchange:e=>{_ccFecha=e.target.value; render();}});
+  const inp=filtroFechas({modo:'dia',desde:fecha,titulo:'Fecha de retención',onChange:d=>{_ccFecha=d||hoyMx(); render();}});
   filtro.append(el('label',{class:'field',style:'margin:0'},'Fecha de retención',inp));
-  filtro.append(el('button',{class:'btn ghost sm',onclick:()=>{_ccFecha=hoyMx(); render();}},'Hoy'));
   v.append(filtro);
   // semáforo del día
   const p=el('div',{class:'panel'});
@@ -1460,14 +1815,14 @@ function openCargarRetencion(fechaDefault){
   const body=el('div',{});
   body.append(el('div',{class:'banner',html:'Sube el <b>reporte de contracargos</b> o el <b>layout de retenciones</b> — el sistema detecta cuál es. Si es un reporte de contracargos, aunque venga sin registros hay que subirlo (el corte del día no se puede generar si no). El sistema extrae la fecha del nombre del archivo si sigue el formato <code>contracargos_a_retener_YYYY-MM-DD.xlsx</code>.'}));
   const fecha=el('input',{type:'date',value:fechaDefault||hoyMx()});
-  const file=el('input',{type:'file',accept:'.xlsx,.xls'});
+  const zf=zonaArchivos({accept:'.xlsx,.xls',titulo:'Arrastra aquí el reporte o el layout',ayuda:'.xlsx o .xls · o haz clic para elegirlo'});const file=zf.input;
   const info=el('div',{class:'req-note'});
   file.addEventListener('change',()=>{ if(!file.files[0]){info.textContent='';return;}
     const m=String(file.files[0].name).match(/(\d{4}-\d{2}-\d{2})/);
     if(m){ fecha.value=m[1]; info.innerHTML='Fecha detectada del nombre del archivo: <b>'+m[1]+'</b> (editable arriba — solo aplica si es un reporte de contracargos).'; }
     else info.innerHTML='Archivo: '+esc(file.files[0].name)+' (la fecha de arriba solo aplica si es un reporte de contracargos).';
   });
-  body.append(el('label',{class:'field'},'Fecha del reporte (solo contracargos)',fecha),el('label',{class:'field'},'Archivo Excel (.xlsx)',file),info);
+  body.append(el('label',{class:'field'},'Fecha del reporte (solo contracargos)',fecha),zf,info);
   const foot=el('div',{});
   foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
     if(!file.files[0]){toast('Selecciona un archivo','err');return;}
@@ -1507,8 +1862,7 @@ async function vCortes(v){
   const fBuscar=el('input',{type:'search',placeholder:'# corte',value:F.q,style:'width:110px'});
   const fEstado=el('select',{style:'width:150px'},el('option',{value:''},'Todos los estados'),...estados.map(e=>el('option',{value:e},e)));fEstado.value=F.estado;
   const fCliente=el('select',{style:'width:240px'},el('option',{value:''},'Todos los clientes'),...clientes.map(c=>el('option',{value:c},c)));fCliente.value=F.cliente;
-  const fDesde=el('input',{type:'date',value:F.desde,style:'width:150px',title:'Fecha de liquidación desde'});
-  const fHasta=el('input',{type:'date',value:F.hasta,style:'width:150px',title:'Fecha de liquidación hasta'});
+  const fFechas=filtroFechas({desde:F.desde,hasta:F.hasta,placeholder:'Fecha de liquidación',titulo:'Fecha de liquidación'});const fDesde=fFechas.desde,fHasta=fFechas.hasta;
   const cuenta=el('span',{class:'muted',style:'font-size:12px'});
   const filtrar=()=>cortes.filter(c=>(!F.q||String(c.id_corte).includes(F.q.replace('#','').trim()))&&(!F.estado||c.estado===F.estado)&&(!F.cliente||(c.grupos||[]).includes(F.cliente))&&(!F.desde||c.fli>=F.desde)&&(!F.hasta||c.fli<=F.hasta));
   const tabla=el('div',{});
@@ -1530,7 +1884,7 @@ async function vCortes(v){
   [fBuscar,fEstado,fCliente,fDesde,fHasta].forEach(x=>x.addEventListener('input',pintar));
   const limpiar=el('button',{class:'btn ghost sm',onclick:()=>{fBuscar.value=fEstado.value=fCliente.value=fDesde.value=fHasta.value='';pintar();}},'Limpiar');
   p.append(el('h3',{},'Cortes',el('span',{class:'right'},el('button',{class:'btn secondary sm',onclick:()=>openReporteCliente(cortes,clientes)},'⬇ Reporte por cliente'))));
-  p.append(el('div',{class:'filters'},fBuscar,fEstado,fCliente,el('span',{class:'muted',style:'font-size:12px'},'Liquidación'),fDesde,el('span',{class:'muted'},'a'),fHasta,limpiar,el('span',{class:'spacer'}),cuenta));
+  p.append(el('div',{class:'filters'},fBuscar,fEstado,fCliente,fFechas,limpiar,el('span',{class:'spacer'}),cuenta));
   p.append(tabla);pintar();
   v.append(p);
 }
@@ -1552,10 +1906,10 @@ function openReporteCliente(cortes,clientes){
   const tC=el('button',{class:'tab',type:'button',role:'tab'},'Un corte');
   tabs.append(tH,tC);
   const selCorte=el('select',{},...cortes.map(c=>el('option',{value:c.id_corte},`#${c.id_corte} · ${c.fecha_liq} · ${c.estado} · ${mxn(c.total_disp)}`)));
-  const desde=el('input',{type:'date',value:F.desde}),hasta=el('input',{type:'date',value:F.hasta});
+  const fFechas=filtroFechas({desde:F.desde,hasta:F.hasta,placeholder:'Todo el histórico',titulo:'Fecha de liquidación'});const desde=fFechas.desde,hasta=fFechas.hasta;
   const estado=el('select',{},el('option',{value:''},'Todos'),...['Borrador','Validado','Dispersado','Cerrado'].map(e=>el('option',{value:e},e)));estado.value=F.estado;
   const cliente=el('select',{},el('option',{value:''},'Todos los clientes'),...clientes.map(c=>el('option',{value:c},c)));cliente.value=F.cliente;
-  const bloqueH=el('div',{class:'form-grid c3'},el('label',{class:'field'},'Liquidación desde',desde),el('label',{class:'field'},'Hasta',hasta),el('label',{class:'field'},'Estado del corte',estado));
+  const bloqueH=el('div',{class:'form-grid'},el('label',{class:'field'},'Fecha de liquidación',fFechas),el('label',{class:'field'},'Estado del corte',estado));
   const bloqueC=el('div',{style:'display:none'},el('label',{class:'field'},'Corte',selCorte));
   const nota=el('div',{class:'banner'});
   const pintaNota=()=>{nota.innerHTML=alcance==='corte'
@@ -1739,12 +2093,11 @@ async function vContable(v){
   v.innerHTML='';
   if(!fechas.length){v.append(el('div',{class:'banner warn'},'No hay transacciones con fecha de liquidación. Carga transacciones primero.'));return;}
   const min=fechas[0].iso, max=fechas[fechas.length-1].iso;
-  const desde=el('input',{type:'date',value:min,min,max});
-  const hasta=el('input',{type:'date',value:max,min,max});
+  const fFechas=filtroFechas({desde:min,hasta:max,min,max,permiteVacio:false,titulo:'Fecha de liquidación'});const desde=fFechas.desde,hasta=fFechas.hasta;
   const p=el('div',{class:'panel'});
   p.append(el('h3',{},'Registro contable por rango de fecha de liquidación'));
   p.append(el('div',{class:'banner',html:`Rango disponible: <b>${fmtISO(min)}</b> a <b>${fmtISO(max)}</b> · ${fechas.length} fechas de liquidación. El registro trae, por afiliación, la <b>comisión pactada + IVA</b> dividida en TDD, TDC, AMEX e INTERNACIONAL, más dispersión y banca (Telematic).`}));
-  const g=el('div',{class:'form-grid'});g.append(fld('Desde',desde),fld('Hasta',hasta));p.append(g);
+  const g=el('div',{class:'form-grid'});g.append(fld('Fecha de liquidación',fFechas));p.append(g);
   const out=el('div',{});
   const acc=el('div',{class:'kpi-row'});
   acc.append(el('button',{class:'btn',onclick:async()=>{
@@ -2127,21 +2480,20 @@ async function vDestinatariosCliente(v){
   if(can('params')){
     // Plantilla
     $('#pageAction').append(el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/destinatarios-cliente/plantilla.xlsx','plantilla_destinatarios_cliente.xlsx').catch(e=>toast(errMsg(e),'err'))},'⬇ Plantilla'));
-    // Carga masiva (input file oculto)
-    const fileInp = el('input',{type:'file',accept:'.xlsx,.xls,.csv',style:'display:none',onchange:async(e)=>{
-      const f = e.target.files && e.target.files[0]; if(!f) return;
-      const fd = new FormData(); fd.append('archivo', f);
-      try{
-        const r = await withBusy('Cargando destinatarios…',()=>api('POST','/api/destinatarios-cliente/importar',fd));
-        let msg = `Procesados ${r.procesados} · Creados ${r.creados} · Actualizados ${r.actualizados}`;
-        if(r.errores && r.errores.length) msg += ` · ${r.errores.length} error(es): ${r.errores.slice(0,3).map(x=>'fila '+x.fila+' '+x.motivo).join('; ')}${r.errores.length>3?'…':''}`;
-        toast(msg, r.errores && r.errores.length ? 'err' : 'ok');
-        render();
-      }catch(ex){ toast(errMsg(ex),'err'); }
-      fileInp.value = '';
-    }});
-    v.append(fileInp);
-    $('#pageAction').append(el('button',{class:'btn ghost',onclick:()=>fileInp.click()},'⬆ Cargar destinatarios'));
+    // Carga masiva: se arrastra el Excel/CSV (o se elige) y se procesa solo.
+    const cargarDestinatarios=()=>{
+      const zf=zonaArchivos({accept:'.xlsx,.xls,.csv',titulo:'Arrastra aquí el Excel de destinatarios',ayuda:'.xlsx, .xls o .csv · usa la plantilla como referencia · o haz clic para elegirlo',sinLista:true,onFiles:async(fs,z)=>{
+        const fd = new FormData(); fd.append('archivo', fs[0]);
+        try{
+          const r = await withBusy('Cargando destinatarios…',()=>api('POST','/api/destinatarios-cliente/importar',fd));
+          let msg = `Procesados ${r.procesados} · Creados ${r.creados} · Actualizados ${r.actualizados}`;
+          if(r.errores && r.errores.length) msg += ` · ${r.errores.length} error(es): ${r.errores.slice(0,3).map(x=>'fila '+x.fila+' '+x.motivo).join('; ')}${r.errores.length>3?'…':''}`;
+          closeModal(); toast(msg, r.errores && r.errores.length ? 'err' : 'ok'); render();
+        }catch(ex){ toast(errMsg(ex),'err'); z.limpiar(); }
+      }});
+      modal('Cargar destinatarios por cliente',el('div',{},zf),el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cerrar')));
+    };
+    $('#pageAction').append(el('button',{class:'btn ghost',onclick:cargarDestinatarios},'⬆ Cargar destinatarios'));
     $('#pageAction').append(el('button',{class:'btn ghost',onclick:async()=>{
       if(!await confirmar('¿Agregar los 4 correos internos de Polipay como CC en TODOS los grupos activos? Se omiten los que ya existan.')) return;
       try{ const r=await withBusy('Sincronizando CC internos…',()=>api('POST','/api/destinatarios-cliente/sync-cc-polipay')); toast(`Listo · ${r.grupos} grupos · ${r.creados} creados · ${r.actualizados} actualizados`,'ok'); render(); }
@@ -2510,12 +2862,10 @@ function openCargaCumplimiento(){
   body.append(el('div',{class:'banner',html:'Sube el archivo del gateway con <b>todas</b> las operaciones, <b>incluidas las rechazadas</b>. Esta carga es <b>independiente de la liquidación</b>: no crea ni modifica transacciones de liquidación, cortes ni dispersiones. Si repites un archivo, las operaciones que ya existían se omiten (no se duplican).'}));
   body.append(el('button',{class:'btn secondary sm',style:'margin-bottom:12px',onclick:()=>descargar('/api/plantilla/cumplimiento.xlsx','plantilla_cumplimiento.xlsx')},'⬇ Plantilla Excel'));
   // Zona para ARRASTRAR uno o varios archivos: se cargan solos, uno por uno y en orden de nombre.
-  const file=el('input',{type:'file',accept:'.xlsx,.xls,.csv',multiple:true,style:'display:none'});
-  const zona=el('div',{style:'border:2px dashed var(--line-strong);border-radius:14px;padding:34px 16px;text-align:center;cursor:pointer;transition:all .15s;background:var(--glass-1)'});
-  zona.append(el('div',{style:'font:700 15px Montserrat,sans-serif;color:var(--brand)'},'Arrastra aquí tus archivos'),el('div',{class:'muted',style:'font-size:12px;margin-top:6px'},'.xlsx hasta 30,000 filas · .csv hasta 100,000 filas · máximo 25 MB por archivo. Puedes soltar varios a la vez: se cargan uno por uno. O haz clic para elegirlos.'));
+  const zona=zonaArchivos({multiple:true,accept:'.xlsx,.xls,.csv',sinLista:true,titulo:'Arrastra aquí tus archivos',ayuda:'.xlsx hasta 30,000 filas · .csv hasta 100,000 filas · máximo 25 MB por archivo. Puedes soltar varios a la vez: se cargan uno por uno. O haz clic para elegirlos.',onFiles:(fs,z)=>{z.limpiar();procesar(fs);}});
   const lista=el('div',{style:'margin-top:14px;display:flex;flex-direction:column;gap:8px'});
   const resumen=el('div',{style:'margin-top:12px'});
-  body.append(zona,file,lista,resumen);
+  body.append(zona,lista,resumen);
   let ocupado=false; const tot={ins:0,dup:0,inv:0,ok:0,mal:0};
   const ico={espera:'⏳',cargando:'⏫',ok:'✅',error:'⚠️'};
   const pintarFila=(f)=>{const fila=el('div',{style:'display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:13px'});f.fila=fila;f.ico=el('span',{},ico.espera);f.txt=el('div',{style:'flex:1'},el('b',{},esc(f.file.name)),el('span',{class:'muted'},' · '+(f.file.size/1048576).toFixed(1)+' MB · en espera'));fila.append(f.ico,f.txt);lista.append(fila);};
@@ -2545,11 +2895,6 @@ function openCargaCumplimiento(){
     resumen.append(el('div',{class:'banner '+(tot.mal?'warn':'ok'),html:`<b>${tot.mal?'Carga terminada con avisos':'Carga completada'}</b><br>Archivos correctos: <b>${tot.ok}</b>${tot.mal?' · con error: <b>'+tot.mal+'</b>':''}<br>Transacciones nuevas: <b>${tot.ins.toLocaleString('es-MX')}</b> · ya existían: ${tot.dup.toLocaleString('es-MX')} · inválidas: ${tot.inv.toLocaleString('es-MX')}<br><span class="muted">Las alertas de PLD se evalúan en segundo plano; aparecen en la pestaña Alertas en unos minutos.</span>`}));
     ocupado=false; zona.style.opacity='1'; zona.style.pointerEvents='auto'; render();
   };
-  zona.addEventListener('click',()=>file.click());
-  file.addEventListener('change',()=>{const a=[...file.files];file.value='';procesar(a);});
-  ['dragenter','dragover'].forEach(ev=>zona.addEventListener(ev,e=>{e.preventDefault();e.stopPropagation();zona.style.borderColor='var(--accent)';zona.style.background='var(--accent-soft)';}));
-  ['dragleave','drop'].forEach(ev=>zona.addEventListener(ev,e=>{e.preventDefault();e.stopPropagation();zona.style.borderColor='';zona.style.background='';}));
-  zona.addEventListener('drop',e=>{procesar([...(e.dataTransfer&&e.dataTransfer.files||[])]);});
   // Evita que el navegador abra el archivo si se suelta fuera de la zona mientras el modal está abierto.
   body.addEventListener('dragover',e=>e.preventDefault());body.addEventListener('drop',e=>{e.preventDefault();if(!zona.contains(e.target))procesar([...(e.dataTransfer&&e.dataTransfer.files||[])]);});
   modal('Cargar transacciones de Cumplimiento',body,el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cerrar')),true);
@@ -2787,9 +3132,8 @@ async function vDispCB(v){
   g.append(mkSel('estado','Estado',CB_ESTADOS));
   g.append(mkSel('ciclo','Ciclo',CB_CICLOS));
   g.append(mkSel('brand','Marca',BRANDS));
-  const d1=el('input',{type:'date',value:CBF.desde||''});d1.addEventListener('change',()=>CBF.desde=d1.value);
-  const d2=el('input',{type:'date',value:CBF.hasta||''});d2.addEventListener('change',()=>CBF.hasta=d2.value);
-  g.append(el('label',{class:'field'},'Desde',d1),el('label',{class:'field'},'Hasta',d2));
+  const fFechas=filtroFechas({desde:CBF.desde||'',hasta:CBF.hasta||'',titulo:'Fechas',onChange:(d,h)=>{CBF.desde=d;CBF.hasta=h;}});
+  g.append(el('label',{class:'field'},'Fechas',fFechas));
   const cv=el('input',{type:'checkbox'});cv.checked=!!CBF.solo_vencidos;cv.addEventListener('change',()=>CBF.solo_vencidos=cv.checked);
   g.append(el('label',{class:'field',style:'flex-direction:row;align-items:center;gap:8px'},cv,el('span',{},'Solo vencidos')));
   pf.append(el('h3',{},'Filtros'),g,el('div',{style:'margin-top:12px'},el('button',{class:'btn',onclick:()=>{CBF.offset=0;render();}},'Aplicar'),' ',el('button',{class:'btn ghost',onclick:()=>{Object.assign(CBF,{estado:'',ciclo:'',brand:'',q:'',desde:'',hasta:'',solo_vencidos:false,offset:0});render();}},'Limpiar')));
@@ -3003,11 +3347,11 @@ async function vDispCBDetalle(v, id){
   p4.append(el('h3',{},'Documentos de evidencia ('+atts.length+')'));
   if (can('disputas')) {
     const upWrap = el('div',{style:'display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px'});
-    const inp = el('input',{type:'file',accept:'.pdf,.jpg,.jpeg,.png,.gif,.webp,.xlsx,.xls,.docx,.doc,.txt,.csv,.zip'});
+    const zf = zonaArchivos({compacta:true,accept:'.pdf,.jpg,.jpeg,.png,.gif,.webp,.xlsx,.xls,.docx,.doc,.txt,.csv,.zip',titulo:'Arrastra la evidencia aquí o haz clic',ayuda:'PDF, imágenes, Excel, Word, CSV o ZIP · máx. 15 MB'}); zf.style.flex='1 1 260px'; zf.style.margin='0'; const inp = zf.input;
     const etq = el('select'); etq.append(el('option',{value:''},'— Etiqueta (opcional) —'));
     ['Voucher','Comprobante de entrega','Comunicación TH','Bitácora gateway','Otro'].forEach(o=>etq.append(el('option',{},o)));
     const btnSubir = el('button',{class:'btn sm',onclick:async()=>{ if(!inp.files||!inp.files[0]) return toast('Selecciona un archivo','err'); const fd=new FormData(); fd.append('archivo',inp.files[0]); fd.append('descripcion',etq.value||''); try{ await api('POST','/api/disputa/chargebacks/'+id+'/attachments',fd); toast('Adjunto subido','ok'); go('disp_cb_'+id); }catch(e){ const dat=e.data||{}; toast(dat.error==='mime_no_permitido'?'Tipo no aceptado':dat.error==='archivo_muy_grande'?'Máx 15 MB':errMsg(e),'err'); } }},'Subir documento');
-    upWrap.append(inp,etq,btnSubir); p4.append(upWrap);
+    upWrap.append(zf,etq,btnSubir); p4.append(upWrap);
   }
   if (!atts.length) p4.append(el('div',{class:'muted',style:'font-size:13px;padding:6px 0'},'Aún no hay documentos cargados. Adjunta la evidencia según el checklist.'));
   else p4.append(tableWrap(['Archivo','Descripción','Tamaño','Subido por','Cuándo',''],atts.map(a=>[esc(a.filename||'—'),esc(a.descripcion||'—'),{num:(a.bytes_size||0)+' B'},esc(a.subido_por||'—'),esc(new Date(a.subido_at).toLocaleString('es-MX')),el('div',{style:'display:flex;gap:6px'},el('button',{class:'btn ghost sm',onclick:()=>{ const url='/api/disputa/attachments/'+a.id+'/download?token='+encodeURIComponent(TOKEN()); window.open(url,'_blank'); }},'⬇'),can('disputas')?el('button',{class:'btn ghost sm',style:'color:var(--t-m)',onclick:async e=>{ e.stopPropagation(); if(await confirmar('¿Eliminar este adjunto?')){ try{ await api('DELETE','/api/disputa/attachments/'+a.id); toast('Borrado','ok'); go('disp_cb_'+id); }catch(ex){ toast(errMsg(ex),'err'); } } }},'Borrar'):'')])));
@@ -3245,9 +3589,9 @@ async function openCBNuevo(){
 async function openAttUpload(tabla,casoId){
   const body=el('div',{});
   const info=el('div',{class:'muted',style:'font-size:12px;margin-bottom:10px'},'Tipos aceptados: PDF, imágenes, xlsx/xls, docx/doc, csv, txt, zip. Máx 15 MB.');
-  const inp=el('input',{type:'file',accept:'.pdf,.jpg,.jpeg,.png,.gif,.webp,.xlsx,.xls,.docx,.doc,.txt,.csv,.zip'});
+  const zf=zonaArchivos({accept:'.pdf,.jpg,.jpeg,.png,.gif,.webp,.xlsx,.xls,.docx,.doc,.txt,.csv,.zip',titulo:'Arrastra aquí la evidencia',ayuda:'O haz clic para elegirla'});const inp=zf.input;
   const desc=el('input',{placeholder:'Descripción breve (opcional)'});
-  body.append(info,fld('Archivo',inp),fld('Descripción',desc));
+  body.append(info,zf,fld('Descripción',desc));
   const foot=el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
     if(!inp.files||!inp.files[0])return toast('Selecciona un archivo','err');
     const fd=new FormData();fd.append('archivo',inp.files[0]);fd.append('descripcion',desc.value||'');
@@ -3809,12 +4153,11 @@ async function vDispReports(v){
   const RF={desde:'',hasta:'',merchant_id:''};
   const pf=el('div',{class:'panel'});
   pf.append(el('h3',{},'Filtros comunes'));
-  const d1=el('input',{type:'date'});d1.addEventListener('change',()=>RF.desde=d1.value);
-  const d2=el('input',{type:'date'});d2.addEventListener('change',()=>RF.hasta=d2.value);
+  const fFechas=filtroFechas({titulo:'Fechas',onChange:(d,h)=>{RF.desde=d;RF.hasta=h;}});
   const mSel=el('select');mSel.append(el('option',{value:''},'— todos los comercios —'));
   try{const m=await api('GET','/api/disputa/merchants');m.forEach(x=>mSel.append(el('option',{value:x.id},x.nombre+' ('+(x.afiliacion||'—')+')')));}catch(_e){}
   mSel.addEventListener('change',()=>RF.merchant_id=mSel.value);
-  pf.append(el('div',{class:'form-grid c3'},fld('Desde',d1),fld('Hasta',d2),fld('Comercio',mSel)));
+  pf.append(el('div',{class:'form-grid'},fld('Fechas',fFechas),fld('Comercio',mSel)));
   pf.append(el('div',{class:'muted',style:'font-size:12px;margin-top:8px'},'Los reportes aplican rango sobre fecha_evento (CB) o fecha_reporte (refunds/duplicates). Sin fechas = todo el histórico.'));
   v.append(pf);
   // Lista de reportes
@@ -3939,8 +4282,7 @@ async function vBitacora(v){
   grid.append(mk('resource_type','Tipo de recurso',el('input',{placeholder:'ej. usuario, corte, cuenta'})));
   grid.append(mk('ip','IP',el('input',{placeholder:'ej. 187.132.'})));
   const selSuccess=el('select');['','true','false'].forEach(x=>selSuccess.append(el('option',{value:x},x===''?'—':(x==='true'?'Éxito':'Fallo')))); grid.append(mk('success','Resultado',selSuccess));
-  grid.append(mk('desde','Desde (YYYY-MM-DD)',el('input',{type:'date'})));
-  grid.append(mk('hasta','Hasta (YYYY-MM-DD)',el('input',{type:'date'})));
+  grid.append(el('label',{class:'field'},'Fechas',filtroFechas({desde:BIT.desde||'',hasta:BIT.hasta||'',titulo:'Fechas',onChange:(d,h)=>{BIT.desde=d;BIT.hasta=h;}})));
   grid.append(mk('q','Detalle contiene',el('input',{placeholder:'ej. clabe, monto, folio'})));
   pf.append(el('h3',{},'Filtros'),grid);
   const foot=el('div',{style:'display:flex;gap:8px;margin-top:12px'});
@@ -3994,8 +4336,8 @@ function bitQuery(){
 /* ---------- import genérico (Excel/CSV) ---------- */
 function openImport(tipo,title){
   const body=el('div',{});body.append(el('div',{class:'banner'},'Sube el Excel (.xlsx) o pega CSV. El servidor lo parsea. Usa la plantilla como referencia.'));
-  const file=el('input',{type:'file',accept:'.xlsx,.xls,.csv,.tsv,.txt'});const ta=el('textarea',{style:'min-height:140px',placeholder:'pega CSV aquí'});
-  body.append(el('label',{class:'field'},'Archivo Excel (.xlsx) o CSV',file),el('label',{class:'field'},'…o pega CSV',ta));
+  const zf=zonaArchivos({accept:'.xlsx,.xls,.csv,.tsv,.txt',titulo:'Arrastra aquí el Excel o CSV',ayuda:'.xlsx, .xls, .csv, .tsv o .txt · o haz clic para elegirlo'});const file=zf.input;const ta=el('textarea',{style:'min-height:140px',placeholder:'pega CSV aquí'});
+  body.append(zf,el('label',{class:'field'},'…o pega CSV',ta));
   const foot=el('div',{});foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
     const fd=new FormData();if(file.files[0])fd.append('archivo',file.files[0]);else if(ta.value.trim())fd.append('csv',ta.value.trim());else{toast('Sube un archivo o pega CSV','err');return;}
     try{const r=await withBusy('Importando en el servidor…',()=>api('POST','/api/catalogo/'+tipo+'/import',fd));closeModal();toast(`${r.importadas} importadas`,'ok');render();}catch(e){toast('Error: '+errMsg(e),'err');}
@@ -4011,8 +4353,9 @@ function mountApp(){$('#loginScreen').style.display='none';$('#app').style.displ
   // Rol "inventario": sin acceso a Tareas Ops ni al dashboard financiero —
   // entra directo a su única sección permitida.
   if(SES.rol==='inventario'){ WORKSPACE='conciliacion'; localStorage.setItem('cl_workspace','conciliacion'); renderWs(); VIEW='inventario'; render(); return; }
+  if(!WORKSPACES[WORKSPACE].ok()){ WORKSPACE=Object.keys(WORKSPACES).find(k=>WORKSPACES[k].ok()); localStorage.setItem('cl_workspace',WORKSPACE); }
   renderWs();
-  VIEW = (WORKSPACE==='tareas') ? 'tar_mis_rutinas' : 'dashboard';
+  VIEW = vistaInicial(WORKSPACE);
   render();}
 async function boot(){
   try{
@@ -4292,7 +4635,11 @@ async function vEntregableDetalle(v, id){
   });
   v.append(pDat);
   // Adjuntos
-  const pAdj = el('div',{class:'panel'}); pAdj.append(el('h3',{},'Adjuntos ('+(s.adjuntos||[]).length+')',el('span',{class:'right'},el('span',{},'📎 ',el('label',{class:'btn ghost sm',style:'cursor:pointer'},'Subir archivo', (function(){const inp=el('input',{type:'file',style:'display:none',onchange:async(ev)=>{ if(!ev.target.files[0]) return; const fd=new FormData(); fd.append('archivo',ev.target.files[0]); try{await api('POST','/api/entregables/solicitudes/'+id+'/adjuntos',fd); toast('Subido','ok'); go('tar_ent_'+id);}catch(er){toast(errMsg(er),'err');}}}); return inp;})())))));
+  const pAdj = el('div',{class:'panel'}); pAdj.append(el('h3',{},'Adjuntos ('+(s.adjuntos||[]).length+')'));
+  pAdj.append(zonaArchivos({compacta:true,titulo:'Arrastra un archivo aquí o haz clic para adjuntarlo',ayuda:'Se sube al soltarlo',sinLista:true,onFiles:async(fs,z)=>{
+    const fd=new FormData(); fd.append('archivo',fs[0]);
+    try{await api('POST','/api/entregables/solicitudes/'+id+'/adjuntos',fd); toast('Subido','ok'); go('tar_ent_'+id);}catch(er){toast(errMsg(er),'err'); z.limpiar();}
+  }}));
   if(!(s.adjuntos||[]).length) pAdj.append(el('div',{class:'empty'},'Sin adjuntos.'));
   else {
     const t=el('table');
@@ -4563,8 +4910,7 @@ async function vTarReportes(v){
   const prodLabel = p => p ? p.charAt(0).toUpperCase()+p.slice(1) : 'Todos los productos';
   const prodSel = el('select',{style:'min-width:170px',onchange:e=>{ st.producto=e.target.value; render(); }});
   productos.forEach(p=>{ const o=el('option',{value:p},prodLabel(p)); if(p===st.producto) o.selected=true; prodSel.append(o); });
-  const desde = el('input',{type:'date',value:st.desde,onchange:e=>{ st.desde=e.target.value; render(); }});
-  const hasta = el('input',{type:'date',value:st.hasta,onchange:e=>{ st.hasta=e.target.value; render(); }});
+  const fFechas = filtroFechas({desde:st.desde,hasta:st.hasta,titulo:'Rango de fechas',onChange:(d,h)=>{ st.desde=d; st.hasta=h; render(); }});
   const descargar = el('button',{class:'btn',onclick:async()=>{
     const qs = new URLSearchParams();
     if(st.producto) qs.set('producto', st.producto);
@@ -4581,8 +4927,7 @@ async function vTarReportes(v){
     }catch(e){ toast(errMsg(e),'err'); }
   }},'⬇ Descargar Excel');
   $('#pageAction').append(
-    el('span',{class:'muted',style:'font-size:12px'},'Desde'), desde,
-    el('span',{class:'muted',style:'font-size:12px'},'Hasta'), hasta,
+    fFechas,
     prodSel, descargar,
   );
 
@@ -4826,6 +5171,455 @@ async function abrirTarea(id){
     modal(t.folio+' · '+t.titulo,body,el('div',{},el('button',{class:'btn ghost',onclick:closeModal},'Cerrar')),true);
   }catch(e){toast(errMsg(e),'err');}
 }
+
+/* ============================================================================
+   CARDS (BSO) · solicitud de fondeos → CEP → asignación de saldo (control interno de tesorería)
+   El comercial solicita a una empresa suya (el sistema cotiza fondeo + comisión + IVA), sube el CEP del depósito (solo se aceptan CEP)
+   y tesorería confirma que el saldo se asignó. La empresa manda fondeo neto + comisión (% del fondeo) + IVA (% de la comisión).
+   ========================================================================= */
+const CARDS_ESTATUS={SOLICITADO:['info','Esperando CEP'],POR_ASIGNAR:['warn','Por asignar'],ASIGNADO:['ok','Asignado'],RECHAZADO:['danger','Rechazado'],CANCELADO:['neutral','Cancelado']};
+const CARDS_NIVEL={EMPRESA:'Empresa',UN:'Unidad de negocio',TARJETA:'Tarjeta'};
+const CEP_FORMATO={cep_banxico:'CEP de Banxico',dispersion_polipay:'Comprobante de dispersión Polipay',xml:'XML del CEP',pdf_generico:'PDF (formato no reconocido)',consulta_estado_banxico:'Consulta de estado de Banxico',imagen:'Imagen',pdf_sin_texto:'PDF sin texto',error:'No legible',desconocido:'Sin lectura'};
+const CEP_CONF={alta:['ok','Lectura confiable'],media:['warn','Revisa los datos'],baja:['danger','Lectura incierta']};
+const EVT_TXT={solicitado:'Solicitado',registrado:'Registrado',edicion:'Editado',cep_alta:'CEP cargado',cep_baja:'CEP quitado',cep_rechazado:'CEP no aceptado',por_asignar:'Pasó a tesorería',esperando_cep:'Esperando CEP',asignado:'Saldo asignado',rechazado:'Rechazado',cancelado:'Cancelado',notificado:'Aviso por correo'};
+const badgeFondeo=e=>{const [c,l]=CARDS_ESTATUS[e]||['neutral',esc(e)];return `<span class="badge ${c}">${l}</span>`;};
+const hoyMX=()=>new Date().toLocaleDateString('en-CA',{timeZone:'America/Mexico_City'});
+const pctTxt=n=>Number(n).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:4})+'%';
+const numTxt=s=>{const n=Number(String(s==null?'':s).replace(/[,\s$]/g,''));return Number.isFinite(n)?n:NaN;};
+const clabeFmt=c=>String(c||'').replace(/^(\d{3})(\d{3})(\d{11})(\d)$/,'$1 $2 $3 $4');
+// CLABE: 18 dígitos y verificador (pesos 3-7-1). El servidor vuelve a validar.
+function clabeOk(v){const c=String(v||'').replace(/\D/g,'');if(!/^\d{18}$/.test(c))return false;let s=0;for(let i=0;i<17;i++)s+=(Number(c[i])*[3,7,1][i%3])%10;return (10-(s%10))%10===Number(c[17]);}
+async function copiar(texto,ok){try{await navigator.clipboard.writeText(texto);toast(ok||'Copiado','ok');}catch(_){toast(texto);}}
+function chipClabe(clabe){return el('button',{type:'button',class:'clabe',title:'Copiar CLABE','aria-label':'Copiar CLABE '+clabe,onclick:e=>{e.stopPropagation();copiar(clabe,'CLABE copiada');}},clabeFmt(clabe));}
+const cardsEntidades=()=>api('GET','/api/cards/entidades');
+const etiquetaEnt=e=>'  '.repeat(e.profundidad)+(e.profundidad?'└ ':'')+e.nombre+' · '+CARDS_NIVEL[e.nivel];
+const cardsAcciones=(...nodos)=>{const pa=$('#pageAction');pa.innerHTML='';nodos.filter(Boolean).forEach(n=>pa.append(n));};
+// Números del menú (por asignar para tesorería; devueltas / esperando CEP para el comercial).
+let CARDS_CONT={por_asignar:0,esperando_cep:0,rechazadas:0};
+async function cardsContadores(){try{CARDS_CONT=await api('GET','/api/cards/contadores');renderNav();}catch(_e){/* el menú sigue sin números */}}
+function cardsIrALista(modo,filtros){vCardsLista._f=vCardsLista._f||{};vCardsLista._f[modo]=Object.assign({empresa_id:'',estatus:'',cep:'',desde:'',hasta:'',q:''},filtros||{});go(modo==='bandeja'?'cards_bandeja':modo==='mis'?'cards_solicitudes':'cards_fondeos');}
+const textoInstrucciones=r=>`Depositar ${mxn(r.total)} (fondeo ${mxn(r.fondeo)} + comisión ${mxn(r.comision)} + IVA ${mxn(r.iva)}) a nombre de ${r.beneficiario||r.entidad}${r.banco?', banco '+r.banco:''}, CLABE ${clabeFmt(r.clabe)}. Al hacerlo, envía el CEP.`;
+// Titular y banco de una cuenta de fondeo (para los avisos de “deposita a…”).
+const cuentaTxt=(ent,extra)=>`<small>${esc(ent.beneficiario||ent.nombre)} · ${esc(ent.banco||'banco sin definir')}</small>`+(extra?`<br><small>${esc(extra)}</small>`:'');
+
+/* ---------- Panel (tesorería / consulta) ---------- */
+async function vCardsPanel(v){
+  const d=await api('GET','/api/cards/resumen');
+  v.innerHTML='';
+  const t=d.totales,p=d.pendientes;
+  v.append(cards([['Saldos asignados del periodo',t.n,fmtISO(d.desde)+' – '+fmtISO(d.hasta)],['Fondeo neto asignado',mxn(t.fondeo),'abonado a las entidades'],['Comisión',mxn(t.comision),'más IVA '+mxn(t.iva)],['Total recibido',mxn(t.recibido),'fondeo + comisión + IVA']]));
+  const ctl=el('div',{class:'panel'});ctl.append(el('h3',{},'Pendientes de control'));
+  const fila=(n,txt,accion,cls)=>el('div',{class:'ctl-fila'},el('span',{class:'badge '+(n?cls:'neutral')},String(n)),el('span',{class:n?'':'muted'},txt),n?el('button',{class:'btn ghost sm',onclick:accion},'Ver'):'');
+  ctl.append(fila(p.por_asignar,'con CEP, por asignar saldo',()=>cardsIrALista('bandeja',{estatus:'POR_ASIGNAR'}),'warn'),
+    fila(p.esperando_cep,'solicitudes esperando el CEP',()=>cardsIrALista('todos',{estatus:'SOLICITADO'}),'info'),
+    fila(p.rechazadas,'rechazadas, pendientes de corregir',()=>cardsIrALista('todos',{estatus:'RECHAZADO'}),'danger'),
+    fila(p.difieren,'distintos de lo que se solicitó',()=>cardsIrALista('todos',{}),'orange'));
+  const emp=el('div',{class:'panel'});emp.append(el('h3',{},'Asignado por empresa'));
+  const twE=tableWrap(['Empresa',{t:'Fondeos'},{t:'Fondeo neto'},{t:'Comisión'}],d.por_empresa.map(r=>{const x=[`<b>${esc(r.nombre)}</b>`,{num:r.n},{num:mxn(r.fondeo)},{num:mxn(r.comision)}];x._onclick=()=>cardsIrALista('todos',{empresa_id:String(r.id),estatus:'ASIGNADO',desde:d.desde,hasta:d.hasta});return x;}),{empty:'Aún no hay saldos asignados en el periodo.'});twE.classList.add('compacta');emp.append(twE);
+  const g=el('div',{class:'grid2'});g.append(emp,ctl);v.append(g);
+  const rec=el('div',{class:'panel'});rec.append(el('h3',{},'Últimos movimientos',el('span',{class:'right'},el('button',{class:'btn ghost sm',onclick:()=>cardsIrALista('todos',{})},'Ver todos'))));
+  rec.append(tablaFondeos(d.recientes));v.append(rec);
+  cardsAcciones(can('cards_solicitar')&&el('button',{class:'btn',onclick:()=>formularioSolicitud()},'+ Nueva solicitud'));
+}
+
+function tablaFondeos(rows){
+  return tableWrap(['Folio','Destino',{t:'Monto'},{t:'Fondeo neto'},{t:'Comisión'},{t:'IVA'},'CEP','Estatus'],rows.map(r=>{
+    const monto=r.monto_recibido!=null?`${mxn(r.monto_recibido)}<small class="muted"> recibido</small>`:(r.monto_esperado!=null?`${mxn(r.monto_esperado)}<small class="muted"> a depositar</small>`:'—');
+    const x=[`<div class="tt">${esc(r.folio)}<small>${r.fecha?fmtISO(r.fecha):'solicitado '+fmtISO(String(r.solicitado_at||r.creado_at).slice(0,10))}</small></div>`,
+      `<div class="tt">${esc(r.entidad_nombre)}<small>${esc(r.solicitante_nombre?'Solicitó '+r.solicitante_nombre:(r.ruta||''))}</small></div>`,{num:monto},{num:mxn(r.fondeo)},{num:mxn(r.comision)},{num:mxn(r.iva)},
+      r.n_ceps?`<span class="badge ok">${r.n_ceps} archivo${r.n_ceps>1?'s':''}</span>`:(['SOLICITADO','RECHAZADO'].includes(r.estatus)?'<span class="badge danger">Falta CEP</span>':'—'),
+      badgeFondeo(r.estatus)+(r.difiere?' <span class="badge orange" title="El fondeo resultante es distinto de lo solicitado">≠ solicitado</span>':'')];
+    x._onclick=()=>abrirFondeo(r.id);return x;}),{empty:'No hay fondeos con esos filtros.'});
+}
+
+/* ---------- Listas: Mis solicitudes (comercial) · Por asignar (tesorería) · Fondeos (todos) ---------- */
+const vCardsFondeos=v=>vCardsLista(v,'todos');
+const vCardsBandeja=v=>vCardsLista(v,'bandeja');
+const vCardsSolicitudes=v=>vCardsLista(v,'mis');
+async function vCardsLista(v,modo){
+  vCardsLista._f=vCardsLista._f||{};
+  const base=()=>Object.assign({empresa_id:'',estatus:'',cep:'',desde:'',hasta:'',q:''},modo==='bandeja'?{estatus:'POR_ASIGNAR'}:{});
+  const F=vCardsLista._f[modo]||(vCardsLista._f[modo]=base());
+  const qs=()=>new URLSearchParams(Object.entries(F).filter(([,x])=>x)).toString();
+  const [ents,d]=await Promise.all([cardsEntidades(),api('GET','/api/cards/fondeos?'+qs())]);
+  v.innerHTML='';
+  const empresas=ents.filter(e=>e.nivel==='EMPRESA');
+  cardsAcciones(can('cards_solicitar')&&el('button',{class:'btn',onclick:()=>formularioSolicitud()},'+ Nueva solicitud'),
+    modo==='todos'&&can('cards_manual')&&el('button',{class:'btn secondary',onclick:()=>formularioFondeo()},'+ Fondeo ya recibido'),
+    modo!=='mis'&&el('button',{class:'btn secondary',onclick:async()=>{try{await descargar('/api/cards/fondeos.xlsx?'+qs(),'fondeos_cards.xlsx');}catch(e){toast(errMsg(e),'err');}}},'⬇ Excel'));
+  const sel=(k,opts)=>{const s=el('select',{'aria-label':k,onchange:e=>{F[k]=e.target.value;render();}},...opts.map(([val,lbl])=>el('option',{value:val},lbl)));s.value=F[k];return s;};
+  const hayFiltros=Object.entries(F).some(([k,x])=>x&&x!==base()[k]);
+  v.append(el('div',{class:'filters cards-filtros'},
+    empresas.length>1?sel('empresa_id',[['','Todas las empresas'],...empresas.map(e=>[String(e.id),e.nombre])]):'',
+    modo==='bandeja'?'':sel('estatus',[['','Todos los estatus'],...Object.entries(CARDS_ESTATUS).map(([k,[,l]])=>[k,l])]),
+    filtroFechas({desde:F.desde,hasta:F.hasta,titulo:'Fechas',onChange:(d,h)=>{F.desde=d;F.hasta=h;render();}}),
+    el('input',{type:'search',value:F.q,placeholder:'Folio, rastreo, empresa…','aria-label':'Buscar',onchange:e=>{F.q=e.target.value.trim();render();}}),
+    hayFiltros?el('button',{class:'btn ghost sm',onclick:()=>{vCardsLista._f[modo]=null;render();}},'Limpiar'):''));
+  const t=d.totales;
+  v.append(modo==='bandeja'
+    ?cards([['Por asignar',d.rows.length,'esperando tu confirmación'],['Monto por asignar',mxn(d.totales.en_proceso_monto)]])
+    :cards([['Asignados',t.n,'saldo ya asignado'],['Total recibido',mxn(t.monto_recibido)],['Fondeo neto',mxn(t.fondeo)],['Comisión',mxn(t.comision),'más IVA '+mxn(t.iva)],['En proceso',t.en_proceso,mxn(t.en_proceso_monto)]]));
+  const p=el('div',{class:'panel'});
+  p.append(d.rows.length||hayFiltros?tablaFondeos(d.rows):el('div',{class:'empty'},modo==='mis'?'Aún no tienes solicitudes. Crea la primera con “+ Nueva solicitud”.':modo==='bandeja'?'No hay fondeos por asignar. Todo al día.':'Aún no hay fondeos.'));
+  v.append(p);
+}
+
+/* ---------- Nueva solicitud (comercial) ---------- */
+async function formularioSolicitud(){
+  const ents=(await cardsEntidades()).filter(e=>e.usable);
+  if(!ents.length)return toast('Primero da de alta una empresa.','err');
+  const sel=el('select',{id:'soEnt'},ents.length>1?el('option',{value:''},'— Elige la empresa —'):'',...ents.map(e=>el('option',{value:String(e.id)},etiquetaEnt(e))));
+  if(ents.length===1)sel.value=String(ents[0].id);
+  const monto=el('input',{id:'soMonto',inputmode:'decimal',placeholder:'300,000.00',autocomplete:'off'});
+  const notas=el('textarea',{id:'soNotas',rows:'2',maxlength:'500',placeholder:'Opcional'});
+  const info=el('div',{class:'banner clabe-info',style:'display:none'});
+  const cot=el('div',{class:'desglose','aria-live':'polite'});
+  const fila=(k,val,cls)=>`<tr${cls?` class="${cls}"`:''}><td>${k}</td><td class="num">${val}</td></tr>`;
+  let tm;const calc=()=>{clearTimeout(tm);tm=setTimeout(async()=>{
+    if(!sel.value){info.style.display='none';cot.innerHTML='';return;}
+    try{const r=await api('POST','/api/cards/calcular',{entidad_id:sel.value,fondeo:monto.value});
+      info.style.display='';info.innerHTML=`La empresa deposita a la CLABE <b class="mono">${esc(clabeFmt(r.entidad.clabe))}</b><br>${cuentaTxt(r.entidad,r.entidad.ruta+' · comisión '+pctTxt(r.comision_pct)+' + IVA '+pctTxt(r.iva_pct)+' sobre la comisión')}`;
+      const c=r.cotizacion;cot.innerHTML=c?`<table><tbody>${fila('Monto a fondear',mxn(c.fondeo),'tot')}${fila('Comisión ('+pctTxt(r.comision_pct)+')',mxn(c.comision))}${fila('IVA ('+pctTxt(r.iva_pct)+')',mxn(c.iva))}${fila('La empresa debe depositar',mxn(c.total),'tot')}</tbody></table>`:'';
+    }catch(e){info.style.display='';info.innerHTML=esc(errMsg(e));cot.innerHTML='';}},250);};
+  [sel,monto].forEach(x=>{x.addEventListener('input',calc);x.addEventListener('change',calc);});
+  const body=el('div',{},el('div',{class:'banner'},'Elige la empresa y cuánto quiere fondear. Te calculamos la comisión y el IVA; el total es lo que la empresa debe depositar. Después sube su CEP.'),
+    fld('Empresa',sel),info,fld('Monto a fondear (neto)',monto),cot,fld('Notas',notas));
+  const guardar=el('button',{class:'btn',type:'button'},'Crear solicitud');
+  const foot=el('div',{},el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),guardar);
+  guardar.onclick=async()=>{guardar.disabled=true;try{
+    const r=await api('POST','/api/cards/solicitudes',{entidad_id:sel.value,fondeo:monto.value,notas:notas.value});
+    closeModal();render();instruccionesSolicitud(r);
+  }catch(e){toast(errMsg(e),'err');guardar.disabled=false;}};
+  modal('Nueva solicitud de fondeo',body,foot);
+  if(ents.length>1)sel.focus();else monto.focus();
+  calc();
+}
+function instruccionesSolicitud(r){
+  const c=r.cotizacion,txt=textoInstrucciones({total:c.total,fondeo:c.fondeo,comision:c.comision,iva:c.iva,entidad:r.entidad.nombre,beneficiario:r.entidad.beneficiario,banco:r.entidad.banco,clabe:r.entidad.clabe});
+  const body=el('div',{},el('div',{class:'banner ok'},'Solicitud ',el('b',{},r.folio),' creada. Estatus: esperando el CEP.'),
+    el('h4',{class:'sub-h'},'Mándale esto a la empresa'),el('p',{class:'instr'},txt),
+    el('div',{class:'req-note'},'Cuando la empresa deposite, abre la solicitud y sube su CEP (PDF o XML). Tesorería recibirá el aviso para asignar el saldo.'));
+  const foot=el('div',{},el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cerrar'),el('button',{class:'btn secondary',type:'button',onclick:()=>copiar(txt,'Instrucciones copiadas')},'Copiar instrucciones'),el('button',{class:'btn',type:'button',onclick:()=>{closeModal();abrirFondeo(r.id);}},'Abrir solicitud'));
+  modal('Solicitud creada',body,foot);
+}
+
+/* ---------- Registro manual de un fondeo que ya llegó (tesorería) ---------- */
+async function formularioFondeo(ex){
+  const ents=await cardsEntidades();
+  const usables=ents.filter(e=>e.usable);
+  const sel=el('select',{id:'fdEnt'},el('option',{value:''},'— Elige quién fondea —'),...(ex?ents:usables).map(e=>el('option',{value:String(e.id)},etiquetaEnt(e))));
+  if(ex){sel.value=String(ex.entidad_id);sel.disabled=true;}
+  const info=el('div',{class:'banner clabe-info',style:'display:none'});
+  const fecha=el('input',{id:'fdFecha',type:'date',value:ex&&ex.fecha?ex.fecha:hoyMX(),max:hoyMX()});
+  const monto=el('input',{id:'fdMonto',inputmode:'decimal',placeholder:'301,740.00',autocomplete:'off',value:ex&&ex.monto_recibido!=null?String(ex.monto_recibido):''});
+  const sol=el('input',{id:'fdSol',inputmode:'decimal',placeholder:'300,000.00',autocomplete:'off',value:ex&&ex.fondeo_solicitado!=null?String(ex.fondeo_solicitado):''});
+  const rastreo=el('input',{id:'fdRastreo',maxlength:'40',placeholder:'Clave de rastreo del SPEI',autocomplete:'off',value:ex&&ex.clave_rastreo?ex.clave_rastreo:''});
+  const banco=el('input',{id:'fdBanco',maxlength:'80',placeholder:'Banco que envió',autocomplete:'off',value:ex&&ex.banco_ordenante?ex.banco_ordenante:''});
+  const notas=el('textarea',{id:'fdNotas',rows:'2',maxlength:'500',placeholder:'Opcional'});notas.value=ex&&ex.notas?ex.notas:'';
+  const ordNom=el('input',{id:'fdOrdNom',maxlength:'120',autocomplete:'off',placeholder:'Quién envió el dinero',value:ex&&ex.ordenante_nombre?ex.ordenante_nombre:''});
+  const ordRfc=el('input',{id:'fdOrdRfc',maxlength:'13',autocomplete:'off',placeholder:'RFC del ordenante',value:ex&&ex.ordenante_rfc?ex.ordenante_rfc:''});
+  const lectura=el('div',{'aria-live':'polite'});
+  const zona=zonaArchivos({id:'fdFiles',accept:'.pdf,.xml',multiple:true,titulo:'Sube el CEP y lo leemos por ti',ayuda:'Arrástralo aquí o haz clic: llenamos la empresa, el monto, la fecha y la clave de rastreo. Solo se aceptan CEP (PDF o XML).',onFiles:()=>leerCep()});
+  const files=zona.input;
+  const prev=el('div',{class:'desglose','aria-live':'polite'});
+  const fila=(k,val,cls)=>`<tr${cls?` class="${cls}"`:''}><td>${k}</td><td class="num">${val}</td></tr>`;
+  const pintar=r=>{
+    if(r.entidad){info.style.display='';info.innerHTML=`Deben depositar a la CLABE <b class="mono">${esc(clabeFmt(r.entidad.clabe))}</b><br>${cuentaTxt(r.entidad,r.entidad.ruta+' · comisión '+pctTxt(r.comision_pct)+' + IVA '+pctTxt(r.iva_pct)+' sobre la comisión')}`;}
+    const d=r.desglose,c=r.cotizacion;
+    if(d){const s=numTxt(sol.value);
+      prev.innerHTML=`<table><tbody>${fila('Fondeo neto',mxn(d.fondeo),'tot')}${fila('Comisión ('+pctTxt(r.comision_pct)+')',mxn(d.comision))}${fila('IVA ('+pctTxt(r.iva_pct)+')',mxn(d.iva))}${fila('Total recibido',mxn(d.recibido),'tot')}</tbody></table>`
+        +(Math.abs(d.redondeo)>0.005?`<div class="muted">Redondeo: ${mxn(d.redondeo)}</div>`:'')
+        +(s>0?(Math.abs(d.fondeo-s)>0.01?`<div class="banner warn" style="margin:8px 0 0">Distinto de lo solicitado (${mxn(s)}): diferencia de ${mxn(d.fondeo-s)}.</div>`:'<div class="muted">Coincide con lo solicitado.</div>'):'');
+    }else if(c){prev.innerHTML=`<table><tbody>${fila('Para fondear',mxn(c.fondeo),'tot')}${fila('Comisión ('+pctTxt(r.comision_pct)+')',mxn(c.comision))}${fila('IVA ('+pctTxt(r.iva_pct)+')',mxn(c.iva))}${fila('Deben enviar',mxn(c.total),'tot')}</tbody></table>`;}
+    else prev.innerHTML='';
+  };
+  let tm;const calc=()=>{clearTimeout(tm);tm=setTimeout(async()=>{
+    if(!sel.value){info.style.display='none';prev.innerHTML='';return;}
+    const body={entidad_id:sel.value};if(numTxt(monto.value)>0)body.monto_recibido=monto.value;else if(numTxt(sol.value)>0)body.fondeo=sol.value;
+    try{pintar(await api('POST','/api/cards/calcular',body));}catch(e){info.style.display='';info.innerHTML=esc(errMsg(e));prev.innerHTML='';}
+  },250);};
+  [sel,monto,sol].forEach(x=>{x.addEventListener('input',calc);x.addEventListener('change',calc);});
+  const aplicarLectura=r=>{
+    const s=r.sugerencia||{},puestos=[];
+    if(s.entidad_id&&s.entidad_usable){sel.value=String(s.entidad_id);puestos.push('quién fondea');}
+    if(s.fecha){fecha.value=s.fecha;puestos.push('fecha');}
+    if(s.monto_recibido){monto.value=s.monto_recibido.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});puestos.push('monto');}
+    if(s.clave_rastreo){rastreo.value=s.clave_rastreo;puestos.push('clave de rastreo');}
+    if(s.banco_ordenante){banco.value=s.banco_ordenante;puestos.push('banco ordenante');}
+    if(s.ordenante_nombre){ordNom.value=s.ordenante_nombre;puestos.push('ordenante');}
+    if(s.ordenante_rfc)ordRfc.value=s.ordenante_rfc;
+    lectura.innerHTML='';
+    const [cc,cl]=CEP_CONF[r.confianza]||CEP_CONF.baja;
+    if(r.legible){
+      lectura.append(el('div',{class:'banner '+(r.es_cep===false?'err':(r.confianza==='alta'?'ok':'warn'))},
+        el('b',{},(CEP_FORMATO[r.formato]||r.formato)+' · '),el('span',{class:'badge '+cc},cl),
+        el('div',{style:'margin-top:4px'},puestos.length?'Se llenó: '+puestos.join(', ')+'. Revisa y guarda.':'No se pudo identificar ningún dato; captúralos a mano.')));
+    }else lectura.append(el('div',{class:'banner err'},'Este archivo no se puede leer como CEP: captura los datos a mano. No se podrá adjuntar si no es un CEP.'));
+    (r.avisos||[]).forEach(a=>lectura.append(el('div',{class:'banner warn'},a)));
+    calc();
+  };
+  const leerCep=async()=>{
+    const fs=[...files.files]; lectura.innerHTML='';
+    if(!fs.length)return;
+    lectura.append(el('div',{class:'banner'},'Leyendo el CEP…'));
+    let mejor=null;const fallas=[];
+    for(const f of fs){try{const fd=new FormData();fd.append('archivo',f);const r=await api('POST','/api/cards/ceps/extraer',fd);if(r.legible){mejor=r;break;}if(!mejor)mejor=r;}catch(e){fallas.push(f.name+': '+errMsg(e));}}
+    if(mejor)aplicarLectura(mejor);else{lectura.innerHTML='';lectura.append(el('div',{class:'banner err'},fallas.join(' · ')||'No se pudo leer el archivo.'));}
+  };
+  const body=el('div',{});
+  if(!ex)body.append(zona,lectura);
+  body.append(el('div',{class:'form-grid'},fld('Quién fondea',sel),fld('Fecha en que se recibió',fecha)),info,
+    el('div',{class:'form-grid'},fld('Monto recibido',monto),fld('Fondeo que la empresa dijo que mandaría (opcional)',sol)),prev,
+    el('div',{class:'form-grid'},fld('Clave de rastreo',rastreo),fld('Banco ordenante',banco)),el('div',{class:'form-grid'},fld('Ordenante (quién envió)',ordNom),fld('RFC del ordenante',ordRfc)),fld('Notas',notas));
+  if(!ex)body.append(el('div',{class:'req-note'},'Si aún no tienes el CEP, guarda el fondeo y súbelo después; no se puede asignar sin CEP.'));
+  const foot=el('div',{});
+  const guardar=el('button',{class:'btn',type:'button'},ex?'Guardar cambios':'Guardar fondeo');
+  foot.append(el('button',{class:'btn secondary',type:'button',onclick:()=>{closeModal();if(ex)abrirFondeo(ex.id);}},'Cancelar'),guardar);
+  guardar.onclick=async()=>{
+    guardar.disabled=true;
+    try{
+      const b={entidad_id:sel.value,fecha:fecha.value,monto_recibido:monto.value,fondeo_solicitado:sol.value,clave_rastreo:rastreo.value,banco_ordenante:banco.value,ordenante_nombre:ordNom.value,ordenante_rfc:ordRfc.value,notas:notas.value};
+      if(ex){await api('PUT','/api/cards/fondeos/'+ex.id,b);closeModal();toast('Fondeo actualizado','ok');render();abrirFondeo(ex.id);return;}
+      const r=await api('POST','/api/cards/fondeos',b);const fallas=[];
+      for(const f of files.files){const fd=new FormData();fd.append('archivo',f);try{await api('POST',`/api/cards/fondeos/${r.id}/ceps`,fd);}catch(e){fallas.push(f.name+': '+errMsg(e));}}
+      closeModal();toast('Fondeo '+r.folio+' registrado','ok');render();abrirFondeo(r.id);
+      if(fallas.length)setTimeout(()=>toast('No se cargó el CEP · '+fallas.join(' · '),'err'),400);
+    }catch(e){toast(errMsg(e),'err');guardar.disabled=false;}
+  };
+  modal(ex?'Editar fondeo '+ex.folio:'Registrar fondeo ya recibido',body,foot,true);
+  if(ex)calc();
+}
+
+/* ---------- Detalle del fondeo ---------- */
+async function abrirFondeo(id){
+  let f;try{f=await api('GET','/api/cards/fondeos/'+id);}catch(e){toast(errMsg(e),'err');return;}
+  const pu=f.puede||{},tesoreria=can('cards_asignar'),sol=f.origen==='SOLICITUD';
+  const kv=(k,val)=>`<tr><th scope="row">${k}</th><td>${val}</td></tr>`;
+  const dif=f.fondeo_solicitado!=null&&f.monto_recibido!=null?f.fondeo-f.fondeo_solicitado:null;
+  const body=el('div',{});
+  body.append(el('div',{class:'detalle-head'},el('span',{html:badgeFondeo(f.estatus)}),el('span',{class:'badge soft'},sol?'Solicitud':'Registro manual'),f.difiere?el('span',{class:'badge orange',title:'El fondeo resultante es distinto de lo solicitado'},'≠ solicitado'):'',el('span',{class:'muted'},f.fecha?fmtISO(f.fecha):'')));
+  // Qué sigue, según el estatus
+  const instr=textoInstrucciones({total:f.monto_esperado||f.monto_recibido,fondeo:f.fondeo,comision:f.comision,iva:f.iva,entidad:f.ruta,beneficiario:f.beneficiario_destino,banco:f.banco_destino,clabe:f.clabe_destino});
+  const aviso=(cls,...ch)=>body.append(el('div',{class:'banner '+cls},...ch));
+  if(f.estatus==='SOLICITADO')aviso('',el('b',{},'Esperando el CEP. '),pu.subir_cep?'Cuando la empresa deposite, sube su CEP aquí. ':'',el('div',{class:'instr',style:'margin-top:6px'},instr),el('button',{class:'btn ghost sm',type:'button',style:'margin-top:6px',onclick:()=>copiar(instr,'Instrucciones copiadas')},'Copiar instrucciones'));
+  else if(f.estatus==='POR_ASIGNAR')aviso('warn',tesoreria?'El CEP ya está cargado. Revisa que el dinero aparezca en el estado de cuenta y confirma que el saldo se asignó.':'El CEP ya está con tesorería: esperando que confirme la asignación del saldo.');
+  else if(f.estatus==='RECHAZADO')aviso('err',el('b',{},'Tesorería lo rechazó: '),f.motivo_rechazo||'',el('div',{class:'muted',style:'margin-top:4px'},pu.quitar_cep?'Quita el CEP, sube el correcto o cancela la solicitud.':''));
+  else if(f.estatus==='ASIGNADO')aviso('ok',el('b',{},'Saldo asignado '),'por '+(f.validado_por||'tesorería')+(f.nota_validacion?' · '+f.nota_validacion:''));
+  else if(f.estatus==='CANCELADO')aviso('',el('b',{},'Cancelado: '),f.motivo_cancelacion||'');
+  const cand=f.candado||{abierto:true};
+  (f.alertas||[]).forEach(a=>body.append(el('div',{class:'banner warn'},a.texto)));
+  const izq=el('div',{class:'panel-in'});
+  izq.append(el('table',{class:'kv',html:
+    kv('Destino',esc(f.ruta))+kv('CLABE destino',`<span class="mono">${esc(clabeFmt(f.clabe_destino))}</span>`)
+    +kv('Beneficiario',f.beneficiario_destino?esc(f.beneficiario_destino):'<span class="muted">sin definir</span>')+kv('Banco',f.banco_destino?esc(f.banco_destino):'<span class="muted">sin definir</span>')
+    +(f.solicitante_nombre?kv('Solicitó',esc(f.solicitante_nombre)):'')
+    +(f.monto_esperado!=null?kv('Total a depositar',mxn(f.monto_esperado)):'')
+    +kv('Monto recibido',f.monto_recibido!=null?'<b>'+mxn(f.monto_recibido)+'</b>':'<span class="muted">— (se toma del CEP)</span>')+kv('Fondeo neto',mxn(f.fondeo))
+    +kv('Comisión ('+pctTxt(f.comision_pct)+')',mxn(f.comision))+kv('IVA ('+pctTxt(f.iva_pct)+')',mxn(f.iva))
+    +(Math.abs(f.redondeo)>0.005?kv('Redondeo',mxn(f.redondeo)):'')
+    +(f.fondeo_solicitado!=null&&dif!==null?kv('Solicitado',mxn(f.fondeo_solicitado)+(Math.abs(dif)>0.01?` <span class="badge orange">dif. ${mxn(dif)}</span>`:' <span class="badge ok">coincide</span>')):'')
+    +kv('Clave de rastreo',f.clave_rastreo?`<span class="mono">${esc(f.clave_rastreo)}</span>`:'<span class="muted">—</span>')+kv('Banco ordenante',f.banco_ordenante?esc(f.banco_ordenante):'<span class="muted">—</span>')
+    +(f.ordenante_nombre||f.ordenante_rfc?kv('Ordenante',esc(f.ordenante_nombre||'—')+(f.ordenante_rfc?` <small class="muted mono">${esc(f.ordenante_rfc)}</small>`:'')):'')
+    +(f.notas?kv('Notas',esc(f.notas)):'')}));
+  const der=el('div',{class:'panel-in'});
+  der.append(el('h4',{},'CEP (comprobante electrónico de pago)'));
+  const errBox=el('div',{'aria-live':'polite'});
+  const lecturaCep=c=>{
+    if(!c.formato)return '';
+    const [cc,cl]=CEP_CONF[c.confianza]||CEP_CONF.baja;const v=c.verificacion;
+    const cab=el('div',{class:'cep-lect'},el('span',{class:'badge soft'},CEP_FORMATO[c.formato]||c.formato),el('span',{class:'badge '+cc},cl),el('span',{class:'badge '+(c.validado?'ok':'danger')},c.validado?'Validado por el sistema':'No validado'));
+    if(!v)return cab;
+    const fmt=(k,x)=>x==null||x===''?'—':(k==='monto'?mxn(x):k==='clabe'?clabeFmt(x):k==='fecha'?fmtISO(x):x);
+    return el('div',{},cab,el('ul',{class:'checks'},...v.checks.filter(k=>k.estado!=='sin_dato').map(k=>el('li',{class:k.estado},
+      el('span',{'aria-hidden':'true'},k.estado==='ok'?'✓':'≠'),el('span',{},k.etiqueta+': '+(k.estado==='ok'?fmt(k.campo,k.cep):'el CEP dice '+fmt(k.campo,k.cep)+' · registrado '+fmt(k.campo,k.capturado)+(k.duro?'':' (aviso)')))))));
+  };
+  if(!f.ceps.length)der.append(el('div',{class:'muted'},['SOLICITADO','RECHAZADO'].includes(f.estatus)?'Aún no hay CEP. Solo se aceptan CEP en PDF o XML.':'Sin CEP.'));
+  f.ceps.forEach(c=>der.append(el('div',{class:'cep-item'},
+    el('div',{},el('b',{},c.filename),el('small',{class:'muted'},(c.bytes_size<1024?c.bytes_size+' B':(c.bytes_size/1024).toFixed(0)+' KB')+' · '+c.subido_por),lecturaCep(c)),
+    el('button',{class:'btn ghost sm',type:'button',onclick:async()=>{try{await descargar('/api/cards/ceps/'+c.id+'/download',c.filename);}catch(e){toast(errMsg(e),'err');}}},'Descargar'),
+    pu.quitar_cep?el('button',{class:'btn danger sm',type:'button','aria-label':'Quitar '+c.filename,onclick:async()=>{if(!await confirmar('¿Quitar el archivo '+c.filename+'?'+(f.ceps.length===1?'\nLa solicitud volverá a esperar el CEP.':'')))return;try{await api('DELETE','/api/cards/ceps/'+c.id);toast('Archivo quitado','ok');render();abrirFondeo(id);}catch(e){toast(errMsg(e),'err');}}},'Quitar'):'')));
+  if(pu.subir_cep){
+    const zf=zonaArchivos({compacta:true,accept:'.pdf,.xml',titulo:'Arrastra aquí el CEP o haz clic',ayuda:'PDF o XML · se valida al subirlo',sinLista:true,onFiles:async(fs,z)=>{
+      errBox.innerHTML='';
+      try{const fd=new FormData();fd.append('archivo',fs[0]);const r=await api('POST',`/api/cards/fondeos/${id}/ceps`,fd);toast(r.estatus==='POR_ASIGNAR'&&f.estatus!=='POR_ASIGNAR'?'CEP aceptado: tesorería ya fue avisada':'CEP cargado','ok');render();abrirFondeo(id);}
+      catch(e){errBox.append(el('div',{class:'banner err'},el('b',{},'No se aceptó el archivo. '),errMsg(e)));z.limpiar();}
+    }});
+    der.append(zf,errBox);
+  }
+  der.append(el('h4',{style:'margin-top:18px'},'Historial'));
+  der.append(el('ol',{class:'timeline'},...f.eventos.map(ev=>el('li',{},el('b',{},EVT_TXT[ev.tipo]||ev.tipo),el('small',{class:'muted'},new Date(ev.ts).toLocaleString('es-MX')+' · '+(ev.actor||'—')+(ev.detalle?' · '+ev.detalle:''))))));
+  body.append(el('div',{class:'form-grid detalle-cols'},izq,der));
+  const foot=el('div',{});
+  const bloqueado=tesoreria&&!cand.abierto&&['SOLICITADO','POR_ASIGNAR','RECHAZADO'].includes(f.estatus);
+  if(bloqueado){
+    const paso=(ok,txt)=>el('span',{},el('span',{class:ok?'ck-ok':'ck-no','aria-hidden':'true'},ok?'✓':'○'),' '+txt,el('span',{class:'sr-only'},ok?' (listo)':' (pendiente)'));
+    foot.append(el('div',{class:'ck-req',id:'candadoMotivo',title:cand.motivo},paso(true,sol?'Solicitud creada':'Fondeo registrado'),paso(f.ceps.length>0,'CEP cargado'),paso(f.ceps.some(c=>c.validado),'CEP validado')));
+  }
+  if(pu.cancelar)foot.append(el('button',{class:'btn danger',type:'button',onclick:async()=>{
+    const m=await pedir('Motivo de la cancelación de '+f.folio+':',{titulo:'Cancelar solicitud',ok:'Cancelar solicitud'});if(m===null)return;
+    try{await api('POST',`/api/cards/fondeos/${id}/cancelar`,{motivo:m});closeModal();toast('Cancelado','ok');render();}catch(e){toast(errMsg(e),'err');}}},f.estatus==='ASIGNADO'?'Cancelar (admin)':'Cancelar solicitud'));
+  if(pu.rechazar)foot.append(el('button',{class:'btn danger',type:'button',onclick:async()=>{
+    const m=await pedir('Motivo por el que no se puede asignar '+f.folio+' (lo verá el comercial):',{titulo:'Rechazar fondeo',ok:'Rechazar'});if(m===null)return;
+    try{await api('POST',`/api/cards/fondeos/${id}/rechazar`,{motivo:m});closeModal();toast('Rechazado: se avisó al comercial','ok');render();}catch(e){toast(errMsg(e),'err');}}},'Rechazar'));
+  if(pu.editar&&f.origen==='MANUAL')foot.append(el('button',{class:'btn secondary',type:'button',onclick:()=>formularioFondeo(f)},'Editar'));
+  if(tesoreria&&['SOLICITADO','POR_ASIGNAR','RECHAZADO'].includes(f.estatus)){
+    const intentar=async nota=>{
+      try{await api('POST',`/api/cards/fondeos/${id}/asignar`,{nota});closeModal();toast('Saldo asignado: se avisó al comercial','ok');render();}
+      catch(e){
+        if(e.data&&e.data.error==='nota_requerida'){const n=await pedir(e.data.mensaje,{titulo:'Asignar con diferencia',ok:'Asignar saldo'});if(n===null)return;if(!n)return toast('Escribe el motivo','err');return intentar(n);}
+        toast(errMsg(e),'err');}
+    };
+    const asig=el('button',{class:'btn ok',type:'button',onclick:async()=>{
+      if(f.requiere_nota)return intentar('');   // el servidor pide la nota con el detalle de lo que hay que revisar
+      if(!await confirmar('¿Confirmas que ya se asignó el saldo de '+f.folio+' ('+mxn(f.fondeo)+' netos) a '+f.ruta+'?',{ok:'Sí, saldo asignado',peligro:false,titulo:'Confirmar asignación'}))return;
+      intentar('');}},'Confirmar saldo asignado');
+    if(!cand.abierto){asig.disabled=true;asig.title='Bloqueado: '+cand.motivo;asig.setAttribute('aria-describedby','candadoMotivo');}
+    foot.append(asig);
+  }
+  foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cerrar'));
+  modal(f.folio,body,foot,true);
+}
+
+/* ---------- Estructura: empresas · unidades de negocio · tarjetas ---------- */
+async function vCardsEstructura(v){
+  const ents=await cardsEntidades();
+  v.innerHTML='';
+  cardsAcciones(can('cards_estructura')&&el('button',{class:'btn',onclick:()=>editEntidad(null,{nivel:'EMPRESA'},ents)},'+ Empresa'));
+  v.append(el('div',{class:'banner'},'Cada empresa, unidad de negocio o tarjeta tiene su propia cuenta de fondeo: la CLABE identifica quién fondea, y el beneficiario y el banco son los que debe traer el CEP. La comisión y el IVA se heredan de la empresa salvo que se definan en el nivel inferior. El solicitante de cada fondeo es quien tenga la sesión abierta al registrarlo.'));
+  const filas=ents.map(e=>{
+    const hij=[];
+    if(can('cards_estructura')&&e.activo){
+      if(e.nivel==='EMPRESA')hij.push(el('button',{class:'btn ghost sm',type:'button',onclick:ev=>{ev.stopPropagation();editEntidad(null,{nivel:'UN',parent_id:e.id},ents);}},'+ Unidad'));
+      if(e.nivel!=='TARJETA')hij.push(el('button',{class:'btn ghost sm',type:'button',onclick:ev=>{ev.stopPropagation();editEntidad(null,{nivel:'TARJETA',parent_id:e.id},ents);}},'+ Tarjeta'));
+    }
+    const nombre=el('div',{class:'tt arbol','data-prof':String(e.profundidad),style:'padding-left:'+(e.profundidad*22)+'px'},
+      el('span',{html:(e.profundidad?'<span class="rama" aria-hidden="true">└</span> ':'')+esc(e.nombre)}),
+      el('small',{},CARDS_NIVEL[e.nivel]+(e.referencia?' · '+e.referencia:'')));
+    const cuenta=el('div',{},chipClabe(e.clabe),el('small',{class:'muted',style:'display:block;margin-top:4px'},[e.beneficiario,e.banco_nombre].filter(Boolean).join(' · '),e.beneficiario?'':el('span',{class:'badge warn',title:'Complétalo para poder compararlo con el CEP'},'Sin beneficiario')));
+    const x=[nombre,cuenta,{num:pctTxt(e.comision_efectiva)+(e.hereda_comision&&e.nivel!=='EMPRESA'?' <small class="muted">hereda</small>':'')},{num:pctTxt(e.iva_efectivo)},{num:e.n_fondeos},
+      e.activo?'<span class="badge ok">Activa</span>':'<span class="badge neutral">Inactiva</span>',el('div',{class:'acciones'},...hij)];
+    if(can('cards_estructura'))x._onclick=()=>editEntidad(e,null,ents);
+    return x;});
+  const p=el('div',{class:'panel'});
+  p.append(tableWrap(['Nombre','Cuenta de fondeo',{t:'Comisión'},{t:'IVA'},{t:'Fondeos'},'Estado',''],filas,{empty:'Aún no hay empresas. Crea la primera con “+ Empresa”.'}));
+  v.append(p);
+}
+
+async function editEntidad(e,nuevo,ents){
+  const esNueva=!e;
+  const nivel=esNueva?nuevo.nivel:e.nivel;
+  const padre=esNueva&&nuevo.parent_id?ents.find(x=>x.id===nuevo.parent_id):(e&&e.parent_id?ents.find(x=>x.id===e.parent_id):null);
+  const refLbl={EMPRESA:'RFC',UN:'Clave interna',TARJETA:'Últimos 4 dígitos o alias'}[nivel];
+  const nombre=el('input',{id:'enNombre',maxlength:'120',autocomplete:'off',value:e?e.nombre:''});
+  const ref=el('input',{id:'enRef',maxlength:'60',autocomplete:'off',value:e&&e.referencia?e.referencia:''});
+  const clabe=el('input',{id:'enClabe',inputmode:'numeric',maxlength:'22',autocomplete:'off',placeholder:'18 dígitos',value:e?e.clabe:''});
+  const aviso=el('div',{class:'req-note','aria-live':'polite'});
+  const valClabe=()=>{const c=clabe.value.replace(/\D/g,'');if(!c){aviso.textContent='';clabe.removeAttribute('aria-invalid');return;}
+    if(clabeOk(c)){aviso.textContent='✓ CLABE válida';aviso.style.color='var(--ok-ink)';clabe.removeAttribute('aria-invalid');}
+    else{aviso.textContent=c.length<18?`Faltan ${18-c.length} dígitos`:'El dígito verificador no coincide: revisa la CLABE';aviso.style.color='var(--danger-ink)';clabe.setAttribute('aria-invalid','true');}};
+  clabe.addEventListener('input',valClabe);if(e)valClabe();
+  const bancos=await api('GET','/api/cards/bancos').catch(()=>[]);
+  const benef=el('input',{id:'enBenef',maxlength:'120',autocomplete:'off',placeholder:'Titular de la cuenta, como aparece en el banco',value:e&&e.beneficiario?e.beneficiario:''});
+  const bancoTxt=el('span',{});
+  const bancoSel=el('select',{id:'enBanco','aria-label':'Banco beneficiario',style:'display:none'},el('option',{value:''},'— Elige el banco —'),...bancos.filter(b=>b.activo&&b.prefijo).map(b=>el('option',{value:String(b.codigo_spei)},b.nombre+' ('+b.codigo_spei+')')));
+  const bancoBox=el('div',{class:'banco-det vacio','aria-live':'polite'},bancoTxt,bancoSel);
+  let bancoCod=e&&e.banco_codigo?e.banco_codigo:null;
+  // El banco sale de los 3 primeros dígitos de la CLABE; solo si no se reconoce se elige del catálogo.
+  const detecta=()=>{const c=clabe.value.replace(/\D/g,'');const b=c.length>=3?bancos.find(x=>x.activo&&x.prefijo===c.slice(0,3)):null;
+    bancoSel.style.display='none';bancoBox.classList.remove('vacio');
+    if(c.length<3){bancoTxt.textContent='Se identifica al escribir la CLABE';bancoBox.classList.add('vacio');bancoCod=null;}
+    else if(b){bancoTxt.innerHTML='<b>'+esc(b.nombre)+'</b> <small class="muted">· clave '+esc(b.prefijo)+'</small>';bancoCod=b.codigo_spei;}
+    else{bancoTxt.textContent='No se reconoce el banco (clave '+c.slice(0,3)+'). Elígelo:';bancoSel.style.display='';if(bancoCod&&bancoSel.querySelector('option[value="'+bancoCod+'"]'))bancoSel.value=String(bancoCod);else bancoCod=null;}};
+  bancoSel.addEventListener('change',()=>{bancoCod=bancoSel.value?Number(bancoSel.value):null;});
+  clabe.addEventListener('input',detecta);detecta();
+  const heredC=padre?padre.comision_efectiva:null,heredI=padre?padre.iva_efectivo:null;
+  const com=el('input',{id:'enCom',inputmode:'decimal',autocomplete:'off',placeholder:nivel==='EMPRESA'?'0.5':(heredC!=null?'hereda '+heredC:'hereda'),value:e&&e.comision_pct!=null?String(e.comision_pct):''});
+  const iva=el('input',{id:'enIva',inputmode:'decimal',autocomplete:'off',placeholder:nivel==='EMPRESA'?'16':(heredI!=null?'hereda '+heredI:'hereda'),value:e&&e.iva_pct!=null?String(e.iva_pct):''});
+  const notas=el('textarea',{id:'enNotas',rows:'2',maxlength:'500'});notas.value=e&&e.notas?e.notas:'';
+  const activo=el('input',{id:'enActivo',type:'checkbox'});activo.checked=e?e.activo:true;
+  const body=el('div',{});
+  if(padre)body.append(el('div',{class:'banner'},'Pertenece a: ',el('b',{},padre.ruta)));
+  body.append(fld('Nombre',nombre),el('div',{class:'form-grid'},fld(refLbl+' (opcional)',ref),fld('CLABE de fondeo',clabe)),aviso,
+    el('div',{class:'form-grid'},fld('Beneficiario',benef),fld('Banco beneficiario',bancoBox)),
+    el('div',{class:'form-grid'},fld('Comisión % sobre el fondeo'+(nivel==='EMPRESA'?'':' (vacío = hereda)'),com),fld('IVA % sobre la comisión'+(nivel==='EMPRESA'?'':' (vacío = hereda)'),iva)));
+  body.append(fld('Notas',notas));
+  if(!esNueva)body.append(el('label',{class:'chk'},activo,' Activa (si la desactivas ya no recibe fondeos nuevos)'));
+  if(!esNueva)body.append(el('div',{class:'req-note'},'Cambiar la comisión, la CLABE, el beneficiario o el banco no modifica fondeos ya registrados: conservan los que tenían.'));
+  const foot=el('div',{});
+  if(e&&!e.n_hijos&&!e.n_fondeos)foot.append(el('button',{class:'btn danger',type:'button',style:'margin-right:auto',onclick:async()=>{if(!await confirmar('¿Eliminar '+e.nombre+'?'))return;try{await api('DELETE','/api/cards/entidades/'+e.id);closeModal();toast('Eliminada','ok');render();}catch(er){toast(errMsg(er),'err');}}},'Eliminar'));
+  const guardar=el('button',{class:'btn',type:'button'},'Guardar');
+  foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),guardar);
+  guardar.onclick=async()=>{guardar.disabled=true;try{
+    const b={nombre:nombre.value,referencia:ref.value,clabe:clabe.value,beneficiario:benef.value,banco_codigo:bancoCod,comision_pct:com.value,iva_pct:iva.value,notas:notas.value};
+    if(esNueva){b.nivel=nivel;if(nuevo.parent_id)b.parent_id=nuevo.parent_id;await api('POST','/api/cards/entidades',b);}
+    else{b.activo=activo.checked;await api('PUT','/api/cards/entidades/'+e.id,b);}
+    closeModal();toast('Guardado','ok');render();
+  }catch(er){toast(errMsg(er),'err');guardar.disabled=false;}};
+  modal((esNueva?'Nueva ':'Editar ')+CARDS_NIVEL[nivel].toLowerCase(),body,foot);
+}
+
+/* ---------- Destinatarios del aviso de nueva solicitud ---------- */
+async function vCardsDestinatarios(v){
+  const dest=await api('GET','/api/cards/destinatarios');
+  v.innerHTML='';
+  cardsAcciones(el('button',{class:'btn',onclick:()=>editDestinatarioCards(null)},'+ Destinatario'));
+  const p=el('div',{class:'panel'});
+  p.append(el('h3',{},'Aviso de nueva solicitud',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},dest.filter(d=>d.activo).length+' activo(s) de '+dest.length))));
+  p.append(el('div',{class:'banner',html:'Cada vez que alguien <b>registra una solicitud de fondeo</b>, estos correos reciben el aviso con los datos y el total a depositar. El solicitante es <b>quien tenga la sesión abierta</b> al registrarla. Se necesita al menos un destinatario “Para”.'}));
+  p.append(tableWrap(['Correo','Nombre','Tipo','Estado'],dest.map(d=>{const r=[esc(d.email),esc(d.nombre||''),tipoBadgeDest(d.tipo||'to'),d.activo?'<span class="badge ok">Activo</span>':'<span class="badge neutral">Inactivo</span>'];r._onclick=()=>editDestinatarioCards(d);return r;}),{empty:'Aún no hay destinatarios. Agrega a quien debe enterarse de las solicitudes nuevas.'}));
+  v.append(p);
+}
+function editDestinatarioCards(d){
+  const nuevo=!d;d=d||{};
+  const email=el('input',{id:'dsEmail',type:'email',autocomplete:'off',value:d.email||'',placeholder:'tesoreria@empresa.com'});
+  const nombre=el('input',{id:'dsNombre',maxlength:'80',autocomplete:'off',value:d.nombre||'',placeholder:'Nombre (opcional)'});
+  const tipo=el('select',{id:'dsTipo'},el('option',{value:'to'},'Para (To)'),el('option',{value:'cc'},'Copia (CC)'),el('option',{value:'bcc'},'Copia oculta (CCO)'));tipo.value=d.tipo||'to';
+  const activo=el('input',{id:'dsActivo',type:'checkbox'});activo.checked=d.activo!==false;
+  const body=el('div',{},fld('Correo',email),fld('Nombre',nombre),fld('Tipo',tipo),el('label',{class:'chk'},activo,' Activo (recibe el aviso)'));
+  const foot=el('div',{});
+  if(!nuevo)foot.append(el('button',{class:'btn danger',type:'button',style:'margin-right:auto',onclick:async()=>{if(!await confirmar('¿Eliminar '+d.email+'?'))return;try{await api('DELETE','/api/cards/destinatarios/'+d.id);closeModal();toast('Eliminado','ok');render();}catch(er){toast(errMsg(er),'err');}}},'Eliminar'));
+  const guardar=el('button',{class:'btn',type:'button'},'Guardar');
+  foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),guardar);
+  guardar.onclick=async()=>{guardar.disabled=true;try{await api('POST','/api/cards/destinatarios',{id:d.id,email:email.value,nombre:nombre.value,tipo:tipo.value,activo:activo.checked});closeModal();toast('Guardado','ok');render();}catch(er){toast(errMsg(er),'err');guardar.disabled=false;}};
+  modal(nuevo?'Nuevo destinatario':'Editar destinatario',body,foot);email.focus();
+}
+/* ---------- Bancos de Cards (catálogo copiado de Bancos SPEI) ---------- */
+async function vCardsBancos(v){
+  const bancos=await api('GET','/api/cards/bancos');
+  v.innerHTML='';
+  cardsAcciones(can('cards_estructura')&&el('button',{class:'btn',onclick:()=>editBancoCards(null)},'+ Banco'));
+  v.append(el('div',{class:'banner'},'Catálogo copiado de “Bancos SPEI” de MCEB. Con la clave del banco (los 3 primeros dígitos de la CLABE) el sistema identifica el banco al capturar una cuenta de fondeo, y lo compara con el banco que dice el CEP.'));
+  const q=el('input',{id:'bcQ',type:'search',placeholder:'Buscar banco, código o clave…','aria-label':'Buscar banco',autocomplete:'off'});
+  const cont=el('div',{});
+  const pintar=()=>{
+    const t=q.value.trim().toLowerCase();
+    const rows=bancos.filter(b=>!t||(b.nombre+' '+b.codigo_spei+' '+(b.prefijo||'')).toLowerCase().includes(t));
+    const filas=rows.map(b=>{const r=[esc(b.nombre),{num:esc(b.codigo_spei)},{num:b.prefijo?`<span class="mono">${esc(b.prefijo)}</span>`:'<span class="muted" title="No lleva cuentas CLABE">—</span>'},{num:b.en_uso||''},b.activo?'<span class="badge ok">Activo</span>':'<span class="badge neutral">Inactivo</span>'];if(can('cards_estructura'))r._onclick=()=>editBancoCards(b);return r;});
+    cont.innerHTML='';cont.append(tableWrap(['Banco',{t:'Código SPEI'},{t:'Clave en la CLABE'},{t:'Cuentas'},'Estado'],filas,{empty:'Ningún banco coincide con la búsqueda.'}));
+  };
+  q.addEventListener('input',pintar);
+  const p=el('div',{class:'panel'},el('div',{class:'filtros cards-filtros'},fld('Buscar',q),el('span',{class:'muted'},bancos.length+' bancos')),cont);
+  v.append(p);pintar();
+}
+function editBancoCards(b){
+  const nuevo=!b;
+  const nombre=el('input',{id:'bkNombre',maxlength:'60',autocomplete:'off',value:b?b.nombre:''});
+  const codigo=el('input',{id:'bkCodigo',inputmode:'numeric',maxlength:'5',autocomplete:'off',placeholder:'ej. 40012',value:b?String(b.codigo_spei):''});
+  codigo.disabled=!nuevo;
+  const activo=el('input',{id:'bkActivo',type:'checkbox'});activo.checked=b?b.activo:true;
+  const body=el('div',{},fld('Nombre',nombre),fld('Código SPEI',codigo));
+  if(nuevo)body.append(el('div',{class:'req-note'},'La clave en la CLABE son los 3 últimos dígitos del código (40012 → 012).'));
+  if(!nuevo)body.append(el('label',{class:'chk'},activo,' Activo (si lo desactivas ya no se reconoce al capturar una CLABE)'));
+  const guardar=el('button',{class:'btn',type:'button'},'Guardar');
+  guardar.onclick=async()=>{guardar.disabled=true;try{
+    if(nuevo)await api('POST','/api/cards/bancos',{nombre:nombre.value,codigo_spei:codigo.value});
+    else await api('PUT','/api/cards/bancos/'+b.codigo_spei,{nombre:nombre.value,activo:activo.checked});
+    closeModal();toast('Guardado','ok');render();
+  }catch(er){toast(errMsg(er),'err');guardar.disabled=false;}};
+  modal(nuevo?'Nuevo banco':'Editar banco',body,el('div',{},el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),guardar));
+  nombre.focus();
+}
+
 </script>
 </body>
 </html>

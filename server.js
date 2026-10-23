@@ -146,7 +146,7 @@ function validaArchivo(req, res, next) {
 const N = v => (v == null || v === '') ? null : Number(v);
 const nrm = s => String(s == null ? '' : s).trim().toLowerCase();
 const safeUser = u => ({ id: u.id, email: u.email, nombre: u.nombre, rol: u.rol, foto_url: u.foto_url || null });
-const ROLES = { admin: 'Administrador', operador: 'Operador (Operaciones)', tesoreria: 'Tesorería (valida)', bancos: 'Bancos (dispersa y cierra)', consulta: 'Consulta (solo lectura)', inventario: 'Inventario (solo esa sección)' };
+const ROLES = { admin: 'Administrador', operador: 'Operador (Operaciones)', tesoreria: 'Tesorería (valida)', bancos: 'Bancos (dispersa y cierra)', consulta: 'Consulta (solo lectura)', inventario: 'Inventario (solo esa sección)', comercial: 'Comercial (solicita fondeos de Cards)' };
 const ROLES_VALIDOS = Object.keys(ROLES);
 
 // jti único por sesión — permite revocarla al cerrar sesión (blacklist en memoria).
@@ -162,6 +162,10 @@ function firmar(u) {
 function rutaPermitidaRolInventario(path) {
   return path === '/api/yo' || path.startsWith('/api/inventario/');
 }
+// Rol "comercial": solo el espacio Cards (sus solicitudes de fondeo). Tampoco se limita solo en pantalla: se bloquea en la API.
+function rutaPermitidaRolComercial(path) {
+  return path === '/api/yo' || path === '/api/logout' || path.startsWith('/api/cards/');
+}
 function auth(req, res, next) {
   const h = req.headers.authorization || '';
   const tok = h.startsWith('Bearer ') ? h.slice(7) : (req.query.token || null);
@@ -171,6 +175,9 @@ function auth(req, res, next) {
     if (p.jti && REVOKED_JTI.has(p.jti)) return res.status(401).json({ error: 'sesion_revocada' });
     if (p.rol === 'inventario' && !rutaPermitidaRolInventario(req.path)) {
       return res.status(403).json({ error: 'rol_no_autorizado', mensaje: 'Este usuario solo tiene acceso a Inventario de terminales.' });
+    }
+    if (p.rol === 'comercial' && !rutaPermitidaRolComercial(req.path)) {
+      return res.status(403).json({ error: 'rol_no_autorizado', mensaje: 'Este usuario solo tiene acceso a Cards (solicitudes de fondeo).' });
     }
     req.user = p; next();
   }
@@ -311,11 +318,22 @@ app.get('/api/config-publica', (_req, res) => {
 // Bypass DEV: sólo funciona cuando NO hay GOOGLE_CLIENT_ID (== ambiente local).
 // Devuelve token del primer usuario admin activo (típicamente el bootstrap).
 // En prod donde GOOGLE_CLIENT_ID está definido, responde 404.
+// Solo desarrollo local: sin Google configurado y fuera de Render/producción. En producción estas rutas no existen.
+const soloDev = () => !GOOGLE_CLIENT_ID && !process.env.RENDER && process.env.NODE_ENV !== 'production';
+// Usuarios disponibles para "Entrar como…" (para probar cada rol en local).
+app.get('/api/login/dev/usuarios', async (_req, res) => {
+  if (!dbReady(res)) return;
+  if (!soloDev()) return res.status(404).json({ error: 'no_disponible' });
+  res.json((await db.query('select id, email, nombre, rol from usuarios where activo=true order by rol, nombre')).rows);
+});
 app.post('/api/login/dev', async (req, res) => {
   if (!dbReady(res)) return;
-  if (GOOGLE_CLIENT_ID) return res.status(404).json({ error: 'no_disponible' });
-  const u = (await db.query("select * from usuarios where activo=true and rol='admin' order by id limit 1")).rows[0];
-  if (!u) return res.status(500).json({ error: 'sin_admin' });
+  if (!soloDev()) return res.status(404).json({ error: 'no_disponible' });
+  const email = String((req.body || {}).email || '').trim().toLowerCase();
+  const u = email
+    ? (await db.query('select * from usuarios where activo=true and lower(email)=$1', [email])).rows[0]
+    : (await db.query("select * from usuarios where activo=true and rol='admin' order by id limit 1")).rows[0];
+  if (!u) return res.status(email ? 404 : 500).json({ error: email ? 'usuario_no_existe' : 'sin_admin' });
   const safe = { id: u.id, email: u.email, nombre: u.nombre, rol: u.rol };
   res.json({ token: firmar(u), user: safe });
 });
@@ -5064,6 +5082,10 @@ const disputasMod = mountDisputasRoutes(app, { auth, requiereRol, bit, db, C, D,
 /* ---------- Módulo TAREAS (fase 4) ---------- */
 const { mountTareasRoutes } = require('./lib/tareas-routes.js');
 mountTareasRoutes(app, { auth, requiereRol, bit, db, X });
+
+/* ---------- Módulo CARDS (BSO) · fondeos de empresas, UN y tarjetas ---------- */
+const { mountCardsRoutes } = require('./lib/cards-routes.js');
+mountCardsRoutes(app, { auth, requiereRol, bit, db, C, X, enviarXLSX, sesEnabled, sendSES });
 
 /* ---------- Módulo ENTREGABLES · Portal de solicitudes (fase 5) ---------- */
 const { mountEntregablesRoutes } = require('./lib/entregables-routes.js');

@@ -16,6 +16,8 @@ de abajo a la izquierda.
 4. Una sola forma de nombrar el estado: por **significado** (`ok`, `danger`, `warn`, `info`…), no por letra.
 5. Un tamaño de la escala tipográfica (mín. 11px). Un paso de la escala de espaciado (base 4px).
 6. Nada de `confirm()` / `prompt()` nativos: usa `await confirmar(msg)` y `await pedir(msg)`.
+7. Nada de `<input type="file">` sueltos: toda carga usa `zonaArchivos()` (arrastrar y soltar).
+8. Nada de `<input type="date">` como **filtro**: todo filtro de fechas usa `filtroFechas()` (un solo campo con calendario y atajos). Los campos de fecha de un formulario de captura sí pueden ser nativos.
 
 ## Tokens
 
@@ -45,6 +47,8 @@ El modo oscuro redefine los mismos tokens (`:root[data-theme="dark"]` y `@media 
 | Formularios | `label.field`, `input/select/textarea` | `:disabled`, `aria-invalid="true"` / `.field.invalid` + `.field-err` |
 | `.banner` | `info` · `ok` · `warn` · `err` | |
 | `.tabs` / `.tab` | `role=tablist` / `role=tab` + `aria-selected` | |
+| `zonaArchivos({titulo, ayuda, accept, multiple, compacta, sinLista, onFiles})` | normal · `compacta` | **Todas** las cargas de archivos del sistema: se arrastra o se hace clic; solo acepta las extensiones de `accept` (también al soltar); lista los archivos con ✕ para quitarlos. `zona.input` es el `<input type=file>` (se lee `.files` y dispara `change`); `zona.limpiar()` lo vacía. Un archivo soltado fuera de una zona no abre el navegador |
+| `filtroFechas({desde, hasta, modo, min, max, presets, permiteVacio, placeholder, titulo, onChange})` | `modo:'rango'` (default) · `modo:'dia'` | **Todos** los filtros de fechas: un campo (“1 oct 2026 – 23 oct 2026”) que abre un calendario con atajos (Hoy, Ayer, Últimos 7/30 días, Mes en curso, Mes anterior, Todas las fechas). Rango en dos clics (si van al revés se ordenan); `min`/`max` deshabilitan días; × limpia salvo `permiteVacio:false`. Teclado: flechas, AvPág/RePág, Enter, Escape (cierra solo el calendario, no el modal que lo contiene). En móvil el calendario sube como hoja inferior. Devuelve un elemento con `.desde` / `.hasta` que se leen y escriben con `.value` y disparan `change`, así que reemplaza a dos `<input type=date>` sin tocar el resto del código; `.fijar(d,h,notificar)` los cambia de golpe |
 | `modal(título, cuerpo, pie, ancho)` | `.wide` | `role=dialog`, `aria-modal`, Escape, foco atrapado y devuelto |
 | `confirmar(msg, {ok, cancelar, titulo, peligro})` | destructivo o neutro | `Promise<boolean>`. El botón toma el verbo del mensaje (“¿Eliminar…?” → **Eliminar**). Foco inicial en **Volver** si es destructivo |
 | `pedir(msg, {titulo, ok, valor})` | texto libre | `Promise<string\|null>` (`null` = canceló). Ctrl/⌘+Enter envía |

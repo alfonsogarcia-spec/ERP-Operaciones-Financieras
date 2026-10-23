@@ -98,6 +98,21 @@ section.panel h4{margin:var(--sp-5) 0 var(--sp-2);font-size:var(--fs-sm);text-tr
   <div class="tabs" role="tablist"><button class="tab active" role="tab" aria-selected="true">PLD</button><button class="tab" role="tab" aria-selected="false">Antifraude</button><button class="tab" role="tab" aria-selected="false">Alertas</button></div>
 </section>
 
+<section class="panel" id="archivos"><h3>5b · Zona de archivos</h3>
+  <p class="muted">Todas las cargas del sistema usan <b>el mismo</b> componente (<code>zonaArchivos()</code>): se arrastra el archivo o se hace clic. Solo acepta las extensiones indicadas, también al soltar.</p>
+  <div class="cols"><div><h4>Normal</h4><div class="dz-wrap"><div class="dz"><div class="dz-t">Arrastra aquí el Excel o CSV</div><div class="dz-h">.xlsx, .xls o .csv · o haz clic para elegirlo</div></div></div></div>
+  <div><h4>Compacta (dentro de un panel)</h4><div class="dz-wrap"><div class="dz compacta"><div class="dz-t">Arrastra la evidencia aquí o haz clic</div><div class="dz-h">PDF, imágenes, Excel, Word, CSV o ZIP · máx. 15 MB</div></div><div class="dz-f"><div class="dz-item"><span class="dz-n">comprobante.pdf</span><small class="muted">84 KB</small><button class="x" type="button" aria-label="Quitar comprobante.pdf">×</button></div></div></div></div></div>
+  <div class="dd"><div class="do"><b>Hacer</b>Usar <code>zonaArchivos({accept, multiple, onFiles})</code>; leer <code>zona.input.files</code> como siempre.</div><div class="dont"><b>Evitar</b>Un <code>&lt;input type="file"&gt;</code> suelto: no se puede arrastrar y se ve distinto en cada pantalla.</div></div>
+</section>
+
+<section class="panel" id="fechas"><h3>5c · Filtro de fechas</h3>
+  <p class="muted">Todos los filtros de fechas del sistema usan <b>el mismo</b> componente (<code>filtroFechas()</code>): un solo campo que abre un calendario con atajos. Los campos de fecha de captura en formularios no cambian.</p>
+  <div class="cols"><div><h4>Rango</h4><div class="fd"><button type="button" class="fd-campo"><span class="fd-ico">&#128197;</span><span class="fd-txt">1 oct 2026 – 23 oct 2026</span></button><button type="button" class="fd-x" aria-label="Quitar fechas">×</button></div></div>
+  <div><h4>Vacío (todas las fechas)</h4><div class="fd"><button type="button" class="fd-campo"><span class="fd-ico">&#128197;</span><span class="fd-txt">Todas las fechas</span></button></div></div>
+  <div><h4>Un día</h4><div class="fd dia"><button type="button" class="fd-campo"><span class="fd-ico">&#128197;</span><span class="fd-txt">23 oct 2026</span></button></div></div></div>
+  <div class="dd"><div class="do"><b>Hacer</b>Usar <code>filtroFechas({desde, hasta, onChange})</code> o leer <code>f.desde.value</code> / <code>f.hasta.value</code> como antes; <code>modo:'dia'</code> para un solo día; <code>permiteVacio:false</code> si el reporte exige periodo.</div><div class="dont"><b>Evitar</b>Dos <code>&lt;input type="date"&gt;</code> sueltos como filtro: ocupan el doble, no tienen atajos y se ven distinto en cada navegador.</div></div>
+</section>
+
 <section class="panel" id="forms"><h3>5 · Formularios y avisos</h3>
   <div class="form-grid"><label class="field">Normal<input value="Texto"></label><label class="field">Con foco (pulsa Tab)<input id="in-foco" value="Foco"></label><label class="field">Deshabilitado<input value="No editable" disabled></label><label class="field invalid">Con error<input value="abc" aria-invalid="true"><span class="field-err">Escribe un importe válido, por ejemplo 1,250.00</span></label></div>
   <div class="banner">Información: el corte se calcula con la hora configurada.</div><div class="banner ok">Correcto: el corte cuadra.</div><div class="banner warn">Atención: faltan datos de 2 afiliaciones.</div><div class="banner err">Error: la CLABE debe tener 18 dígitos.</div>
