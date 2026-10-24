@@ -140,11 +140,17 @@ El **solicitante es quien tiene la sesión abierta** cuando registra la solicitu
 Los correos tienen el diseño de los demás correos de MCEB (logo, barra azul, tabla y pie) y se identifican como **Polipay Cards Settlement** (pie: “Polipay Cards Settlement · BSO · ops.emisor@polipay.io”).
 Los que ya tienen CEP (por asignar, asignado, rechazado, cancelado) **llevan el CEP adjunto** (hasta 6 MB en total; si no cabe, lo dice y se abre en el sistema) y una sección **“CEP y validación”**: si el sistema lo validó, cuántas diferencias trae y, dato por dato (monto, CLABE, clave de rastreo, fecha, beneficiario, banco), lo que dice el CEP contra lo registrado.
 
-| Evento | A quién |
-|---|---|
-| **Nueva solicitud** registrada | Los **Destinatarios** configurados en Cards → Destinatarios (Para / CC / CCO, activos). Sin al menos uno “Para” no se envía y queda constancia en el historial |
-| CEP aceptado → **Por asignar** | Usuarios con rol Tesorería (si no hay, administradores) |
-| **Asignado** · **Rechazado** · **Cancelado** por otra persona | El comercial que solicitó |
+Cada correo tiene **sus propios destinatarios**, que se configuran en Cards → **Destinatarios** (una tarjeta por correo):
+
+| Correo | Cuándo | Automático por defecto |
+|---|---|---|
+| **Nueva solicitud** | Alguien registra una solicitud | Nadie (solo los correos fijos que agregues) |
+| **Por asignar** | Se sube el CEP y queda con tesorería | Usuarios con rol Tesorería Cards |
+| **Saldo asignado** | Tesorería confirma el saldo | Quien solicitó |
+| **Rechazado** | Tesorería lo rechaza | Quien solicitó |
+| **Solicitud cancelada** | Se cancela una solicitud | Quien solicitó (no se avisa a quien cancela) |
+
+Por cada correo se define: **Se envía** (se puede apagar; queda constancia en el historial), **Recibe automáticamente** (quien solicitó y/o los usuarios Tesorería Cards, en cualquier combinación) y **Además, estos correos** (fijos, cada uno Para, CC o CCO; el mismo correo puede estar en varios avisos). Se necesita al menos un destinatario “Para”; si “Por asignar” queda sin nadie, va a los administradores. Los correos y nombres fijos se guardan cifrados.
 
 Requiere el correo (SES) configurado en el servidor; si no lo está, el fondeo avanza igual y el historial deja constancia (“no se envió”).
 El envío nunca bloquea la operación.
@@ -157,7 +163,7 @@ El envío nunca bloquea la operación.
 - **Panel**: asignado del periodo, por empresa y pendientes de control.
 - **Empresas, UN y tarjetas**: árbol con cuenta de fondeo (CLABE, beneficiario y banco), tasas.
 - **Bancos**: catálogo de bancos de Cards.
-- **Destinatarios**: quién recibe el correo de cada nueva solicitud. Correo y nombre se guardan cifrados.
+- **Destinatarios**: a quién se envía cada correo de Cards (automáticos y fijos, por correo). Correo y nombre se guardan cifrados.
 
 ## Pendiente de decidir
 

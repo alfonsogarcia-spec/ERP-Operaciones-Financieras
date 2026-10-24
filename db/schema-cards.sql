@@ -211,3 +211,19 @@ create table if not exists cards.fondeo_comprobantes (
   subido_at     timestamptz not null default now()
 );
 create index if not exists idx_cards_comp_fon on cards.fondeo_comprobantes(fondeo_id);
+
+-- ===== DESTINATARIOS POR CORREO =====
+-- Cada correo de Cards (nueva solicitud, por asignar, asignado, rechazado, cancelada) tiene sus propios destinatarios:
+-- los automáticos (quien solicitó · usuarios con rol Tesorería Cards), configurados en cards.avisos, y los fijos de cards.destinatarios.
+alter table cards.destinatarios add column if not exists evento text not null default 'solicitado';
+alter table cards.destinatarios drop constraint if exists destinatarios_email_hash_key;
+create unique index if not exists uq_cards_dest_evento_email on cards.destinatarios(evento, email_hash);
+create table if not exists cards.avisos (
+  evento        text primary key,
+  activo        boolean not null default true,        -- enviar este correo
+  a_solicitante boolean not null default false,       -- recibe quien solicitó
+  a_tesoreria   boolean not null default false        -- reciben los usuarios con rol Tesorería Cards
+);
+insert into cards.avisos(evento, a_solicitante, a_tesoreria) values
+  ('solicitado', false, false), ('por_asignar', false, true), ('asignado', true, false), ('rechazado', true, false), ('cancelado', true, false)
+on conflict do nothing;

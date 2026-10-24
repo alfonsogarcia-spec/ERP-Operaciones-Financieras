@@ -648,6 +648,11 @@
     .mz-card .r span{color:var(--muted);flex:none}.mz-card .r b{font-weight:var(--fw-medium);text-align:right;overflow-wrap:anywhere;min-width:0;color:var(--ink)}
     .mz-card .r.grande b{font-size:var(--fs-lg);font-weight:var(--fw-bold)}.mz-card .r small{font-weight:var(--fw-regular);color:var(--muted)}
     .mz-card .bad-t{color:var(--danger-ink)}
+    .dst-cab{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-2)}.dst-cab h5{margin:0;font-size:var(--fs-md);color:var(--ink)}
+    .dst-sec{margin:var(--sp-3) 0 var(--sp-1);font-size:var(--fs-xs);font-weight:var(--fw-semibold);color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+    .dst-fila{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-2);padding:var(--sp-1) 0;border-top:1px solid var(--line);cursor:pointer;font-size:var(--fs-sm)}
+    .dst-fila:first-child{border-top:0}.dst-fila:hover{background:var(--glass-2)}.dst-mail{min-width:0;overflow-wrap:anywhere}
+    .mz-card .chk{margin:2px 0}
     @media (max-width:640px){.mz-grid{grid-template-columns:1fr}}
     details.ac-hist{margin-top:var(--sp-3);border:1px solid var(--line);border-radius:var(--radius-sm);padding:var(--sp-2) var(--sp-3)}
     details.ac-hist summary{cursor:pointer;font-weight:var(--fw-medium);list-style:none}details.ac-hist summary::-webkit-details-marker{display:none}
@@ -1353,7 +1358,7 @@ function renderNav(){
     (curBody || nav).append(link);
   }
 }
-const TITLES={cards_bandeja:['Por asignar','Fondeos con CEP aceptado, esperando que tesorería confirme la asignación del saldo'],cards_solicitudes:['Mis solicitudes','Solicita fondeos a tus empresas y sube el CEP del depósito'],cards_panel:['Polipay Cards Settlement · Panel','Fondeos recibidos, comisión e IVA y pendientes de control'],cards_fondeos:['Fondeos','Solicitudes de fondeo y depósitos recibidos de empresas, unidades de negocio y tarjetas, con su CEP'],cards_estructura:['Empresas, unidades de negocio y tarjetas','Estructura de Cards y la cuenta de fondeo (CLABE, beneficiario y banco) de cada una'],cards_bancos:['Bancos','Catálogo de bancos de Cards: identifica el banco de cada CLABE y se compara con el CEP'],cards_destinatarios:['Destinatarios','Quién recibe el correo cada vez que se registra una solicitud de fondeo'],dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],inventario:['Inventario de terminales','Terminales POS activas por grupo de cliente y afiliación, derivado de las transacciones ya ingestadas'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],retenciones:['Retenciones','Retenciones por financiamiento y revenue share aplicadas al monto a dispersar'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],
+const TITLES={cards_bandeja:['Por asignar','Fondeos con CEP aceptado, esperando que tesorería confirme la asignación del saldo'],cards_solicitudes:['Mis solicitudes','Solicita fondeos a tus empresas y sube el CEP del depósito'],cards_panel:['Polipay Cards Settlement · Panel','Fondeos recibidos, comisión e IVA y pendientes de control'],cards_fondeos:['Fondeos','Solicitudes de fondeo y depósitos recibidos de empresas, unidades de negocio y tarjetas, con su CEP'],cards_estructura:['Empresas, unidades de negocio y tarjetas','Estructura de Cards y la cuenta de fondeo (CLABE, beneficiario y banco) de cada una'],cards_bancos:['Bancos','Catálogo de bancos de Cards: identifica el banco de cada CLABE y se compara con el CEP'],cards_destinatarios:['Destinatarios','A quién se envía cada correo de Cards: nueva solicitud, por asignar, asignado, rechazado y cancelada'],dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],inventario:['Inventario de terminales','Terminales POS activas por grupo de cliente y afiliación, derivado de las transacciones ya ingestadas'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],retenciones:['Retenciones','Retenciones por financiamiento y revenue share aplicadas al monto a dispersar'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],
 cumplimiento:['PLD y antifraude','KPIs de cumplimiento por grupo de cliente y afiliación — monto procesado, operaciones inusuales, tasa de contracargos, duplicadas y devoluciones sospechosas'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],umbrales:['Parametrización de umbrales','Umbrales de PLD y antifraude que controlan las alertas automáticas y los indicadores de riesgo'],destinatarios:['Destinatarios','Correos que reciben el aviso automático de corte'],adm_usuarios:['Usuarios y accesos','Quién entra a cada sistema (POS Settlement, Tareas Ops y Cards) y con qué rol'],bitacora:['Bitácora','Trazabilidad de acciones'],
 disp_dashboard:['Panel de disputas','KPIs de contracargos, devoluciones y duplicados'],
 disp_chargebacks:['Disputas','Ciclo completo de disputa: 1er contracargo → representación → arbitraje'],
@@ -5729,31 +5734,51 @@ async function editEntidad(e,nuevo,ents){
   modal((esNueva?'Nueva ':'Editar ')+CARDS_NIVEL[nivel].toLowerCase(),body,foot);
 }
 
-/* ---------- Destinatarios del aviso de nueva solicitud ---------- */
+/* ---------- Destinatarios de cada correo de Cards ---------- */
 async function vCardsDestinatarios(v){
-  const dest=await api('GET','/api/cards/destinatarios');
+  const d=await api('GET','/api/cards/destinatarios');
   v.innerHTML='';
-  cardsAcciones(el('button',{class:'btn',onclick:()=>editDestinatarioCards(null)},'+ Destinatario'));
-  const p=el('div',{class:'panel'});
-  p.append(el('h3',{},'Aviso de nueva solicitud',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},dest.filter(d=>d.activo).length+' activo(s) de '+dest.length))));
-  p.append(el('div',{class:'banner',html:'Cada vez que alguien <b>registra una solicitud de fondeo</b>, estos correos reciben el aviso con los datos y el total a depositar. El solicitante es <b>quien tenga la sesión abierta</b> al registrarla. Se necesita al menos un destinatario “Para”.'}));
-  p.append(tableWrap(['Correo','Nombre','Tipo','Estado'],dest.map(d=>{const r=[esc(d.email),esc(d.nombre||''),tipoBadgeDest(d.tipo||'to'),d.activo?'<span class="badge ok">Activo</span>':'<span class="badge neutral">Inactivo</span>'];r._onclick=()=>editDestinatarioCards(d);return r;}),{empty:'Aún no hay destinatarios. Agrega a quien debe enterarse de las solicitudes nuevas.'}));
-  v.append(p);
+  cardsAcciones();
+  v.append(el('div',{class:'banner',html:'Cada correo de Cards tiene <b>sus propios destinatarios</b>. <b>Recibe automáticamente</b>: quien solicitó y/o los usuarios con rol Tesorería Cards. <b>Además</b>: los correos fijos que agregues (Para, CC o CCO). Los cambios aplican al siguiente correo que se envíe.'}));
+  const grid=el('div',{class:'mz-grid'});
+  d.eventos.forEach(ev=>{
+    const filas=el('div',{});
+    const pintaFilas=()=>{filas.innerHTML='';
+      if(!ev.destinatarios.length)filas.append(el('div',{class:'muted',style:'padding:6px 0;font-size:var(--fs-sm)'},'Sin correos fijos.'));
+      ev.destinatarios.forEach(x=>filas.append(el('div',{class:'dst-fila',role:'button',tabindex:'0',onclick:()=>editDestinatarioCards(x,ev),onkeydown:e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();editDestinatarioCards(x,ev);}}},
+        el('span',{class:'dst-mail'},x.email+(x.nombre?' · '+x.nombre:'')),el('span',{html:tipoBadgeDest(x.tipo||'to')+(x.activo?'':' <span class="badge neutral">Inactivo</span>')}))));
+    };
+    pintaFilas();
+    const guardar=async cambio=>{try{await api('PUT','/api/cards/avisos/'+ev.id,cambio);Object.assign(ev,cambio);toast('Guardado','ok');resumen();}catch(e){toast(errMsg(e),'err');render();}};
+    const chk=(id,txt,clave)=>{const i=el('input',{id,type:'checkbox'});i.checked=!!ev[clave];i.addEventListener('change',()=>guardar({[clave]:i.checked}));return el('label',{class:'chk'},i,' '+txt);};
+    const activo=el('input',{id:'av_'+ev.id,type:'checkbox','aria-label':'Enviar el correo '+ev.nombre});activo.checked=!!ev.activo;activo.addEventListener('change',()=>guardar({activo:activo.checked}));
+    const res=el('small',{class:'muted'});
+    const resumen=()=>{res.textContent=ev.activo?'':'Desactivado: no se envía.';};resumen();
+    grid.append(el('section',{class:'mz-card','aria-label':ev.nombre},
+      el('div',{class:'dst-cab'},el('h5',{},ev.nombre),el('label',{class:'chk',title:'Enviar este correo'},activo,' Se envía')),
+      el('small',{class:'muted'},ev.cuando),res,
+      el('div',{class:'dst-sec'},'Recibe automáticamente'),
+      chk('as_'+ev.id,'Quien solicitó','a_solicitante'),chk('at_'+ev.id,'Tesorería Cards (usuarios con ese rol)','a_tesoreria'),
+      el('div',{class:'dst-sec'},'Además, estos correos'),filas,
+      el('button',{class:'btn ghost sm',type:'button',style:'align-self:flex-start;margin-top:6px',onclick:()=>editDestinatarioCards(null,ev)},'+ Agregar correo')));
+  });
+  v.append(grid);
 }
-function editDestinatarioCards(d){
+function editDestinatarioCards(d,ev){
   const nuevo=!d;d=d||{};
   const email=el('input',{id:'dsEmail',type:'email',autocomplete:'off',value:d.email||'',placeholder:'tesoreria@empresa.com'});
   const nombre=el('input',{id:'dsNombre',maxlength:'80',autocomplete:'off',value:d.nombre||'',placeholder:'Nombre (opcional)'});
   const tipo=el('select',{id:'dsTipo'},el('option',{value:'to'},'Para (To)'),el('option',{value:'cc'},'Copia (CC)'),el('option',{value:'bcc'},'Copia oculta (CCO)'));tipo.value=d.tipo||'to';
   const activo=el('input',{id:'dsActivo',type:'checkbox'});activo.checked=d.activo!==false;
-  const body=el('div',{},fld('Correo',email),fld('Nombre',nombre),fld('Tipo',tipo),el('label',{class:'chk'},activo,' Activo (recibe el aviso)'));
+  const body=el('div',{},el('div',{class:'banner'},'Correo: ',el('b',{},ev.nombre)),fld('Correo',email),fld('Nombre',nombre),fld('Tipo',tipo),el('label',{class:'chk'},activo,' Activo (recibe el aviso)'));
   const foot=el('div',{});
-  if(!nuevo)foot.append(el('button',{class:'btn danger',type:'button',style:'margin-right:auto',onclick:async()=>{if(!await confirmar('¿Eliminar '+d.email+'?'))return;try{await api('DELETE','/api/cards/destinatarios/'+d.id);closeModal();toast('Eliminado','ok');render();}catch(er){toast(errMsg(er),'err');}}},'Eliminar'));
+  if(!nuevo)foot.append(el('button',{class:'btn danger',type:'button',style:'margin-right:auto',onclick:async()=>{if(!await confirmar('¿Quitar a '+d.email+' de «'+ev.nombre+'»?'))return;try{await api('DELETE','/api/cards/destinatarios/'+d.id);closeModal();toast('Eliminado','ok');render();}catch(er){toast(errMsg(er),'err');}}},'Eliminar'));
   const guardar=el('button',{class:'btn',type:'button'},'Guardar');
   foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),guardar);
-  guardar.onclick=async()=>{guardar.disabled=true;try{await api('POST','/api/cards/destinatarios',{id:d.id,email:email.value,nombre:nombre.value,tipo:tipo.value,activo:activo.checked});closeModal();toast('Guardado','ok');render();}catch(er){toast(errMsg(er),'err');guardar.disabled=false;}};
+  guardar.onclick=async()=>{guardar.disabled=true;try{await api('POST','/api/cards/destinatarios',{id:d.id,evento:ev.id,email:email.value,nombre:nombre.value,tipo:tipo.value,activo:activo.checked});closeModal();toast('Guardado','ok');render();}catch(er){toast(er.data&&er.data.mensaje?er.data.mensaje:errMsg(er),'err');guardar.disabled=false;}};
   modal(nuevo?'Nuevo destinatario':'Editar destinatario',body,foot);email.focus();
 }
+
 /* ---------- Bancos de Cards (catálogo copiado de Bancos SPEI) ---------- */
 async function vCardsBancos(v){
   const bancos=await api('GET','/api/cards/bancos');
