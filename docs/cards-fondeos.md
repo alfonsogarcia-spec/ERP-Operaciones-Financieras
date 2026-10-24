@@ -144,6 +144,8 @@ Los que ya tienen CEP (por asignar, asignado, rechazado, cancelado) **llevan el 
 
 **Quién sube qué.** El **solicitante** (el comercial) sube el **CEP**; **tesorería** sube el **comprobante del sistema**. Los correos y el mosaico lo nombran: “X cargó el CEP”, “subido por …”, y en *Control* “Subió el CEP” / “Subió el comprobante”.
 
+**Remitente.** Los correos de Cards salen con el nombre **“Polipay · Operaciones · BSO”** (la dirección de envío sigue siendo la de SES, `ops.agregador@polipay.io`).
+
 Cada correo tiene **sus propios destinatarios**, que se configuran en Cards → **Destinatarios** (una tarjeta por correo):
 
 | Correo | Cuándo | Automático por defecto |

@@ -4808,13 +4808,13 @@ function buildMime({ from, fromName, to, cc, bcc, subject, html, attachments, in
   return L.join('\r\n');
 }
 
-async function sendSES({ to, cc, bcc, subject, html, attachments, inlineImages, textFallback, headers }) {
+async function sendSES({ to, cc, bcc, subject, html, attachments, inlineImages, textFallback, headers, fromName }) {
   const { SESClient, SendRawEmailCommand } = require('@aws-sdk/client-ses');
   const client = new SESClient({
     region: process.env.AWS_REGION,
     credentials: { accessKeyId: process.env.AWS_ACCESS_KEY_ID, secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY },
   });
-  const raw = buildMime({ from: SES_FROM, fromName: SES_FROM_NAME, to, cc, bcc, subject, html, attachments, inlineImages, textFallback, headers });
+  const raw = buildMime({ from: SES_FROM, fromName: fromName || SES_FROM_NAME, to, cc, bcc, subject, html, attachments, inlineImages, textFallback, headers });
   // Destinations debe incluir TODOS (To+Cc+Bcc). El BCC no aparece en headers, así queda oculto.
   const Destinations = [...(to || []), ...(cc || []), ...(bcc || [])].map(a => parseDir(a).email);
   const cmd = new SendRawEmailCommand({
