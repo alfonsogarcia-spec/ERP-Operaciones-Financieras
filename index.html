@@ -614,9 +614,46 @@
     .dz-item{display:flex;align-items:center;gap:var(--sp-2);padding:6px 10px;border:1px solid var(--line);border-radius:var(--radius-xs);font-size:var(--fs-sm);background:var(--glass-1)}
     .dz-item .dz-n{flex:1;min-width:0;overflow-wrap:anywhere;font-weight:var(--fw-semibold)}
     .cep-lect{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 2px}
-    ul.checks{list-style:none;margin:4px 0 0;padding:0;font-size:var(--fs-sm)}
-    ul.checks li{display:flex;gap:6px;padding:2px 0}
-    ul.checks li.ok{color:var(--ok-ink)}ul.checks li.difiere{color:var(--danger-ink);font-weight:var(--fw-semibold)}
+    /* Validación del CEP: cada dato en su recuadro; solo el que difiere cambia de color. */
+    .vt-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--sp-2);margin:var(--sp-2) 0 0}
+    .vt{position:relative;min-width:0;padding:var(--sp-2) var(--sp-3);border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--glass-1)}
+    .vt.s2{grid-column:span 2}.vt.s3{grid-column:1/-1}
+    .vt small{display:block;font-size:var(--fs-xs);color:var(--muted)}
+    .vt b{display:block;padding-right:18px;font-size:var(--fs-md);font-weight:var(--fw-medium);color:var(--ink);overflow-wrap:anywhere}
+    .vt b.mono{font-family:var(--font-mono);font-size:var(--fs-sm)}
+    .vt .marca{position:absolute;top:var(--sp-2);right:var(--sp-2);font-size:var(--fs-md);line-height:1;font-weight:var(--fw-bold);color:var(--ok-ink)}
+    .vt.difiere{border-color:var(--danger-edge);background:var(--danger-tint)}
+    .vt.difiere b,.vt.difiere .marca{color:var(--danger-ink)}
+    /* Detalle del fondeo: pasos (tesorería) y ticket */
+    .dt-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-2) var(--sp-4)}
+    .dt-grid>div{min-width:0}.dt-grid .s2{grid-column:1/-1}
+    .dt-grid small{display:block;font-size:var(--fs-xs);color:var(--muted)}.dt-grid b{font-weight:var(--fw-medium);font-size:var(--fs-md);overflow-wrap:anywhere}
+    .pasos{display:flex;gap:var(--sp-2);margin:0 0 var(--sp-3)}
+    .paso{flex:1;padding-top:var(--sp-1);border-top:3px solid var(--line-strong);font-size:var(--fs-sm);color:var(--muted)}
+    .paso.hecho{border-color:var(--ok);color:var(--ok-ink)}.paso.actual{border-color:var(--accent);color:var(--ink);font-weight:var(--fw-semibold)}
+    .paso-t{margin:var(--sp-2) 0;font-size:var(--fs-md);font-weight:var(--fw-semibold);color:var(--ink)}
+    .pasos-cuerpo{min-height:260px;display:flex;flex-direction:column;gap:var(--sp-2)}
+    .cab-paso .detalle-head{margin-bottom:var(--sp-2)}
+    .cep-bloque{margin-bottom:var(--sp-2)}
+    .ck-l{display:flex;gap:var(--sp-2);padding:var(--sp-2) 0;border-top:1px solid var(--line)}.ck-l:first-of-type{border-top:0}
+    .ck-l .si{color:var(--ok-ink);font-style:normal;font-weight:var(--fw-bold)}.ck-l .no{color:var(--muted);font-style:normal}
+    .lk-peligro{color:var(--danger-ink)}
+    .bad-t{color:var(--danger-ink);font-weight:var(--fw-semibold)}
+    /* Vista de un fondeo: mosaico de tarjetas (Cuenta, Importes, Depósito y validación, Control). */
+    .mz-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--sp-3)}
+    .mz-card{min-width:0;padding:var(--sp-3) var(--sp-4);border:1px solid var(--line);border-radius:var(--radius);background:var(--glass-1)}
+    .mz-card h5{margin:0 0 var(--sp-1);font-size:var(--fs-sm);font-weight:var(--fw-semibold);color:var(--muted)}
+    .mz-card .r{display:flex;justify-content:space-between;gap:var(--sp-3);padding:var(--sp-1) 0;border-top:1px solid var(--line);font-size:var(--fs-md)}
+    .mz-card h5+.r{border-top:0}
+    .mz-card .r span{color:var(--muted);flex:none}.mz-card .r b{font-weight:var(--fw-medium);text-align:right;overflow-wrap:anywhere;min-width:0;color:var(--ink)}
+    .mz-card .r.grande b{font-size:var(--fs-lg);font-weight:var(--fw-bold)}.mz-card .r small{font-weight:var(--fw-regular);color:var(--muted)}
+    .mz-card .bad-t{color:var(--danger-ink)}
+    @media (max-width:640px){.mz-grid{grid-template-columns:1fr}}
+    details.ac-hist{margin-top:var(--sp-3);border:1px solid var(--line);border-radius:var(--radius-sm);padding:var(--sp-2) var(--sp-3)}
+    details.ac-hist summary{cursor:pointer;font-weight:var(--fw-medium);list-style:none}details.ac-hist summary::-webkit-details-marker{display:none}
+    details.ac-hist summary::after{content:'⌄';float:right;color:var(--muted)}details.ac-hist[open] summary::after{content:'⌃'}
+    details.ac-hist .timeline{margin-top:var(--sp-3)}
+    .ac-arch>.cep-item,.ac-arch>.cep-bloque,.ac-arch>div{margin-top:var(--sp-2)}
     label.chk{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-md);margin-bottom:var(--sp-3)}
   </style>
 </head>
@@ -5416,109 +5453,192 @@ async function formularioFondeo(ex){
 }
 
 /* ---------- Detalle del fondeo ---------- */
+/* ---------- Detalle de un fondeo: por pasos para tesorería (por asignar) y ticket para todo lo demás ---------- */
+const fmtCheck=(k,x)=>x==null||x===''?'—':(k==='monto'?mxn(x):k==='clabe'?clabeFmt(x):k==='fecha'?fmtISO(x):x);
+
 async function abrirFondeo(id){
   let f;try{f=await api('GET','/api/cards/fondeos/'+id);}catch(e){toast(errMsg(e),'err');return;}
-  const pu=f.puede||{},tesoreria=can('cards_asignar'),sol=f.origen==='SOLICITUD';
-  const kv=(k,val)=>`<tr><th scope="row">${k}</th><td>${val}</td></tr>`;
+  const pu=f.puede||{},tesoreria=can('cards_asignar'),sol=f.origen==='SOLICITUD',cand=f.candado||{abierto:true};
+  const recargar=()=>{render();abrirFondeo(id);};
   const dif=f.fondeo_solicitado!=null&&f.monto_recibido!=null?f.fondeo-f.fondeo_solicitado:null;
-  const body=el('div',{});
-  body.append(el('div',{class:'detalle-head'},el('span',{html:badgeFondeo(f.estatus)}),el('span',{class:'badge soft'},sol?'Solicitud':'Registro manual'),f.difiere?el('span',{class:'badge orange',title:'El fondeo resultante es distinto de lo solicitado'},'≠ solicitado'):'',el('span',{class:'muted'},f.fecha?fmtISO(f.fecha):'')));
-  // Qué sigue, según el estatus
   const instr=textoInstrucciones({total:f.monto_esperado||f.monto_recibido,fondeo:f.fondeo,comision:f.comision,iva:f.iva,entidad:f.ruta,beneficiario:f.beneficiario_destino,banco:f.banco_destino,clabe:f.clabe_destino});
-  const aviso=(cls,...ch)=>body.append(el('div',{class:'banner '+cls},...ch));
-  if(f.estatus==='SOLICITADO')aviso('',el('b',{},'Esperando el CEP. '),pu.subir_cep?'Cuando la empresa deposite, sube su CEP aquí. ':'',el('div',{class:'instr',style:'margin-top:6px'},instr),el('button',{class:'btn ghost sm',type:'button',style:'margin-top:6px',onclick:()=>copiar(instr,'Instrucciones copiadas')},'Copiar instrucciones'));
-  else if(f.estatus==='POR_ASIGNAR')aviso('warn',tesoreria?'El CEP ya está cargado. Revisa que el dinero aparezca en el estado de cuenta y confirma que el saldo se asignó.':'El CEP ya está con tesorería: esperando que confirme la asignación del saldo.');
-  else if(f.estatus==='RECHAZADO')aviso('err',el('b',{},'Tesorería lo rechazó: '),f.motivo_rechazo||'',el('div',{class:'muted',style:'margin-top:4px'},pu.quitar_cep?'Quita el CEP, sube el correcto o cancela la solicitud.':''));
-  else if(f.estatus==='ASIGNADO')aviso('ok',el('b',{},'Saldo asignado '),'por '+(f.validado_por||'tesorería')+(f.nota_validacion?' · '+f.nota_validacion:''));
-  else if(f.estatus==='CANCELADO')aviso('',el('b',{},'Cancelado: '),f.motivo_cancelacion||'');
-  const cand=f.candado||{abierto:true};
-  (f.alertas||[]).forEach(a=>body.append(el('div',{class:'banner warn'},a.texto)));
-  const izq=el('div',{class:'panel-in'});
-  izq.append(el('table',{class:'kv',html:
-    kv('Destino',esc(f.ruta))+kv('CLABE destino',`<span class="mono">${esc(clabeFmt(f.clabe_destino))}</span>`)
-    +kv('Beneficiario',f.beneficiario_destino?esc(f.beneficiario_destino):'<span class="muted">sin definir</span>')+kv('Banco',f.banco_destino?esc(f.banco_destino):'<span class="muted">sin definir</span>')
-    +(f.solicitante_nombre?kv('Solicitó',esc(f.solicitante_nombre)):'')
-    +(f.monto_esperado!=null?kv('Total a depositar',mxn(f.monto_esperado)):'')
-    +kv('Monto recibido',f.monto_recibido!=null?'<b>'+mxn(f.monto_recibido)+'</b>':'<span class="muted">— (se toma del CEP)</span>')+kv('Fondeo neto',mxn(f.fondeo))
-    +kv('Comisión ('+pctTxt(f.comision_pct)+')',mxn(f.comision))+kv('IVA ('+pctTxt(f.iva_pct)+')',mxn(f.iva))
-    +(Math.abs(f.redondeo)>0.005?kv('Redondeo',mxn(f.redondeo)):'')
-    +(f.fondeo_solicitado!=null&&dif!==null?kv('Solicitado',mxn(f.fondeo_solicitado)+(Math.abs(dif)>0.01?` <span class="badge orange">dif. ${mxn(dif)}</span>`:' <span class="badge ok">coincide</span>')):'')
-    +kv('Clave de rastreo',f.clave_rastreo?`<span class="mono">${esc(f.clave_rastreo)}</span>`:'<span class="muted">—</span>')+kv('Banco ordenante',f.banco_ordenante?esc(f.banco_ordenante):'<span class="muted">—</span>')
-    +(f.ordenante_nombre||f.ordenante_rfc?kv('Ordenante',esc(f.ordenante_nombre||'—')+(f.ordenante_rfc?` <small class="muted mono">${esc(f.ordenante_rfc)}</small>`:'')):'')
-    +(f.notas?kv('Notas',esc(f.notas)):'')}));
-  const der=el('div',{class:'panel-in'});
-  der.append(el('h4',{},'CEP (comprobante electrónico de pago)'));
-  const errBox=el('div',{'aria-live':'polite'});
-  const lecturaCep=c=>{
-    if(!c.formato)return '';
-    const [cc,cl]=CEP_CONF[c.confianza]||CEP_CONF.baja;const v=c.verificacion;
-    const cab=el('div',{class:'cep-lect'},el('span',{class:'badge soft'},CEP_FORMATO[c.formato]||c.formato),el('span',{class:'badge '+cc},cl),el('span',{class:'badge '+(c.validado?'ok':'danger')},c.validado?'Validado por el sistema':'No validado'));
-    if(!v)return cab;
-    const fmt=(k,x)=>x==null||x===''?'—':(k==='monto'?mxn(x):k==='clabe'?clabeFmt(x):k==='fecha'?fmtISO(x):x);
-    return el('div',{},cab,el('ul',{class:'checks'},...v.checks.filter(k=>k.estado!=='sin_dato').map(k=>el('li',{class:k.estado},
-      el('span',{'aria-hidden':'true'},k.estado==='ok'?'✓':'≠'),el('span',{},k.etiqueta+': '+(k.estado==='ok'?fmt(k.campo,k.cep):'el CEP dice '+fmt(k.campo,k.cep)+' · registrado '+fmt(k.campo,k.capturado)+(k.duro?'':' (aviso)')))))));
+  const ultimoCep=f.ceps[f.ceps.length-1];
+
+  /* ----- piezas ----- */
+  const dato=(k,v,cls)=>el('div',{class:cls||''},el('small',{},k),el('b',{html:v}));
+  const sin=t=>`<span class="muted">${t}</span>`;
+  const datosSolicitud=()=>el('div',{class:'dt-grid'},
+    dato('Destino',esc(f.ruta)),dato('Solicitó',f.solicitante_nombre?esc(f.solicitante_nombre):sin('—')),
+    dato('Beneficiario',f.beneficiario_destino?esc(f.beneficiario_destino):sin('sin definir'),'s2'),
+    dato('Banco · CLABE',`${f.banco_destino?esc(f.banco_destino):sin('sin banco')} · <span class="mono">${esc(clabeFmt(f.clabe_destino))}</span>`,'s2'),
+    dato('Fondeo neto',mxn(f.fondeo)),dato('Comisión + IVA',mxn(f.comision)+' + '+mxn(f.iva)),
+    dato('Total a depositar',f.monto_esperado!=null?mxn(f.monto_esperado):sin('—')),dato('Monto recibido',f.monto_recibido!=null?mxn(f.monto_recibido):sin('se toma del CEP')),
+    ...(f.notas?[dato('Notas',esc(f.notas),'s2')]:[]));
+  const quitarCep=c=>async()=>{if(!await confirmar('¿Quitar el archivo '+c.filename+'?'+(f.ceps.length===1?'\nLa solicitud volverá a esperar el CEP.':'')))return;try{await api('DELETE','/api/cards/ceps/'+c.id);toast('Archivo quitado','ok');recargar();}catch(e){toast(errMsg(e),'err');}};
+  const quitarComp=c=>async()=>{if(!await confirmar('¿Quitar el comprobante '+c.filename+'?'))return;try{await api('DELETE','/api/cards/comprobantes/'+c.id);toast('Comprobante quitado','ok');recargar();}catch(e){toast(errMsg(e),'err');}};
+  const filaArchivo=(a,ruta,quitar)=>el('div',{class:'cep-item'},
+    el('div',{},el('b',{},a.filename),el('small',{class:'muted'},tamArchivo(a.bytes_size)+' · '+a.subido_por+(a.subido_at?' · '+new Date(a.subido_at).toLocaleString('es-MX'):''))),
+    el('button',{class:'btn ghost sm',type:'button',onclick:async()=>{try{await descargar(ruta+a.id+'/download',a.filename);}catch(e){toast(errMsg(e),'err');}}},'Descargar'),
+    quitar?el('button',{class:'btn danger sm',type:'button','aria-label':'Quitar '+a.filename,onclick:quitar(a)},'Quitar'):'');
+  // Tarjetas de validación del CEP: cada dato en su recuadro; solo el que difiere cambia de color.
+  const tarjetas=(c,ancho)=>{
+    const v=c.verificacion;if(!v)return '';
+    const ORDEN=['monto','fecha','banco','clabe','rastreo','beneficiario'],SPAN={clabe:'s2',beneficiario:'s3'};
+    return el('div',{class:'vt-grid'},...v.checks.filter(k=>k.estado!=='sin_dato').sort((a,b)=>ORDEN.indexOf(a.campo)-ORDEN.indexOf(b.campo)).map(k=>{
+      const d=k.estado==='difiere';
+      return el('div',{class:'vt '+(ancho?'s3':SPAN[k.campo]||'')+(d?' difiere':'')},
+        el('small',{},k.etiqueta+(d?' · registrado '+fmtCheck(k.campo,k.capturado)+(k.duro?'':' (aviso)'):'')),
+        el('b',{class:['clabe','rastreo'].includes(k.campo)?'mono':''},fmtCheck(k.campo,k.cep)),
+        el('span',{class:'marca',title:d?'No coincide con lo registrado':'Coincide con lo registrado'},el('span',{'aria-hidden':'true'},d?'≠':'✓'),el('span',{class:'sr-only'},d?' No coincide':' Coincide')));
+    }));
   };
-  if(!f.ceps.length)der.append(el('div',{class:'muted'},['SOLICITADO','RECHAZADO'].includes(f.estatus)?'Aún no hay CEP. Solo se aceptan CEP en PDF o XML.':'Sin CEP.'));
-  f.ceps.forEach(c=>der.append(el('div',{class:'cep-item'},
-    el('div',{},el('b',{},c.filename),el('small',{class:'muted'},(c.bytes_size<1024?c.bytes_size+' B':(c.bytes_size/1024).toFixed(0)+' KB')+' · '+c.subido_por),lecturaCep(c)),
-    el('button',{class:'btn ghost sm',type:'button',onclick:async()=>{try{await descargar('/api/cards/ceps/'+c.id+'/download',c.filename);}catch(e){toast(errMsg(e),'err');}}},'Descargar'),
-    pu.quitar_cep?el('button',{class:'btn danger sm',type:'button','aria-label':'Quitar '+c.filename,onclick:async()=>{if(!await confirmar('¿Quitar el archivo '+c.filename+'?'+(f.ceps.length===1?'\nLa solicitud volverá a esperar el CEP.':'')))return;try{await api('DELETE','/api/cards/ceps/'+c.id);toast('Archivo quitado','ok');render();abrirFondeo(id);}catch(e){toast(errMsg(e),'err');}}},'Quitar'):'')));
-  if(pu.subir_cep){
-    const zf=zonaArchivos({compacta:true,accept:'.pdf,.xml',titulo:'Arrastra aquí el CEP o haz clic',ayuda:'PDF o XML · se valida al subirlo',sinLista:true,onFiles:async(fs,z)=>{
-      errBox.innerHTML='';
-      try{const fd=new FormData();fd.append('archivo',fs[0]);const r=await api('POST',`/api/cards/fondeos/${id}/ceps`,fd);toast(r.estatus==='POR_ASIGNAR'&&f.estatus!=='POR_ASIGNAR'?'CEP aceptado: tesorería ya fue avisada':'CEP cargado','ok');render();abrirFondeo(id);}
-      catch(e){errBox.append(el('div',{class:'banner err'},el('b',{},'No se aceptó el archivo. '),errMsg(e)));z.limpiar();}
-    }});
-    der.append(zf,errBox);
-  }
-  // Comprobante del saldo asignado (tesorería): captura, PDF o Excel del sistema donde se ve el saldo ya asignado.
-  if(pu.comprobante||(f.comprobantes&&f.comprobantes.length)){
-    der.append(el('h4',{style:'margin-top:18px'},'Comprobante del saldo asignado'));
-    (f.comprobantes||[]).forEach(c=>der.append(el('div',{class:'cep-item'},
-      el('div',{},el('b',{},c.filename),el('small',{class:'muted'},(c.bytes_size<1024?c.bytes_size+' B':(c.bytes_size/1024).toFixed(0)+' KB')+' · '+c.subido_por+' · '+new Date(c.subido_at).toLocaleString('es-MX'))),
-      el('button',{class:'btn ghost sm',type:'button',onclick:async()=>{try{await descargar('/api/cards/comprobantes/'+c.id+'/download',c.filename);}catch(e){toast(errMsg(e),'err');}}},'Descargar'),
-      pu.quitar_comprobante?el('button',{class:'btn danger sm',type:'button','aria-label':'Quitar '+c.filename,onclick:async()=>{if(!await confirmar('¿Quitar el comprobante '+c.filename+'?'))return;try{await api('DELETE','/api/cards/comprobantes/'+c.id);toast('Comprobante quitado','ok');render();abrirFondeo(id);}catch(e){toast(errMsg(e),'err');}}},'Quitar'):'')));
-    if(pu.comprobante){
-      const errC=el('div',{'aria-live':'polite'});
-      der.append(zonaArchivos({compacta:true,accept:'.pdf,.png,.jpg,.jpeg,.xlsx',titulo:'Arrastra aquí el comprobante o haz clic',ayuda:'Captura, PDF o Excel del sistema donde se ve el saldo asignado',sinLista:true,onFiles:async(fs,z)=>{
-        errC.innerHTML='';
-        try{const fd=new FormData();fd.append('archivo',fs[0]);await api('POST',`/api/cards/fondeos/${id}/comprobantes`,fd);toast('Comprobante cargado','ok');render();abrirFondeo(id);}
-        catch(e){errC.append(el('div',{class:'banner err'},errMsg(e)));z.limpiar();}
-      }}),errC);
-    }
-  }
-  der.append(el('h4',{style:'margin-top:18px'},'Historial'));
-  der.append(el('ol',{class:'timeline'},...f.eventos.map(ev=>el('li',{},el('b',{},EVT_TXT[ev.tipo]||ev.tipo),el('small',{class:'muted'},new Date(ev.ts).toLocaleString('es-MX')+' · '+(ev.actor||'—')+(ev.detalle?' · '+ev.detalle:''))))));
-  body.append(el('div',{class:'form-grid detalle-cols'},izq,der));
-  const foot=el('div',{});
-  const bloqueado=tesoreria&&!cand.abierto&&['SOLICITADO','POR_ASIGNAR','RECHAZADO'].includes(f.estatus);
-  if(bloqueado){
-    const paso=(ok,txt)=>el('span',{},el('span',{class:ok?'ck-ok':'ck-no','aria-hidden':'true'},ok?'✓':'○'),' '+txt,el('span',{class:'sr-only'},ok?' (listo)':' (pendiente)'));
-    foot.append(el('div',{class:'ck-req',id:'candadoMotivo',title:cand.motivo},paso(true,sol?'Solicitud creada':'Fondeo registrado'),paso(f.ceps.length>0,'CEP cargado'),paso(f.ceps.some(c=>c.validado),'CEP validado')));
-  }
-  if(pu.cancelar)foot.append(el('button',{class:'btn danger',type:'button',onclick:async()=>{
+  const insignias=c=>{const [cc,cl]=CEP_CONF[c.confianza]||CEP_CONF.baja;return el('div',{class:'cep-lect'},el('span',{class:'badge soft'},CEP_FORMATO[c.formato]||c.formato),el('span',{class:'badge '+cc},cl),el('span',{class:'badge '+(c.validado?'ok':'danger')},c.validado?'Validado por el sistema':'No validado'));};
+  const resumenCep=c=>{const ch=(c.verificacion?c.verificacion.checks:[]).filter(k=>k.estado!=='sin_dato'),n=ch.filter(k=>k.estado==='difiere').length;
+    return !c.validado?'<span class="bad-t">no validado</span>':n?`<span class="bad-t">${n} diferencia${n>1?'s':''} por revisar</span>`:`validado ${ch.length} de ${ch.length} ✓`;};
+  const zonaCep=()=>{const err=el('div',{'aria-live':'polite'});
+    return el('div',{},zonaArchivos({compacta:true,accept:'.pdf,.xml',titulo:'Arrastra aquí el CEP o haz clic',ayuda:'PDF o XML · se valida al subirlo',sinLista:true,onFiles:async(fs,z)=>{
+      err.innerHTML='';
+      try{const fd=new FormData();fd.append('archivo',fs[0]);const r=await api('POST',`/api/cards/fondeos/${id}/ceps`,fd);toast(r.estatus==='POR_ASIGNAR'&&f.estatus!=='POR_ASIGNAR'?'CEP aceptado: tesorería ya fue avisada':'CEP cargado','ok');recargar();}
+      catch(e){err.append(el('div',{class:'banner err'},el('b',{},'No se aceptó el archivo. '),errMsg(e)));z.limpiar();}
+    }}),err);};
+  const zonaComprobante=()=>{const err=el('div',{'aria-live':'polite'});
+    return el('div',{},zonaArchivos({compacta:true,accept:'.pdf,.png,.jpg,.jpeg,.xlsx',titulo:'Arrastra aquí el comprobante o haz clic',ayuda:'Captura, PDF o Excel del sistema donde se ve el saldo asignado',sinLista:true,onFiles:async(fs,z)=>{
+      err.innerHTML='';
+      try{const fd=new FormData();fd.append('archivo',fs[0]);await api('POST',`/api/cards/fondeos/${id}/comprobantes`,fd);toast('Comprobante cargado','ok');recargar();}
+      catch(e){err.append(el('div',{class:'banner err'},errMsg(e)));z.limpiar();}
+    }}),err);};
+  const historial=()=>{
+    const u=f.eventos[f.eventos.length-1];
+    return el('details',{class:'ac-hist'},
+      el('summary',{},el('span',{},'Historial'),el('small',{class:'muted'},' · '+f.eventos.length+' movimientos'+(u?' · último: '+(EVT_TXT[u.tipo]||u.tipo)+', '+new Date(u.ts).toLocaleString('es-MX',{dateStyle:'short',timeStyle:'short'}):''))),
+      el('ol',{class:'timeline'},...f.eventos.map(ev=>el('li',{},el('b',{},EVT_TXT[ev.tipo]||ev.tipo),el('small',{class:'muted'},new Date(ev.ts).toLocaleString('es-MX')+' · '+(ev.actor||'—')+(ev.detalle?' · '+ev.detalle:''))))));
+  };
+  // `sinTarjeta` = omite los avisos que ya muestran las tarjetas de validación del CEP (los de cada dato).
+  const alertas=sinTarjeta=>el('div',{},...(f.alertas||[]).filter(a=>!sinTarjeta||!String(a.codigo).startsWith('cep_')).map(a=>el('div',{class:'banner warn'},a.texto)));
+  const botonCancelar=()=>el('button',{class:'btn ghost sm lk-peligro',type:'button',onclick:async()=>{
     const m=await pedir('Motivo de la cancelación de '+f.folio+':',{titulo:'Cancelar solicitud',ok:'Cancelar solicitud'});if(m===null)return;
-    try{await api('POST',`/api/cards/fondeos/${id}/cancelar`,{motivo:m});closeModal();toast('Cancelado','ok');render();}catch(e){toast(errMsg(e),'err');}}},f.estatus==='ASIGNADO'?'Cancelar (admin)':'Cancelar solicitud'));
-  if(pu.rechazar)foot.append(el('button',{class:'btn danger',type:'button',onclick:async()=>{
+    try{await api('POST',`/api/cards/fondeos/${id}/cancelar`,{motivo:m});closeModal();toast('Cancelado','ok');render();}catch(e){toast(errMsg(e),'err');}}},f.estatus==='ASIGNADO'?'Cancelar (admin)':'Cancelar solicitud');
+  const botonRechazar=()=>el('button',{class:'btn ghost sm lk-peligro',type:'button',onclick:async()=>{
     const m=await pedir('Motivo por el que no se puede asignar '+f.folio+' (lo verá el comercial):',{titulo:'Rechazar fondeo',ok:'Rechazar'});if(m===null)return;
-    try{await api('POST',`/api/cards/fondeos/${id}/rechazar`,{motivo:m});closeModal();toast('Rechazado: se avisó al comercial','ok');render();}catch(e){toast(errMsg(e),'err');}}},'Rechazar'));
-  if(pu.editar&&f.origen==='MANUAL')foot.append(el('button',{class:'btn secondary',type:'button',onclick:()=>formularioFondeo(f)},'Editar'));
-  if(tesoreria&&['SOLICITADO','POR_ASIGNAR','RECHAZADO'].includes(f.estatus)){
-    const intentar=async nota=>{
-      try{await api('POST',`/api/cards/fondeos/${id}/asignar`,{nota});closeModal();toast('Saldo asignado: se avisó al comercial','ok');render();}
+    try{await api('POST',`/api/cards/fondeos/${id}/rechazar`,{motivo:m});closeModal();toast('Rechazado: se avisó al comercial','ok');render();}catch(e){toast(errMsg(e),'err');}}},'Rechazar');
+  const cabecera=()=>el('div',{class:'detalle-head'},el('span',{html:badgeFondeo(f.estatus)}),el('span',{class:'badge soft'},sol?'Solicitud':'Registro manual'),f.difiere?el('span',{class:'badge orange',title:'El fondeo resultante es distinto de lo solicitado'},'≠ solicitado'):'',el('span',{class:'muted'},f.fecha?fmtISO(f.fecha):''));
+
+  /* ===== POR PASOS: tesorería con el fondeo por asignar ===== */
+  if(tesoreria&&f.estatus==='POR_ASIGNAR'){
+    let paso=1,subiendoNota='';
+    const NOMBRES=['Solicitud','CEP','Comprobante','Confirmar'];
+    const cuerpo=el('div',{class:'pasos-cuerpo'}),pie=el('div',{style:'display:flex;align-items:center;gap:var(--sp-2);width:100%;flex-wrap:wrap'});
+    const barra=()=>el('div',{class:'pasos'},...NOMBRES.map((n,i)=>el('div',{class:'paso'+(i+1<paso?' hecho':i+1===paso?' actual':''),...(i+1===paso?{'aria-current':'step'}:{})},(i+1<paso?'✓ ':(i+1)+'. ')+n)));
+    const asignar=async nota=>{
+      try{await api('POST',`/api/cards/fondeos/${id}/asignar`,{nota});toast('Saldo asignado: se avisó al comercial','ok');closeModal();render();abrirFondeo(id);}
       catch(e){
-        if(e.data&&e.data.error==='nota_requerida'){const n=await pedir(e.data.mensaje,{titulo:'Asignar con diferencia',ok:'Asignar saldo'});if(n===null)return;if(!n)return toast('Escribe el motivo','err');return intentar(n);}
+        if(e.data&&e.data.error==='nota_requerida'){paso=4;pintar();return toast(e.data.mensaje,'err');}
         toast(errMsg(e),'err');}
     };
-    const asig=el('button',{class:'btn ok',type:'button',onclick:async()=>{
-      if(f.requiere_nota)return intentar('');   // el servidor pide la nota con el detalle de lo que hay que revisar
-      if(!await confirmar('¿Confirmas que ya se asignó el saldo de '+f.folio+' ('+mxn(f.fondeo)+' netos) a '+f.ruta+'?',{ok:'Sí, saldo asignado',peligro:false,titulo:'Confirmar asignación'}))return;
-      intentar('');}},'Confirmar saldo asignado');
-    if(!cand.abierto){asig.disabled=true;asig.title='Bloqueado: '+cand.motivo;asig.setAttribute('aria-describedby','candadoMotivo');}
-    foot.append(asig);
+    const pintar=()=>{
+      cuerpo.innerHTML='';pie.innerHTML='';
+      cuerpo.append(el('div',{class:'cab-paso'},cabecera()),barra());
+      if(paso===1){
+        cuerpo.append(el('h4',{class:'paso-t'},'Solicitud'),datosSolicitud());
+      }
+      if(paso===2){
+        cuerpo.append(el('h4',{class:'paso-t'},'CEP y validación'));
+        if(!f.ceps.length)cuerpo.append(el('div',{class:'muted'},'Sin CEP.'));
+        f.ceps.forEach(c=>cuerpo.append(el('div',{class:'cep-bloque'},filaArchivo(c,'/api/cards/ceps/',pu.quitar_cep?quitarCep:null),insignias(c),tarjetas(c))));
+        if(ultimoCep&&(f.ordenante_nombre||f.banco_ordenante))cuerpo.append(el('div',{class:'dt-grid',style:'margin-top:8px'},...(f.ordenante_nombre?[dato('Ordenante',esc(f.ordenante_nombre)+(f.ordenante_rfc?` <small class="mono">${esc(f.ordenante_rfc)}</small>`:''),'s2')]:[]),...(f.banco_ordenante?[dato('Banco ordenante',esc(f.banco_ordenante))]:[])));
+        cuerpo.append(alertas(true));
+      }
+      if(paso===3){
+        cuerpo.append(el('h4',{class:'paso-t'},'Comprobante del saldo asignado ',el('small',{class:'muted'},'opcional')),zonaComprobante());
+        (f.comprobantes||[]).forEach(c=>cuerpo.append(filaArchivo(c,'/api/cards/comprobantes/',pu.quitar_comprobante?quitarComp:null)));
+      }
+      if(paso===4){
+        const nComp=(f.comprobantes||[]).length,hayDif=ultimoCep&&ultimoCep.verificacion&&ultimoCep.verificacion.checks.some(k=>k.estado==='difiere');
+        const ck=(ok,t)=>el('div',{class:'ck-l'},el('i',{class:ok?'si':'no','aria-hidden':'true'},ok?'✓':'○'),el('span',{},t));
+        cuerpo.append(el('h4',{class:'paso-t'},'Confirmar asignación'),
+          ck(true,(sol?'Solicitud':'Registro')+' · '+mxn(f.fondeo)+' netos a '+f.ruta),
+          ck(f.ceps.some(c=>c.validado)&&!hayDif,ultimoCep?'CEP '+(ultimoCep.validado?'validado por el sistema':'sin validar')+(hayDif?' · con diferencias por revisar':' · todos los datos coinciden'):'Sin CEP'),
+          ck(nComp>0,nComp?'Comprobante del saldo · '+nComp+' archivo'+(nComp>1?'s':''):'Comprobante del saldo · sin archivos (opcional)'),
+          alertas());
+        if(f.requiere_nota){const nt=el('textarea',{id:'asNota',rows:'2',maxlength:'300',placeholder:'Motivo para asignar con las diferencias de arriba'});nt.value=subiendoNota;nt.addEventListener('input',()=>{subiendoNota=nt.value;});cuerpo.append(fld('Nota de tesorería (obligatoria)',nt));}
+        cuerpo.append(el('div',{class:'req-note'},'Al confirmar se avisa por correo al comercial, con el CEP y el comprobante.'));
+        if(!cand.abierto)cuerpo.append(el('div',{class:'banner err',id:'candadoMotivo'},cand.motivo));
+      }
+      if(pu.rechazar)pie.append(botonRechazar());
+      if(pu.cancelar)pie.append(botonCancelar());
+      pie.append(el('span',{style:'flex:1'}));
+      if(paso>1)pie.append(el('button',{class:'btn secondary',type:'button',onclick:()=>{paso--;pintar();}},'Atrás'));
+      if(paso<4)pie.append(el('button',{class:'btn',type:'button',onclick:()=>{paso++;pintar();}},'Siguiente'));
+      else{const b=el('button',{class:'btn ok',type:'button',onclick:()=>{if(f.requiere_nota&&!subiendoNota.trim())return toast('Escribe la nota: hay diferencias que revisar','err');asignar(subiendoNota.trim());}},'Confirmar saldo asignado');
+        if(!cand.abierto){b.disabled=true;b.title='Bloqueado: '+cand.motivo;}pie.append(b);}
+    };
+    pintar();
+    modal(f.folio,cuerpo,pie);
+    return;
   }
+
+  /* ===== TICKET: todo lo demás ===== */
+  const body=el('div',{});
+  const r=(k,v,cls)=>el('div',{class:'r '+(cls||'')},el('span',{},k),el('b',{html:v}));
+  const rf=f.estatus==='ASIGNADO'?'Asignó':f.estatus==='RECHAZADO'?'Rechazó':f.estatus==='CANCELADO'?'Canceló':null;
+  const cuando=x=>x?new Date(x).toLocaleString('es-MX',{dateStyle:'short',timeStyle:'short'}):'';
+  const quien=f.estatus==='ASIGNADO'?(f.validado_por||'tesorería'):f.estatus==='RECHAZADO'?(f.rechazado_por||'tesorería'):f.estatus==='CANCELADO'?(f.cancelado_por||'—'):null;
+  const cuandoQuien=f.estatus==='ASIGNADO'?f.validado_at:f.estatus==='RECHAZADO'?f.rechazado_at:f.estatus==='CANCELADO'?f.cancelado_at:null;
+  const nComp=(f.comprobantes||[]).length;
+  const tarjeta=(titulo,...filas)=>el('section',{class:'mz-card','aria-label':titulo},el('h5',{},titulo),...filas);
+  const tk=el('div',{class:'mz-grid'},
+    tarjeta('Cuenta de fondeo',
+      r('Empresa',esc(f.ruta)),r('Beneficiario',f.beneficiario_destino?esc(f.beneficiario_destino):sin('sin definir')),r('Banco',f.banco_destino?esc(f.banco_destino):sin('—')),r('CLABE',`<span class="mono">${esc(clabeFmt(f.clabe_destino))}</span>`)),
+    tarjeta('Importes',
+      r('Fondeo neto',mxn(f.fondeo)),r('Comisión ('+pctTxt(f.comision_pct)+')',mxn(f.comision)),r('IVA ('+pctTxt(f.iva_pct)+')',mxn(f.iva)),
+      ...(f.fondeo_solicitado!=null&&dif!==null&&Math.abs(dif)>0.01?[r('Solicitado',mxn(f.fondeo_solicitado)+` <span class="badge orange">dif. ${mxn(dif)}</span>`)]:[]),
+      r(f.monto_recibido!=null?'Recibido':'A depositar',mxn(f.monto_recibido!=null?f.monto_recibido:f.monto_esperado),'grande')),
+    tarjeta('Depósito y validación',
+      r('CEP',ultimoCep?esc(ultimoCep.filename):sin('aún no hay')),
+      ...(ultimoCep?[r('Validación',resumenCep(ultimoCep))]:[]),
+      ...(f.clave_rastreo?[r('Rastreo',`<span class="mono">${esc(f.clave_rastreo)}</span>`)]:[]),
+      ...(f.fecha?[r('Abono',fmtISO(f.fecha))]:[]),
+      ...(f.ordenante_nombre?[r('Ordenante',esc(f.ordenante_nombre))]:[])),
+    tarjeta('Control',
+      r('Solicitó',f.solicitante_nombre?esc(f.solicitante_nombre):esc(f.creado_por||'—')),
+      ...(rf?[r(rf,esc(quien))]:[]),
+      ...(cuandoQuien?[r('Fecha',cuando(cuandoQuien))]:[]),
+      ...(f.estatus==='ASIGNADO'&&f.nota_validacion?[r('Nota',esc(f.nota_validacion))]:[]),
+      ...(f.estatus==='RECHAZADO'&&f.motivo_rechazo?[r('Motivo',esc(f.motivo_rechazo))]:[]),
+      ...(f.estatus==='CANCELADO'&&f.motivo_cancelacion?[r('Motivo',esc(f.motivo_cancelacion))]:[]),
+      r('Comprobantes del saldo',nComp?nComp+(nComp>1?' archivos':' archivo'):sin('—'))));
+  body.append(cabecera());
+  body.append(tk);
+  // Qué sigue, según el estatus
+  const aviso=(cls,...ch)=>body.append(el('div',{class:'banner '+cls,style:'margin-top:12px'},...ch));
+  if(f.estatus==='SOLICITADO')aviso('',el('b',{},'Esperando el CEP. '),pu.subir_cep?'Cuando la empresa deposite, sube su CEP aquí. ':'',el('div',{class:'instr',style:'margin-top:6px'},instr),el('button',{class:'btn ghost sm',type:'button',style:'margin-top:6px',onclick:()=>copiar(instr,'Instrucciones copiadas')},'Copiar instrucciones'));
+  else if(f.estatus==='POR_ASIGNAR')aviso('warn','El CEP ya está con tesorería: esperando que confirme la asignación del saldo.');
+  else if(f.estatus==='RECHAZADO')aviso('err',el('b',{},'Tesorería lo rechazó. '),pu.quitar_cep?'Quita el CEP, sube el correcto o cancela la solicitud.':'');
+  // Diferencias del CEP: solo si las hay, con sus tarjetas
+  if(ultimoCep&&ultimoCep.verificacion&&ultimoCep.verificacion.checks.some(k=>k.estado==='difiere'))body.append(el('div',{style:'margin-top:12px'},el('h4',{class:'paso-t'},'Diferencias del CEP'),tarjetas({verificacion:{checks:ultimoCep.verificacion.checks.filter(k=>k.estado==='difiere')}},true),alertas(true)));
+  // Archivos: CEP y comprobante, compactos
+  if(f.ceps.length||pu.subir_cep||nComp||pu.comprobante){
+    // Plegado como el historial; abierto cuando hay que subir el CEP (esperando CEP o rechazado).
+    const ar=el('details',{class:'ac-hist ac-arch'},el('summary',{},el('span',{},'Archivos'),el('small',{class:'muted'},' · '+f.ceps.length+' CEP · '+nComp+' comprobante'+(nComp===1?'':'s'))));
+    if(['SOLICITADO','RECHAZADO'].includes(f.estatus))ar.open=true;
+    f.ceps.forEach(c=>ar.append(el('div',{class:'cep-bloque'},filaArchivo(c,'/api/cards/ceps/',pu.quitar_cep?quitarCep:null),insignias(c))));
+    if(pu.subir_cep)ar.append(zonaCep());
+    (f.comprobantes||[]).forEach(c=>ar.append(filaArchivo(c,'/api/cards/comprobantes/',pu.quitar_comprobante?quitarComp:null)));
+    if(pu.comprobante)ar.append(zonaComprobante());
+    body.append(ar);
+  }
+  body.append(historial());
+  const foot=el('div',{});
+  const bloqueado=tesoreria&&!cand.abierto&&['SOLICITADO','RECHAZADO'].includes(f.estatus);
+  if(bloqueado){
+    const paso=(ok,t)=>el('span',{},el('span',{class:ok?'ck-ok':'ck-no','aria-hidden':'true'},ok?'✓':'○'),' '+t,el('span',{class:'sr-only'},ok?' (listo)':' (pendiente)'));
+    foot.append(el('div',{class:'ck-req',id:'candadoMotivo',title:cand.motivo},paso(true,sol?'Solicitud creada':'Fondeo registrado'),paso(f.ceps.length>0,'CEP cargado'),paso(f.ceps.some(c=>c.validado),'CEP validado')));
+  }
+  if(pu.cancelar)foot.append(botonCancelar());
+  if(pu.editar&&f.origen==='MANUAL')foot.append(el('button',{class:'btn secondary',type:'button',onclick:()=>formularioFondeo(f)},'Editar'));
+  if(bloqueado){const b=el('button',{class:'btn ok',type:'button',disabled:true,title:'Bloqueado: '+cand.motivo,'aria-describedby':'candadoMotivo'},'Confirmar saldo asignado');foot.append(b);}
   foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cerrar'));
-  modal(f.folio,body,foot,true);
+  modal(f.folio,body,foot);
 }
 
 /* ---------- Estructura: empresas · unidades de negocio · tarjetas ---------- */

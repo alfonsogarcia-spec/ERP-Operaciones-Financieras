@@ -61,6 +61,12 @@ Tesorería no puede asignar un fondeo con alertas sin escribir una **nota** con 
 Lectura de los documentos (probada con 43 PDF reales): CEP de Banxico vía su *cadena original* firmada, comprobante de Polipay,
 XML (mejor esfuerzo; falta validarlo con un XML real). Dependencia: `unpdf`.
 
+## La ventana de un fondeo: pasos y mosaico
+
+- **Tesorería con un fondeo por asignar** la ve **por pasos**: 1 Solicitud · 2 CEP y validación (cada dato en su recuadro) · 3 Comprobante del saldo (opcional) · 4 Confirmar (resumen con palomitas; si hay diferencias pide la nota ahí mismo). *Rechazar* y *Cancelar solicitud* están siempre a la mano.
+- **Todos los demás casos** (comercial, consulta, y cualquier fondeo esperando CEP, asignado, rechazado o cancelado) la ven como un **mosaico de cuatro tarjetas** bajo el estatus y la fecha: *Cuenta de fondeo* (empresa, beneficiario, banco, CLABE), *Importes* (con el recibido destacado), *Depósito y validación* (CEP, veredicto, rastreo, abono, ordenante) y *Control* (quién solicitó y quién asignó o rechazó, con fecha, nota o motivo, y comprobantes). Cabe sin desplazarse. Las diferencias del CEP, si las hay, salen debajo en recuadros rojos.
+- **Archivos** (CEP y comprobantes, con sus botones de subir, descargar y quitar) e **Historial** van en acordeones plegados con su resumen en una línea; *Archivos* se abre solo cuando hay que subir el CEP.
+
 ## Comprobante del saldo asignado
 
 Tesorería puede subir, en el detalle del fondeo, el **comprobante del sistema donde se ve el saldo ya asignado** (captura PNG/JPG, PDF o Excel; hasta 5 por fondeo, 10 MB cada uno, cifrados igual que el CEP). Es **opcional** y se puede subir **antes de confirmar** (queda listo para el aviso) o **después**, con el saldo ya asignado.
