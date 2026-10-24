@@ -140,6 +140,10 @@ El **solicitante es quien tiene la sesión abierta** cuando registra la solicitu
 Los correos tienen el diseño de los demás correos de MCEB (logo, barra azul, tabla y pie) y se identifican como **Polipay Cards Settlement** (pie: “Polipay Cards Settlement · BSO · ops.emisor@polipay.io”).
 Los que ya tienen CEP (por asignar, asignado, rechazado, cancelado) **llevan el CEP adjunto** (hasta 6 MB en total; si no cabe, lo dice y se abre en el sistema) y una sección **“CEP y validación”**: si el sistema lo validó, cuántas diferencias trae y, dato por dato (monto, CLABE, clave de rastreo, fecha, beneficiario, banco), lo que dice el CEP contra lo registrado.
 
+**Un solo hilo por fondeo.** El primer correo que sale de un fondeo (normalmente *Nueva solicitud*) abre el hilo; los de estatus posteriores (*Por asignar*, *Saldo asignado*, *Rechazado*, *Cancelada*) salen **como respuesta suya**: mismo asunto con “Re:” y los encabezados `In-Reply-To` y `References`, de modo que Gmail y Outlook los agrupan en una sola conversación. El asunto ya no cambia con el estatus (el título del cuerpo sí lo dice). Si “Nueva solicitud” está apagada o sin destinatarios, el primer correo que sí salga abre el hilo. Quien no recibió el inicial ve el correo suelto, sin el hilo. El Message-ID del primero se guarda en el fondeo.
+
+**Quién sube qué.** El **solicitante** (el comercial) sube el **CEP**; **tesorería** sube el **comprobante del sistema**. Los correos y el mosaico lo nombran: “X cargó el CEP”, “subido por …”, y en *Control* “Subió el CEP” / “Subió el comprobante”.
+
 Cada correo tiene **sus propios destinatarios**, que se configuran en Cards → **Destinatarios** (una tarjeta por correo):
 
 | Correo | Cuándo | Automático por defecto |

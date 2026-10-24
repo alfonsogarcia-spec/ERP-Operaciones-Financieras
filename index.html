@@ -5616,6 +5616,8 @@ async function abrirFondeo(id){
       ...(f.ordenante_nombre?[r('Ordenante',esc(f.ordenante_nombre))]:[])),
     tarjeta('Control',
       r('Solicitó',f.solicitante_nombre?esc(f.solicitante_nombre):esc(f.creado_por||'—')),
+      ...(ultimoCep?[r('Subió el CEP',esc(ultimoCep.subido_por||'—'))]:[]),
+      ...(nComp?[r('Subió el comprobante',esc(f.comprobantes[f.comprobantes.length-1].subido_por||'—'))]:[]),
       ...(rf?[r(rf,esc(quien))]:[]),
       ...(cuandoQuien?[r('Fecha',cuando(cuandoQuien))]:[]),
       ...(f.estatus==='ASIGNADO'&&f.nota_validacion?[r('Nota',esc(f.nota_validacion))]:[]),

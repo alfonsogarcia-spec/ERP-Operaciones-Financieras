@@ -4744,7 +4744,7 @@ const SES_FROM = process.env.SES_FROM || 'ops.agregador@polipay.io';
 const SES_FROM_NAME = process.env.SES_FROM_NAME || 'Polipay · Operaciones · MCEB';
 
 const { parseDir, fmtDir } = require('./lib/mime-dir.js');
-function buildMime({ from, fromName, to, cc, bcc, subject, html, attachments, inlineImages, textFallback }) {
+function buildMime({ from, fromName, to, cc, bcc, subject, html, attachments, inlineImages, textFallback, headers }) {
   // Estructura MIME:
   // multipart/mixed (adjuntos)
   //   └─ multipart/related (imágenes inline via cid:)
@@ -4761,6 +4761,8 @@ function buildMime({ from, fromName, to, cc, bcc, subject, html, attachments, in
   if (cc && cc.length) L.push(`Cc: ${cc.map(fmtDir).join(', ')}`);
   // BCC deliberadamente NO en headers (queda oculto). SES lo entrega via Destinations.
   L.push(`Subject: ${enc(subject)}`);
+  // Encabezados extra (p. ej. In-Reply-To / References para que un correo caiga en el mismo hilo que otro). Solo valores simples, sin saltos de línea.
+  for (const [k, v] of Object.entries(headers || {})) if (/^[A-Za-z-]+$/.test(k) && v) L.push(`${k}: ${String(v).replace(/[\r\n]+/g, ' ')}`);
   L.push('MIME-Version: 1.0');
   L.push(`Content-Type: multipart/mixed; boundary="${bMixed}"`);
   L.push('');
@@ -4806,13 +4808,13 @@ function buildMime({ from, fromName, to, cc, bcc, subject, html, attachments, in
   return L.join('\r\n');
 }
 
-async function sendSES({ to, cc, bcc, subject, html, attachments, inlineImages, textFallback }) {
+async function sendSES({ to, cc, bcc, subject, html, attachments, inlineImages, textFallback, headers }) {
   const { SESClient, SendRawEmailCommand } = require('@aws-sdk/client-ses');
   const client = new SESClient({
     region: process.env.AWS_REGION,
     credentials: { accessKeyId: process.env.AWS_ACCESS_KEY_ID, secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY },
   });
-  const raw = buildMime({ from: SES_FROM, fromName: SES_FROM_NAME, to, cc, bcc, subject, html, attachments, inlineImages, textFallback });
+  const raw = buildMime({ from: SES_FROM, fromName: SES_FROM_NAME, to, cc, bcc, subject, html, attachments, inlineImages, textFallback, headers });
   // Destinations debe incluir TODOS (To+Cc+Bcc). El BCC no aparece en headers, así queda oculto.
   const Destinations = [...(to || []), ...(cc || []), ...(bcc || [])].map(a => parseDir(a).email);
   const cmd = new SendRawEmailCommand({

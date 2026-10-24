@@ -227,3 +227,9 @@ create table if not exists cards.avisos (
 insert into cards.avisos(evento, a_solicitante, a_tesoreria) values
   ('solicitado', false, false), ('por_asignar', false, true), ('asignado', true, false), ('rechazado', true, false), ('cancelado', true, false)
 on conflict do nothing;
+
+-- ===== HILO DE CORREO =====
+-- El primer correo que se envía de un fondeo (normalmente "Nueva solicitud") fija el hilo: su Message-ID y su asunto.
+-- Los correos de estatus posteriores salen como respuesta suya ("Re: …") y caen en la misma conversación.
+alter table cards.fondeos add column if not exists correo_msgid  text;
+alter table cards.fondeos add column if not exists correo_asunto text;

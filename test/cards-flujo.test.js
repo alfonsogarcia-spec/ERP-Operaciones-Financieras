@@ -152,3 +152,13 @@ test('correo de saldo asignado: menciona el comprobante y si va adjunto', () => 
   const sin = armarCorreoFondeo({ tipo: 'asignado', fondeo: f });
   assert.doesNotMatch(sin.html, /Comprobante del saldo asignado/); assert.doesNotMatch(sin.html, /Va adjunto/);
 });
+
+test('correos: nombran a quien subió el CEP (el solicitante) y a quien subió el comprobante (tesorería)', () => {
+  const f = { folio: 'F1', ruta: 'Acme', empresa_nombre: 'Acme', fondeo: 1000, comision: 5, iva: 0.8, monto_recibido: 1005.8, solicitante_nombre: 'Ana Pérez', cep_subido_por: 'Fátima Ruiz' };
+  const pa = armarCorreoFondeo({ tipo: 'por_asignar', fondeo: f, ceps: [{ filename: 'cep.pdf', por: 'Fátima Ruiz', formato: 'cep_banxico', validado: true, adjunto: true, checks: [] }] });
+  assert.match(pa.html, /Fátima Ruiz cargó el CEP/); assert.match(pa.html, /subido por Fátima Ruiz/);
+  const sinDato = armarCorreoFondeo({ tipo: 'por_asignar', fondeo: { ...f, cep_subido_por: null } });
+  assert.match(sinDato.html, /Ana Pérez cargó el CEP/);                                  // sin dato del archivo, se usa al solicitante
+  const asig = armarCorreoFondeo({ tipo: 'asignado', fondeo: f, comprobantes: [{ filename: 'saldo.png', adjunto: true, por: 'Omar Tesorería' }] });
+  assert.match(asig.html, /saldo\.png/); assert.match(asig.html, /subido por Omar Tesorería/);
+});
