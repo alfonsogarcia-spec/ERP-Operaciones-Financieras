@@ -702,3 +702,15 @@ create table if not exists entregables_actividad (
   meta           jsonb
 );
 create index if not exists idx_ent_act on entregables_actividad(solicitud_id, ts desc);
+
+-- Rol dentro de Polipay Cards Settlement, independiente del rol en POS Settlement. NULL = sin acceso a Cards
+-- (un administrador de POS tiene acceso total sin necesitarlo; los roles solo-Cards usan `rol`).
+-- Al crearse la columna se conserva el acceso que ya tenían tesorería y consulta, pero acotado al rol de Cards equivalente.
+do $$
+begin
+  if not exists (select 1 from information_schema.columns where table_schema = current_schema() and table_name = 'usuarios' and column_name = 'rol_cards') then
+    alter table usuarios add column rol_cards text;
+    update usuarios set rol_cards = 'cards_tesoreria' where rol = 'tesoreria';
+    update usuarios set rol_cards = 'cards_consulta' where rol = 'consulta';
+  end if;
+end $$;

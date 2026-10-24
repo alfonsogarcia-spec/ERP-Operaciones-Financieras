@@ -108,34 +108,27 @@ Pantalla **Cards → Bancos**: búsqueda, alta, edición y desactivación (no se
 
 ## Estructura y roles
 
-`Empresa → Unidad de negocio → Tarjeta` (la tarjeta puede colgar de la empresa). Cada nivel tiene su **CLABE** única (con dígito
-verificador) y su comisión/IVA (UN y tarjeta heredan de la empresa si no tienen).
+Cada persona tiene **dos accesos independientes**: un **rol en POS Settlement y Tareas Ops** (o ninguno) y un **rol en Polipay Cards Settlement** (o ninguno). Ejemplo: Omar es *Tesorería* en POS y *Tesorería Cards* en Cards. Quien no tiene rol de Cards **no entra a Cards**; la excepción es el **administrador de POS, que tiene acceso total a Cards** sin necesitar rol.
 
-| Rol | Qué puede |
+| Rol de Cards | Qué ve y qué puede |
 |---|---|
-| **Comercial** (nuevo) | Solo Cards: cotizar y solicitar a **cualquier empresa**, y subir/quitar el CEP y cancelar **solo lo que él solicitó** (no ve los fondeos de otros). La API lo limita (no ve Conciliación ni Tareas) |
-| Tesorería · Admin | Todo lo anterior + **asignar / rechazar**, registrar un fondeo que ya llegó, editar la estructura y asignar comerciales |
-| Operador | Solicitar, subir CEP y registrar fondeos ya recibidos; no asigna |
-| Bancos · Consulta | Solo lectura de Cards |
-
-**Roles propios de Cards** (solo entran a Polipay Cards Settlement; no ven POS Settlement ni Tareas, y la API lo bloquea):
-
-| Rol | Qué puede |
-|---|---|
-| **Administrador Cards** (`cards_admin`) | Todo en Cards: usuarios de Cards, estructura, bancos, destinatarios, solicitar, asignar/rechazar y cancelar incluso un fondeo asignado |
-| **Tesorería Cards** (`cards_tesoreria`) | Asignar o rechazar, registrar fondeos recibidos, mantener estructura y bancos; recibe el aviso de “por asignar” |
-| **Comercial** (`comercial`) | Solicita y gestiona solo lo suyo |
+| **Administrador de POS** | Todo en Cards (acceso total implícito) |
+| **Administrador Cards** (`cards_admin`) | Todo en Cards: usuarios de Cards, empresas, UN y tarjetas, bancos, destinatarios, solicitar, registrar fondeos recibidos, asignar o rechazar, cancelar |
+| **Tesorería Cards** (`cards_tesoreria`) | Solo **Por asignar** y **Fondeos**: revisa el CEP y su validación, **confirma o rechaza el saldo** y **sube el comprobante del sistema**. No solicita, no cancela, no edita CEP, empresas, bancos ni destinatarios. Recibe el aviso de “por asignar” |
+| **Comercial** (`comercial`) | Solicita y sube el CEP; ve y gestiona solo lo que él solicitó |
 | **Consulta Cards** (`cards_consulta`) | Solo lectura |
+
+Los roles de POS (operador, tesorería, bancos, consulta) **no dan acceso a Cards por sí mismos**: hay que asignar el rol de Cards en Administración → Usuarios. Quien solo tiene rol de Cards no ve POS Settlement ni Tareas, y la API lo bloquea.
+Al crearse la columna de acceso a Cards, los usuarios que ya eran *Tesorería* de POS quedaron como *Tesorería Cards* y los de *Consulta* como *Consulta Cards*; el resto, sin acceso a Cards hasta que un administrador se lo asigne.
 
 ## Usuarios y accesos (panel de Administración)
 
-Todos los usuarios —POS Settlement, Tareas Ops y Cards— se administran en **un solo lugar**: el espacio **Administración → Usuarios** (en el selector de espacios). Ya no hay pantallas de Usuarios sueltas en POS ni en Cards.
-La lista muestra, por usuario, su **rol** y a **qué sistemas entra** (el rol define el acceso), con búsqueda y filtros por sistema y estado. Al dar de alta recibe el correo de bienvenida de su sistema (“Polipay Cards Settlement” para los roles de Cards).
+Todos los usuarios —POS Settlement, Tareas Ops y Cards— se administran en **un solo lugar**: el espacio **Administración → Usuarios** (en el selector de espacios). La lista muestra el **rol en POS** y el **rol en Cards** de cada persona, con búsqueda y filtros por sistema y estado; el formulario tiene un selector para cada sistema. Al dar de alta recibe el correo de bienvenida con lo que puede hacer en cada uno.
 
-- **Administrador**: ve y administra todos los usuarios y roles.
-- **Administrador Cards**: entra al mismo panel, pero **solo ve y edita usuarios con rol de Cards** (no puede crear ni tocar administradores o usuarios de POS). Un correo que ya existe en POS no se puede dar de alta desde ahí.
-- Nadie puede cambiarse el rol, desactivarse ni borrarse a sí mismo; no se puede dejar el sistema sin un administrador activo.
-- **Los cambios de rol y las desactivaciones aplican al instante** (hasta 1 minuto): el servidor consulta el rol vigente en cada petición, no el que traía la sesión. La pantalla se entera sola (avisa “Tu rol cambió a…” y ajusta el menú); un usuario desactivado o borrado pierde la sesión.
+- **Administrador**: ve y administra todos los usuarios y asigna ambos roles.
+- **Administrador Cards**: entra al mismo panel, pero **solo ve y edita usuarios que solo tienen rol de Cards** (no asigna roles de POS ni toca usuarios de POS).
+- Nadie puede cambiarse los accesos, desactivarse ni borrarse a sí mismo; no se puede dejar el sistema sin un administrador activo.
+- **Los cambios aplican al instante** (hasta 1 minuto): el servidor consulta los roles vigentes en cada petición, no los que traía la sesión. La pantalla se entera sola (avisa “Tus accesos cambiaron” y ajusta el menú); un usuario desactivado o borrado pierde la sesión.
 - Si se usa `MFA_REQUIRED_ROLES`, agregar `cards_admin,cards_tesoreria` para exigir la verificación en dos pasos.
 
 ## Quién solicita

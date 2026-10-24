@@ -50,7 +50,7 @@ test('monto distinto del esperado y RFC distinto: se aceptan pero avisan a tesor
   assert.match(r.avisos[0], /se esperaban/); assert.match(r.avisos[1], /tercero/);
 });
 
-test('permisos por rol y estatus', () => {
+test('permisos por rol de Cards y estatus', () => {
   const p = (est, rol, suyo) => FL.permisos(est, rol, suyo);
   // comercial: solo lo suyo, solo mientras está abierto, nunca asigna ni rechaza
   assert.deepEqual([p('SOLICITADO', 'comercial', true).subir_cep, p('SOLICITADO', 'comercial', true).cancelar, p('SOLICITADO', 'comercial', true).asignar], [true, true, false]);
@@ -58,17 +58,19 @@ test('permisos por rol y estatus', () => {
   assert.equal(p('RECHAZADO', 'comercial', true).subir_cep, true);
   assert.equal(p('SOLICITADO', 'comercial', false).subir_cep, false);          // de otro comercial
   assert.equal(p('ASIGNADO', 'comercial', true).subir_cep, false);
-  // tesorería asigna/rechaza solo lo que está POR_ASIGNAR
-  assert.equal(p('POR_ASIGNAR', 'tesoreria').asignar, true); assert.equal(p('POR_ASIGNAR', 'tesoreria').rechazar, true);
-  assert.equal(p('SOLICITADO', 'tesoreria').asignar, false);
-  assert.equal(p('ASIGNADO', 'tesoreria').cancelar, false); assert.equal(p('ASIGNADO', 'admin').cancelar, true);
-  assert.equal(p('CANCELADO', 'admin').cancelar, false);
-  // roles propios de Cards: el administrador y la tesorería de Cards actúan como tesorería; la consulta de Cards solo mira
-  for (const rol of ['cards_admin', 'cards_tesoreria']) { assert.equal(p('POR_ASIGNAR', rol).asignar, true, rol); assert.equal(p('SOLICITADO', rol).subir_cep, true, rol); }
-  assert.equal(p('ASIGNADO', 'cards_admin').cancelar, true); assert.equal(p('ASIGNADO', 'cards_tesoreria').cancelar, false);
-  assert.equal(Object.values(p('POR_ASIGNAR', 'cards_consulta')).some(Boolean), false);
-  // los demás roles solo miran
-  for (const rol of ['consulta', 'bancos']) assert.equal(Object.values(p('POR_ASIGNAR', rol)).some(Boolean), false, rol);
+  // administrador (de POS o de Cards): todo; cancelar un asignado solo ellos
+  for (const rol of ['admin', 'cards_admin']) {
+    assert.equal(p('POR_ASIGNAR', rol).asignar, true, rol); assert.equal(p('POR_ASIGNAR', rol).rechazar, true, rol); assert.equal(p('SOLICITADO', rol).asignar, false, rol);
+    assert.equal(p('ASIGNADO', rol).cancelar, true, rol); assert.equal(p('CANCELADO', rol).cancelar, false, rol); assert.equal(p('SOLICITADO', rol).subir_cep, true, rol);
+  }
+  // tesorería de Cards: asigna o rechaza lo que está por asignar y sube el comprobante; nada más
+  const t = p('POR_ASIGNAR', 'cards_tesoreria');
+  assert.deepEqual([t.asignar, t.rechazar, t.comprobante, t.quitar_comprobante], [true, true, true, true]);
+  assert.deepEqual([t.subir_cep, t.quitar_cep, t.cancelar, t.editar], [false, false, false, false]);
+  assert.equal(p('SOLICITADO', 'cards_tesoreria').asignar, false);
+  assert.equal(p('ASIGNADO', 'cards_tesoreria').cancelar, false);
+  // los demás solo miran (incluidos los roles de POS, que ya no tienen acceso a Cards por sí mismos)
+  for (const rol of ['cards_consulta', 'tesoreria', 'operador', 'bancos', 'consulta', null]) assert.equal(Object.values(p('POR_ASIGNAR', rol)).some(Boolean), false, String(rol));
 });
 
 test('correo por asignar: asunto, destino, avisos y datos escapados', () => {
@@ -134,13 +136,13 @@ test('correo con CEP: indica si va adjunto, el resultado de la validación y cad
 
 test('comprobante del saldo asignado: lo sube tesorería (por asignar o asignado); quitarlo ya asignado, solo un administrador', () => {
   const p = (est, rol) => FL.permisos(est, rol, true);
-  for (const rol of ['tesoreria', 'cards_tesoreria', 'admin', 'cards_admin']) {
+  for (const rol of ['cards_tesoreria', 'admin', 'cards_admin']) {
     assert.equal(p('POR_ASIGNAR', rol).comprobante, true, rol); assert.equal(p('ASIGNADO', rol).comprobante, true, rol);
     assert.equal(p('POR_ASIGNAR', rol).quitar_comprobante, true, rol);
   }
-  assert.deepEqual(['admin', 'cards_admin', 'tesoreria', 'cards_tesoreria'].map(r => p('ASIGNADO', r).quitar_comprobante), [true, true, false, false]);
+  assert.deepEqual(['admin', 'cards_admin', 'cards_tesoreria'].map(r => p('ASIGNADO', r).quitar_comprobante), [true, true, false]);
   for (const est of ['SOLICITADO', 'RECHAZADO', 'CANCELADO']) assert.equal(p(est, 'cards_tesoreria').comprobante, false, est);
-  for (const rol of ['comercial', 'operador', 'consulta', 'cards_consulta']) assert.equal(p('ASIGNADO', rol).comprobante, false, rol);
+  for (const rol of ['comercial', 'cards_consulta', 'tesoreria']) assert.equal(p('ASIGNADO', rol).comprobante, false, rol);
 });
 test('correo de saldo asignado: menciona el comprobante y si va adjunto', () => {
   const f = { folio: 'F1', ruta: 'Acme', empresa_nombre: 'Acme', fondeo: 1000, comision: 5, iva: 0.8, monto_recibido: 1005.8, solicitante_nombre: 'Ana Pérez' };

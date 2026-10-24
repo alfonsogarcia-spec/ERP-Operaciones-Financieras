@@ -843,9 +843,9 @@ async function api(method,path,body){
   const r=await fetch(path,{method,headers,body:b});
   if(r.status===401){forzarLogout();throw new Error('sesión expirada');}
   // El servidor manda el rol vigente: si cambió (lo editó un administrador), se actualiza el menú sin cerrar sesión.
-  const xr=r.headers.get('X-Rol');
-  if(SES&&xr&&xr!==SES.rol){SES.rol=xr;try{const u=JSON.parse(localStorage.getItem('cl_user')||'{}');u.rol=xr;localStorage.setItem('cl_user',JSON.stringify(u));}catch(_e){/* nada */}
-    setTimeout(()=>{if(!WORKSPACES[WORKSPACE]||!WORKSPACES[WORKSPACE].ok()){WORKSPACE=Object.keys(WORKSPACES).find(k=>WORKSPACES[k].ok())||'conciliacion';localStorage.setItem('cl_workspace',WORKSPACE);VIEW=vistaInicial(WORKSPACE);}renderWs();render();toast('Tu rol cambió a '+(ROLES[xr]||xr),'ok');},0);}
+  const xr=r.headers.get('X-Rol'),xc=r.headers.get('X-Rol-Cards');
+  if(SES&&xr&&(xr!==SES.rol||(xc!==null&&(xc||null)!==(SES.rol_cards||null)))){SES.rol=xr;SES.rol_cards=xc||null;try{const u=JSON.parse(localStorage.getItem('cl_user')||'{}');u.rol=xr;u.rol_cards=SES.rol_cards;localStorage.setItem('cl_user',JSON.stringify(u));}catch(_e){/* nada */}
+    setTimeout(()=>{if(!WORKSPACES[WORKSPACE]||!WORKSPACES[WORKSPACE].ok()){WORKSPACE=Object.keys(WORKSPACES).find(k=>WORKSPACES[k].ok())||'conciliacion';localStorage.setItem('cl_workspace',WORKSPACE);VIEW=vistaInicial(WORKSPACE);}renderWs();render();toast('Tus accesos cambiaron','ok');},0);}
   if(!r.ok){let e;try{e=await r.json();}catch(_){e={error:r.statusText};}const err=new Error(e.error||'error');err.status=r.status;err.data=e;throw err;}
   const ct=r.headers.get('content-type')||''; return ct.includes('application/json')?r.json():r;
 }
@@ -856,7 +856,7 @@ async function descargar(path,filename){
 }
 
 /* ---------- roles ---------- */
-const ROLES={admin:'Administrador',operador:'Operador (Operaciones)',tesoreria:'Tesorería (valida)',bancos:'Bancos (dispersa y cierra)',consulta:'Consulta (solo lectura)',inventario:'Inventario (solo esa sección)',comercial:'Comercial (solicita fondeos de Cards)',cards_admin:'Administrador Cards (usuarios y tesorería de Cards)',cards_tesoreria:'Tesorería Cards (asigna el saldo)',cards_consulta:'Consulta Cards (solo lectura)'};
+const ROLES={admin:'Administrador',operador:'Operador (Operaciones)',tesoreria:'Tesorería (valida)',bancos:'Bancos (dispersa y cierra)',consulta:'Consulta (solo lectura)',inventario:'Inventario (solo esa sección)',comercial:'Comercial (solicita fondeos de Cards)',cards_admin:'Administrador Cards (usuarios y tesorería de Cards)',cards_tesoreria:'Tesorería Cards (asigna saldo y sube comprobante)',cards_consulta:'Consulta Cards (solo lectura)'};
 // Roles que solo entran a Polipay Cards Settlement.
 const ROLES_SOLO_CARDS=['comercial','cards_admin','cards_tesoreria','cards_consulta'];
 const soloCards=()=>!!(SES&&ROLES_SOLO_CARDS.includes(SES.rol));
@@ -868,10 +868,11 @@ function can(cap){if(!SES)return false;const M={
   usuarios:['admin'],admin_panel:['admin','cards_admin'],
   disputas:['admin','operador'],
   disputas_ver:['admin','operador','tesoreria','bancos','consulta'],
-  cards_ver:['admin','operador','tesoreria','bancos','consulta','comercial','cards_admin','cards_tesoreria','cards_consulta'],cards_panel:['admin','operador','tesoreria','bancos','consulta','cards_admin','cards_tesoreria','cards_consulta'],cards_solicitar:['admin','operador','tesoreria','comercial','cards_admin','cards_tesoreria'],
-  cards_manual:['admin','operador','tesoreria','cards_admin','cards_tesoreria'],cards_asignar:['admin','tesoreria','cards_admin','cards_tesoreria'],cards_estructura:['admin','tesoreria','cards_admin','cards_tesoreria'],cards_mis:['comercial'],
+  // Cards: se decide por el rol de Cards de la persona (SES.rol_cards), independiente de su rol en POS.
+  cards_ver:['admin','comercial','cards_admin','cards_tesoreria','cards_consulta'],cards_panel:['admin','cards_admin','cards_consulta'],cards_fondeos:['admin','cards_admin','cards_tesoreria','cards_consulta'],
+  cards_solicitar:['admin','comercial','cards_admin'],cards_manual:['admin','cards_admin'],cards_asignar:['admin','cards_admin','cards_tesoreria'],cards_estructura:['admin','cards_admin'],cards_mis:['comercial'],
   ver:['admin','operador','tesoreria','bancos','consulta']
-};return (M[cap]||[]).includes(SES.rol);}
+};return (M[cap]||[]).includes(cap.startsWith('cards_')?SES.rol_cards:SES.rol);}
 
 /* ---------- login (Google Sign-In) ---------- */
 let GOOGLE_CLIENT_ID=''; let GSI_TRIES=0;
@@ -1210,7 +1211,7 @@ const WORKSPACES={
 };
 let WORKSPACE = localStorage.getItem('cl_workspace') || 'conciliacion';
 if(!WORKSPACES[WORKSPACE]) WORKSPACE = 'conciliacion';
-const vistaInicial=k=>k==='cards'?(can('cards_panel')?'cards_panel':'cards_solicitudes'):WORKSPACES[k].vista;
+const vistaInicial=k=>k==='cards'?(can('cards_panel')?'cards_panel':can('cards_asignar')?'cards_bandeja':'cards_solicitudes'):WORKSPACES[k].vista;
 function cerrarWsMenu(){ const m=document.getElementById('wsMenu'); if(m) m.classList.remove('open'); const s=document.getElementById('wsSwitch'); if(s) s.setAttribute('aria-expanded','false'); }
 function setWorkspace(k){
   if(!WORKSPACES[k]||!WORKSPACES[k].ok()) return;
@@ -1305,7 +1306,7 @@ const NAV_CARDS=[
   {sec:'Tesorería'},
   {id:'cards_bandeja',t:'Por asignar',ic:'ic_04',cap:'cards_asignar',n:()=>CARDS_CONT.por_asignar},
   {id:'cards_solicitudes',t:'Mis solicitudes',ic:'ic_04',cap:'cards_mis',n:()=>CARDS_CONT.rechazadas},
-  {id:'cards_fondeos',t:'Fondeos',ic:'ic_11',cap:'cards_panel'},
+  {id:'cards_fondeos',t:'Fondeos',ic:'ic_11',cap:'cards_fondeos'},
   {sec:'Catálogo',cap:'cards_estructura'},
   {id:'cards_estructura',t:'Empresas, UN y tarjetas',ic:'ic_09',cap:'cards_estructura'},
   {id:'cards_bancos',t:'Bancos',ic:'ic_12',cap:'cards_estructura'},
@@ -3057,7 +3058,9 @@ function editDestinatario(d){
 /* ---------- USUARIOS (solo admin) ---------- */
 /* ---------- Administración · usuarios y accesos de todos los sistemas ---------- */
 const ROL_BADGE={admin:'violet',operador:'info',tesoreria:'ok',bancos:'danger',consulta:'neutral',inventario:'orange',comercial:'info',cards_admin:'violet',cards_tesoreria:'ok',cards_consulta:'neutral'};
-const chipsSistemas=(ids,nombres)=>(ids||[]).map(k=>`<span class="badge soft">${esc(nombres[k]||k)}</span>`).join(' ');
+const nombreCorto=r=>(ROLES[r]||r).replace(/ \(.*\)$/,'');
+const insigniaRol=r=>r?`<span class="badge ${ROL_BADGE[r]||'neutral'}">${esc(nombreCorto(r))}</span>`:'<span class="muted">Sin acceso</span>';
+const DESC_ROL_CARDS={cards_admin:'Todo en Cards: usuarios, empresas, bancos, destinatarios, solicitar, asignar y cancelar.',cards_tesoreria:'Solo ve lo por asignar: revisa el CEP, confirma o rechaza el saldo y sube el comprobante del sistema.',comercial:'Solicita fondeos y sube el CEP; ve únicamente sus solicitudes.',cards_consulta:'Solo lectura de Cards.'};
 async function vAdmUsuarios(v){
   if(!can('admin_panel')){v.innerHTML='';v.append(el('div',{class:'banner err'},'Solo un administrador puede gestionar usuarios.'));return;}
   const [list,meta]=await Promise.all([api('GET','/api/usuarios'),api('GET','/api/admin/roles')]);
@@ -3073,14 +3076,15 @@ async function vAdmUsuarios(v){
     const rows=list.filter(u=>(!t||(u.email+' '+(u.nombre||'')).toLowerCase().includes(t))&&(!sis.value||(u.sistemas||[]).includes(sis.value))&&(!est.value||(est.value==='1')===u.activo));
     cnt.textContent=rows.length+' de '+list.length+' usuario(s) · '+list.filter(u=>u.activo).length+' activo(s)';
     cont.innerHTML='';
-    cont.append(tableWrap(['Correo','Nombre','Rol','Entra a','Estado','Último acceso'],rows.map(u=>{
-      const r=[esc(u.email),esc(u.nombre||''),`<span class="badge ${ROL_BADGE[u.rol]||'neutral'}">${esc((ROLES[u.rol]||u.rol).replace(/ \(.*\)$/,''))}</span>`,chipsSistemas(u.sistemas,meta.sistemas),u.activo?'<span class="badge ok">Activo</span>':'<span class="badge neutral">Inactivo</span>',u.ultimo_login_at?new Date(u.ultimo_login_at).toLocaleString('es-MX'):'—'];
+    cont.append(tableWrap(['Correo','Nombre','POS Settlement y Tareas','Cards','Estado','Último acceso'],rows.map(u=>{
+      const cardsTxt=u.rol_pos==='admin'?'<span class="muted">Acceso total</span>':insigniaRol(u.rol_cards);
+      const r=[esc(u.email),esc(u.nombre||''),insigniaRol(u.rol_pos),cardsTxt,u.activo?'<span class="badge ok">Activo</span>':'<span class="badge neutral">Inactivo</span>',u.ultimo_login_at?new Date(u.ultimo_login_at).toLocaleString('es-MX'):'—'];
       r._onclick=()=>editUsuarioAdm(u,meta);return r;}),{empty:'Ningún usuario coincide.'}));
   };
   [q,sis,est].forEach(x=>{x.addEventListener('input',pintar);x.addEventListener('change',pintar);});
   const p=el('div',{class:'panel'});
-  p.append(el('div',{class:'banner',html:SES.rol==='admin'
-    ?'Un solo lugar para los usuarios de <b>POS Settlement</b>, <b>Tareas Ops</b> y <b>Cards</b>. Entran <b>solo con Google</b> y con el correo registrado aquí. El <b>rol</b> define a qué sistemas entra; los roles de Cards solo ven Cards. Los cambios de rol y las desactivaciones aplican en menos de un minuto, sin que la persona tenga que volver a iniciar sesión.'
+  p.append(el('div',{class:'banner',html:meta.puede_pos
+    ?'Cada persona tiene <b>un rol en POS Settlement y Tareas Ops</b> y <b>otro, independiente, en Cards</b>: por ejemplo, tesorería en POS y “Tesorería Cards” (solo asignar saldo y subir comprobante) en Cards. Entran <b>solo con Google</b> con el correo registrado aquí. Los cambios aplican en menos de un minuto, sin volver a iniciar sesión.'
     :'Administras a los usuarios de <b>Polipay Cards Settlement</b>: entran <b>solo con Google</b> y con el correo registrado aquí, y únicamente ven Cards. No ves ni modificas a los usuarios de POS Settlement.'}));
   p.append(el('div',{class:'filtros cards-filtros'},fld('Buscar',q),fld('Sistema',sis),fld('Estado',est),cnt),cont);
   v.append(p);pintar();
@@ -3089,18 +3093,24 @@ function editUsuarioAdm(u,meta){
   const nuevo=!u;u=u||{};
   const email=el('input',{id:'auEmail',type:'email',autocomplete:'off',value:u.email||'',placeholder:'nombre@polipay.io'});
   const nombre=el('input',{id:'auNombre',maxlength:'120',autocomplete:'off',value:u.nombre||'',placeholder:'Nombre y apellido'});
-  const rol=el('select',{id:'auRol'});
-  const grupos=[['pos','POS Settlement y Tareas Ops'],['cards','Solo Polipay Cards Settlement']];
-  grupos.forEach(([g,tit])=>{const rs=meta.roles.filter(r=>r.grupo===g);if(!rs.length)return;rol.append(el('optgroup',{label:tit},...rs.map(r=>el('option',{value:r.id},r.nombre))));});
-  rol.value=u.rol||(meta.roles.find(r=>r.id==='comercial')?'comercial':meta.roles[0].id);
-  const entra=el('div',{class:'req-note','aria-live':'polite'});
-  const pintaEntra=()=>{const r=meta.roles.find(x=>x.id===rol.value);entra.innerHTML='Entra a: '+(r?chipsSistemas(r.sistemas,meta.sistemas):'—');};
-  rol.addEventListener('change',pintaEntra);pintaEntra();
+  const rolPos=el('select',{id:'auRolPos'},el('option',{value:''},'Sin acceso a POS Settlement ni Tareas'),...meta.pos.map(r=>el('option',{value:r.id},r.nombre)));
+  rolPos.value=u.rol_pos||'';
+  const rolCards=el('select',{id:'auRolCards'},el('option',{value:''},'Sin acceso a Cards'),...meta.cards.map(r=>el('option',{value:r.id},r.nombre)));
+  rolCards.value=u.rol_cards&&u.rol_pos!=='admin'?u.rol_cards:(nuevo&&!meta.puede_pos?'comercial':'');
+  const nota=el('div',{class:'req-note','aria-live':'polite'});
+  const refresca=()=>{
+    const admin=rolPos.value==='admin';
+    rolCards.disabled=admin;if(admin)rolCards.value='';
+    nota.textContent=admin?'Un administrador tiene acceso total a Cards.':(rolCards.value?DESC_ROL_CARDS[rolCards.value]||'':'');
+  };
+  rolPos.addEventListener('change',refresca);rolCards.addEventListener('change',refresca);refresca();
   const activo=el('input',{id:'auActivo',type:'checkbox'});activo.checked=u.activo!==false;
   const yo=!nuevo&&SES&&u.id===SES.id;
-  if(yo){rol.disabled=true;activo.disabled=true;}
-  const body=el('div',{},fld('Correo (Google)',email),fld('Nombre',nombre),fld('Rol',rol),entra,el('label',{class:'chk'},activo,' Activo (puede iniciar sesión)'),
-    el('div',{class:'req-note'},yo?'Es tu propio usuario: no puedes cambiar tu rol ni desactivarte.':'El correo debe coincidir exactamente con la cuenta de Google del usuario. Marcar como inactivo bloquea el acceso sin borrar el registro. Al darlo de alta recibe un correo de bienvenida.'));
+  if(yo){rolPos.disabled=true;rolCards.disabled=true;activo.disabled=true;}
+  const body=el('div',{},fld('Correo (Google)',email),fld('Nombre',nombre));
+  if(meta.puede_pos)body.append(fld('Rol en POS Settlement y Tareas Ops',rolPos));
+  body.append(fld('Rol en Polipay Cards Settlement',rolCards),nota,el('label',{class:'chk'},activo,' Activo (puede iniciar sesión)'),
+    el('div',{class:'req-note'},yo?'Es tu propio usuario: no puedes cambiar tus accesos ni desactivarte.':'El correo debe coincidir exactamente con la cuenta de Google del usuario. Marcar como inactivo bloquea el acceso sin borrar el registro. Al darlo de alta recibe un correo de bienvenida.'));
   const foot=el('div',{});
   if(!nuevo&&!yo)foot.append(el('button',{class:'btn danger',type:'button',style:'margin-right:auto',onclick:async()=>{
     if(!await confirmar('¿Eliminar a '+u.email+'? Pierde su acceso definitivamente.'))return;
@@ -3108,13 +3118,13 @@ function editUsuarioAdm(u,meta){
     catch(er){toast(er.data&&er.data.mensaje?er.data.mensaje:errMsg(er),'err');}
   }},'Eliminar'));
   if(nuevo)foot.append(el('button',{class:'btn ghost sm',type:'button',onclick:()=>{
-    const params=new URLSearchParams({nombre:nombre.value||'Nombre Apellido',email:email.value||'nuevo@polipay.io',rol:rol.value}).toString();
+    const params=new URLSearchParams({nombre:nombre.value||'Nombre Apellido',email:email.value||'nuevo@polipay.io',rol:rolPos.value||rolCards.value||'comercial'}).toString();
     window.open('/api/usuarios/bienvenida-preview.html?'+params+'&token='+encodeURIComponent(TOKEN()),'_blank');
   }},'Previsualizar correo'));
   const guardar=el('button',{class:'btn',type:'button'},'Guardar');
   foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),guardar);
   guardar.onclick=async()=>{guardar.disabled=true;try{
-    const r=await api('POST','/api/usuarios',{id:u.id,email:email.value,nombre:nombre.value,rol:rol.value,activo:activo.checked});
+    const r=await api('POST','/api/usuarios',{id:u.id,email:email.value,nombre:nombre.value,rol_pos:meta.puede_pos?rolPos.value:'',rol_cards:rolCards.value,activo:activo.checked});
     closeModal();
     if(nuevo){
       if(r.mail&&r.mail.ok)toast('Usuario creado y correo de bienvenida enviado','ok');
