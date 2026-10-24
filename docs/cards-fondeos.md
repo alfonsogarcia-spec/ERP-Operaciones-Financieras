@@ -72,6 +72,14 @@ XML (mejor esfuerzo; falta validarlo con un XML real). Dependencia: `unpdf`.
 Tesorería puede subir, en el detalle del fondeo, el **comprobante del sistema donde se ve el saldo ya asignado** (captura PNG/JPG, PDF o Excel; hasta 5 por fondeo, 10 MB cada uno, cifrados igual que el CEP). Es **opcional** y se puede subir **antes de confirmar** (queda listo para el aviso) o **después**, con el saldo ya asignado.
 Lo ve y descarga el comercial que solicitó; el correo de **“Saldo asignado”** lo lleva adjunto junto con el CEP. Quitarlo es libre mientras el fondeo está por asignar; una vez asignado, solo un administrador. Todo queda en el historial y en la bitácora.
 
+## Archivos repetidos
+
+Un archivo **no se acepta repetido**, ni como CEP ni como comprobante del sistema. Se compara el contenido del archivo (huella SHA-256) contra **todo lo cargado en el sistema**:
+- Un CEP idéntico a otro CEP (en la misma solicitud o en otra) se rechaza. Además, un CEP con la **misma clave de rastreo y fecha** de otro fondeo también se rechaza, aunque el archivo sea distinto (por ejemplo el PDF y el XML del mismo pago en dos solicitudes).
+- Un comprobante idéntico a otro comprobante (de este u otro fondeo) se rechaza, y el mensaje dice en qué fondeo está.
+- Un archivo ya cargado como CEP no se acepta como comprobante, y al revés.
+Cada intento rechazado queda en el historial del fondeo. Solo detecta archivos **idénticos**: una captura vuelta a tomar o guardada de nuevo es otro archivo distinto.
+
 ## Candado de asignación
 
 **Sin un CEP validado por el sistema no se puede poner “saldo asignado”**, ni con nota, ni siendo administrador. Se exige en tres capas:
