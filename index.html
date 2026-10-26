@@ -874,7 +874,7 @@ function can(cap){if(!SES)return false;const M={
   disputas:['admin','operador'],
   disputas_ver:['admin','operador','tesoreria','bancos','consulta'],
   // Cards: se decide por el rol de Cards de la persona (SES.rol_cards), independiente de su rol en POS.
-  cards_ver:['admin','comercial','cards_admin','cards_tesoreria','cards_consulta'],cards_panel:['admin','cards_admin','cards_consulta'],cards_fondeos:['admin','cards_admin','cards_tesoreria','cards_consulta'],
+  cards_ver:['admin','comercial','cards_admin','cards_tesoreria','cards_consulta'],cards_panel:['admin','comercial','cards_admin','cards_tesoreria','cards_consulta'],cards_fondeos:['admin','cards_admin','cards_tesoreria','cards_consulta'],
   cards_solicitar:['admin','comercial','cards_admin'],cards_manual:['admin','cards_admin'],cards_asignar:['admin','cards_admin','cards_tesoreria'],cards_estructura:['admin','cards_admin'],cards_mis:['comercial'],cards_contabilidad:['admin','cards_admin','cards_consulta'],cards_contabilidad_adm:['admin','cards_admin'],
   ver:['admin','operador','tesoreria','bancos','consulta']
 };return (M[cap]||[]).includes(cap.startsWith('cards_')?SES.rol_cards:SES.rol);}
@@ -1216,7 +1216,7 @@ const WORKSPACES={
 };
 let WORKSPACE = localStorage.getItem('cl_workspace') || 'conciliacion';
 if(!WORKSPACES[WORKSPACE]) WORKSPACE = 'conciliacion';
-const vistaInicial=k=>k==='cards'?(can('cards_panel')?'cards_panel':can('cards_asignar')?'cards_bandeja':'cards_solicitudes'):WORKSPACES[k].vista;
+const vistaInicial=k=>k==='cards'?(['admin','cards_admin','cards_consulta'].includes(SES.rol_cards)?'cards_panel':can('cards_asignar')?'cards_bandeja':'cards_solicitudes'):WORKSPACES[k].vista;
 function cerrarWsMenu(){ const m=document.getElementById('wsMenu'); if(m) m.classList.remove('open'); const s=document.getElementById('wsSwitch'); if(s) s.setAttribute('aria-expanded','false'); }
 function setWorkspace(k){
   if(!WORKSPACES[k]||!WORKSPACES[k].ok()) return;
@@ -5276,12 +5276,16 @@ const cardsAcciones=(...nodos)=>{const pa=$('#pageAction');pa.innerHTML='';nodos
 // Números del menú (por asignar para tesorería; devueltas / esperando CEP para el comercial).
 let CARDS_CONT={por_asignar:0,esperando_cep:0,rechazadas:0};
 async function cardsContadores(){try{CARDS_CONT=await api('GET','/api/cards/contadores');renderNav();}catch(_e){/* el menú sigue sin números */}}
-function cardsIrALista(modo,filtros){vCardsLista._f=vCardsLista._f||{};vCardsLista._f[modo]=Object.assign({empresa_id:'',estatus:'',cep:'',desde:'',hasta:'',q:''},filtros||{});go(modo==='bandeja'?'cards_bandeja':modo==='mis'?'cards_solicitudes':'cards_fondeos');}
+function cardsIrALista(modo,filtros){
+  // El panel es para todos los roles: cada uno cae en la lista que sí tiene (el comercial, en la suya).
+  if(modo==='bandeja'&&!can('cards_asignar'))modo='todos';
+  if(modo==='todos'&&!can('cards_fondeos'))modo='mis';
+  vCardsLista._f=vCardsLista._f||{};vCardsLista._f[modo]=Object.assign({empresa_id:'',estatus:'',cep:'',desde:'',hasta:'',q:''},filtros||{});go(modo==='bandeja'?'cards_bandeja':modo==='mis'?'cards_solicitudes':'cards_fondeos');}
 const textoInstrucciones=r=>`Depositar ${mxn(r.total)} (fondeo ${mxn(r.fondeo)} + comisión ${mxn(r.comision)} + IVA ${mxn(r.iva)}) a nombre de ${r.beneficiario||r.entidad}${r.banco?', banco '+r.banco:''}, CLABE ${clabeFmt(r.clabe)}. Al hacerlo, envía el CEP.`;
 // Titular y banco de una cuenta de fondeo (para los avisos de “deposita a…”).
 const cuentaTxt=(ent,extra)=>`<small>${esc(ent.beneficiario||ent.nombre)} · ${esc(ent.banco||'banco sin definir')}</small>`+(extra?`<br><small>${esc(extra)}</small>`:'');
 
-/* ---------- Panel (tesorería / consulta) ---------- */
+/* ---------- Panel (todos los roles; el comercial ve solo lo suyo) ---------- */
 async function vCardsPanel(v){
   const d=await api('GET','/api/cards/resumen');
   v.innerHTML='';

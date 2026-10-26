@@ -186,7 +186,7 @@ El envío nunca bloquea la operación.
 - **Mis solicitudes** (comercial): sus fondeos, “+ Nueva solicitud” (cotiza en vivo y da las instrucciones para mandar a la empresa).
 - **Por asignar** (tesorería): bandeja con contador; detalle con alertas, CEP leído (✓/≠) y botones Confirmar / Rechazar.
 - **Fondeos**: todos, con filtros, totales y Excel; “+ Fondeo ya recibido” para registro manual de tesorería (con lectura automática del CEP).
-- **Panel**: asignado del periodo, por empresa y pendientes de control.
+- **Panel**: asignado del periodo, por empresa y pendientes de control. **Es para todos los roles** (administrador, tesorería, consulta y comercial); el comercial ve solo las cifras de sus propias solicitudes, y los botones “Ver” / “Ver todos” lo llevan a la lista que su rol sí tiene (Mis solicitudes en el caso del comercial). Cada rol sigue abriendo en su pantalla de siempre: administrador y consulta en el Panel, tesorería en Por asignar y comercial en Mis solicitudes.
 - **Empresas, UN y tarjetas**: árbol con cuenta de fondeo (CLABE, beneficiario y banco), tasas.
 - **Bancos**: catálogo de bancos de Cards.
 - **Corte de comisiones** (Contabilidad): lo por cortar y los cortes hechos, con Excel, reenvío y “Hacer corte”.
