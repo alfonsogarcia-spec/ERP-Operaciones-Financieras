@@ -17,7 +17,8 @@ test('resumen por empresa: comisión + IVA = total a facturar, rango de depósit
   ];
   const r = C.resumir(d), a = r.resumen.find(e => e.empresa === 'Acme'), b = r.resumen.find(e => e.empresa === 'Beta');
   assert.deepEqual([a.fondeos, a.comision, a.iva, a.total, a.rfc, a.falta], [2, 2000.01, 320, 2320.01, 'ACM010101AAA', []]);
-  assert.deepEqual(b.falta, ['razón social', 'RFC válido']);
+  assert.deepEqual(b.falta, ['RFC válido']);                          // la razón social es el nombre de la empresa: nunca falta
+  assert.deepEqual([a.razon_social, b.razon_social], ['Acme', 'Beta']);
   assert.deepEqual(r.totales, { empresas: 2, fondeos: 3, fondeo: 401000, comision: 2005.01, iva: 320.8, total: 2325.81, deposito_desde: '2026-10-05', deposito_hasta: '2026-10-12' });
   assert.equal(C.resumir([]).totales.total, 0); assert.equal(C.textoDepositos(r.totales), 'depósitos del 05/10/2026 al 12/10/2026'); assert.equal(C.textoDepositos(C.resumir([]).totales), 'sin depósitos');
   assert.equal(C.tituloCorte({ fecha_corte: '2026-10-26' }), 'Corte al 26 de octubre de 2026');
@@ -47,7 +48,7 @@ test('corte acumulado: entra lo asignado hasta ese momento; lo demás cae en el 
     let c1 = (await db.query('select * from cards.cortes_comision where id=$1', [id1])).rows[0];
     assert.deepEqual([c1.totales.fondeos, c1.totales.comision, c1.totales.iva, c1.totales.total], [2, 1500, 240, 1740]);
     assert.deepEqual([c1.totales.deposito_desde, c1.totales.deposito_hasta], ['2026-10-05', '2026-10-12']);
-    assert.deepEqual([c1.resumen[0].razon_social, c1.resumen[0].rfc], ['Acme Servicios SA de CV', 'ACM010101AAA']);
+    assert.deepEqual([c1.resumen[0].razon_social, c1.resumen[0].rfc], ['Acme', 'ACM010101AAA']);      // se factura a nombre de la empresa
     assert.equal((await db.query('select count(*)::int n from cards.fondeos where corte_comision_id=$1', [id1])).rows[0].n, 2);
     // un fondeo se asigna DESPUÉS del corte (depositado el 10): cae en el siguiente corte, no en el anterior
     const tarde = await fondeo('2026-10-10', 100000);
@@ -69,19 +70,20 @@ test('corte acumulado: entra lo asignado hasta ese momento; lo demás cae en el 
     const hojas = C.hojasXlsx({ fecha_corte: '2026-10-16', totales: c1.totales, resumen: c1.resumen, detalle: c1.detalle });
     assert.deepEqual(hojas.map(h => h.name), ['Facturación', 'Detalle']); assert.equal(hojas[1].aoa.length, 1 + c1.detalle.length);
     assert.equal(hojas[1].aoa[0][0], 'Fecha de depósito'); assert.equal(hojas[1].aoa[1][0], '2026-10-05');
-    assert.ok(hojas[0].aoa.some(r => r[0] === 'Acme Servicios SA de CV' && r[1] === 'ACM010101AAA'));
+    assert.ok(hojas[0].aoa.some(r => r[0] === 'Acme' && r[1] === 'ACM010101AAA'));
   } finally { try { await db.close(); } catch (_e) { /* nada */ } }
 });
 
 test('correo del corte (BSO Cards): corte al día, depósitos, razón social y RFC, comisión + IVA, totales y datos fiscales por completar', () => {
   const corte = { fecha_corte: '2026-10-26', totales: { empresas: 2, fondeos: 3, comision: 2005.01, iva: 320.8, total: 2325.81, deposito_desde: '2026-10-05', deposito_hasta: '2026-10-12' },
-    resumen: [{ empresa: 'Acme <SA>', razon_social: 'Acme Servicios SA de CV', rfc: 'ACM010101AAA', fondeos: 2, comision: 2000.01, iva: 320, total: 2320.01, falta: [] },
-      { empresa: 'Beta', razon_social: null, rfc: null, fondeos: 1, comision: 5, iva: 0.8, total: 5.8, falta: ['razón social', 'RFC'] }] };
+    resumen: [{ empresa: 'Acme <SA>', razon_social: 'Acme <SA>', rfc: 'ACM010101AAA', fondeos: 2, comision: 2000.01, iva: 320, total: 2320.01, falta: [] },
+      { empresa: 'Beta', razon_social: 'Beta', rfc: null, fondeos: 1, comision: 5, iva: 0.8, total: 5.8, falta: ['RFC'] },
+      { empresa: 'Vieja', razon_social: null, rfc: null, fondeos: 1, comision: 1, iva: 0.16, total: 1.16, falta: ['razón social', 'RFC'] }] };
   const m = armarCorteContable({ corte, appUrl: 'https://x.test/', adjunto: true });
   assert.equal(m.subject, '[BSO Cards] Corte de comisiones · al 26 de octubre de 2026 · $2,325.81 a facturar');
   assert.match(m.html, /BSO Cards · Corte de comisiones/); assert.match(m.html, /corte de comisiones de BSO Cards/); assert.match(m.html, /26 de octubre de 2026/); assert.match(m.html, /depósitos del 05\/10\/2026 al 12\/10\/2026/);
-  assert.match(m.html, /Acme Servicios SA de CV/); assert.match(m.html, /ACM010101AAA/); assert.match(m.html, /Acme &lt;SA&gt;/); assert.ok(!m.html.includes('Acme <SA>'));
-  assert.match(m.html, /\$2,325\.81/); assert.match(m.html, /Datos fiscales por completar/); assert.match(m.html, /Beta: falta razón social y RFC/);
+  assert.match(m.html, /ACM010101AAA/); assert.match(m.html, /Acme &lt;SA&gt;/); assert.ok(!m.html.includes('Acme <SA>'));
+  assert.match(m.html, /\$2,325\.81/); assert.match(m.html, /Datos fiscales por completar/); assert.match(m.html, /Beta: falta RFC/); assert.match(m.html, /Vieja: falta RFC/); assert.doesNotMatch(m.html, /falta razón social/);   // un corte guardado antes también deja de pedirla
   assert.match(m.html, /Lo que se guarde después de este corte se incluye en el siguiente/); assert.match(m.html, /fecha de depósito/);
   assert.match(m.html, /Polipay Cards Settlement · BSO · ops\.emisor@polipay\.io/); assert.match(m.text, /Total a facturar: \$2,325\.81/);
   const vacio = armarCorteContable({ corte: { fecha_corte: '2026-10-26', totales: {}, resumen: [] } });

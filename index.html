@@ -5691,7 +5691,6 @@ async function editEntidad(e,nuevo,ents){
   const padre=esNueva&&nuevo.parent_id?ents.find(x=>x.id===nuevo.parent_id):(e&&e.parent_id?ents.find(x=>x.id===e.parent_id):null);
   const refLbl={EMPRESA:'RFC para facturar',UN:'Clave interna',TARJETA:'Últimos 4 dígitos o alias'}[nivel];
   const nombre=el('input',{id:'enNombre',maxlength:'120',autocomplete:'off',value:e?e.nombre:''});
-  const razon=el('input',{id:'enRazon',maxlength:'160',autocomplete:'off',placeholder:'Como aparece en su constancia fiscal',value:e&&e.razon_social?e.razon_social:''});
   const ref=el('input',{id:'enRef',maxlength:'60',autocomplete:'off',value:e&&e.referencia?e.referencia:''});
   const clabe=el('input',{id:'enClabe',inputmode:'numeric',maxlength:'22',autocomplete:'off',placeholder:'18 dígitos',value:e?e.clabe:''});
   const aviso=el('div',{class:'req-note','aria-live':'polite'});
@@ -5720,7 +5719,7 @@ async function editEntidad(e,nuevo,ents){
   const activo=el('input',{id:'enActivo',type:'checkbox'});activo.checked=e?e.activo:true;
   const body=el('div',{});
   if(padre)body.append(el('div',{class:'banner'},'Pertenece a: ',el('b',{},padre.ruta)));
-  body.append(fld('Nombre',nombre),...(nivel==='EMPRESA'?[fld('Razón social para facturar',razon)]:[]),el('div',{class:'form-grid'},fld(refLbl+(nivel==='EMPRESA'?'':' (opcional)'),ref),fld('CLABE de fondeo',clabe)),aviso,
+  body.append(fld(nivel==='EMPRESA'?'Nombre (razón social, con la que se factura)':'Nombre',nombre),el('div',{class:'form-grid'},fld(refLbl+(nivel==='EMPRESA'?'':' (opcional)'),ref),fld('CLABE de fondeo',clabe)),aviso,
     el('div',{class:'form-grid'},fld('Beneficiario',benef),fld('Banco beneficiario',bancoBox)),
     el('div',{class:'form-grid'},fld('Comisión % sobre el fondeo'+(nivel==='EMPRESA'?'':' (vacío = hereda)'),com),fld('IVA % sobre la comisión'+(nivel==='EMPRESA'?'':' (vacío = hereda)'),iva)));
   body.append(fld('Notas',notas));
@@ -5731,7 +5730,7 @@ async function editEntidad(e,nuevo,ents){
   const guardar=el('button',{class:'btn',type:'button'},'Guardar');
   foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),guardar);
   guardar.onclick=async()=>{guardar.disabled=true;try{
-    const b={nombre:nombre.value,razon_social:razon.value,referencia:ref.value,clabe:clabe.value,beneficiario:benef.value,banco_codigo:bancoCod,comision_pct:com.value,iva_pct:iva.value,notas:notas.value};
+    const b={nombre:nombre.value,referencia:ref.value,clabe:clabe.value,beneficiario:benef.value,banco_codigo:bancoCod,comision_pct:com.value,iva_pct:iva.value,notas:notas.value};
     if(esNueva){b.nivel=nivel;if(nuevo.parent_id)b.parent_id=nuevo.parent_id;await api('POST','/api/cards/entidades',b);}
     else{b.activo=activo.checked;await api('PUT','/api/cards/entidades/'+e.id,b);}
     closeModal();toast('Guardado','ok');render();
@@ -5786,7 +5785,7 @@ function editDestinatarioCards(d,ev){
 
 /* ---------- Contabilidad: corte de comisiones de BSO Cards (acumulado, como el de MCEB) ---------- */
 const tablaCorte=(resumen,vacio)=>tableWrap(['Razón social a facturar','RFC',{t:'Fondeos'},{t:'Comisión'},{t:'IVA'},{t:'Total a facturar'}],
-  resumen.map(e=>[`<div class="tt">${e.razon_social?esc(e.razon_social):'<span class="badge warn">Falta razón social</span>'}<small>${esc(e.empresa)}</small></div>`,e.rfc?`<span class="mono">${esc(e.rfc)}</span>${e.falta&&e.falta.includes('RFC válido')?' <span class="badge warn">RFC no válido</span>':''}`:'<span class="badge warn">Falta RFC</span>',{num:e.fondeos},{num:mxn(e.comision)},{num:mxn(e.iva)},{num:'<b>'+mxn(e.total)+'</b>'}]),{empty:vacio});
+  resumen.map(e=>[`<div class="tt">${esc(e.razon_social||e.empresa)}</div>`,e.rfc?`<span class="mono">${esc(e.rfc)}</span>${e.falta&&e.falta.includes('RFC válido')?' <span class="badge warn">RFC no válido</span>':''}`:'<span class="badge warn">Falta RFC</span>',{num:e.fondeos},{num:mxn(e.comision)},{num:mxn(e.iva)},{num:'<b>'+mxn(e.total)+'</b>'}]),{empty:vacio});
 const cifrasCorte=t=>cards([['Fondeos',t.fondeos||0],['Comisión',mxn(t.comision||0)],['IVA',mxn(t.iva||0)],['Total a facturar',mxn(t.total||0)]]);
 const depositosTxt=t=>!t||!t.deposito_desde?'sin depósitos':(t.deposito_desde===t.deposito_hasta?'depósitos del '+fmtISO(t.deposito_desde):'depósitos del '+fmtISO(t.deposito_desde)+' al '+fmtISO(t.deposito_hasta));
 async function vCardsContabilidad(v){
