@@ -261,3 +261,6 @@ create index if not exists idx_cards_fon_corte on cards.fondeos(corte_comision_i
 -- "Corte de comisiones" en Destinatarios: ¿se hace junto con cada corte de POS Settlement?
 alter table cards.avisos add column if not exists con_corte_pos boolean not null default true;
 insert into cards.avisos(evento, a_solicitante, a_tesoreria) values ('corte', false, false) on conflict do nothing;
+
+-- Correo de quien asignó el saldo (el usuario que "realiza el fondeo"): sale en el correo de saldo asignado.
+alter table cards.fondeos add column if not exists validado_por_email text;

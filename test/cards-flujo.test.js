@@ -162,3 +162,15 @@ test('correos: nombran a quien subió el CEP (el solicitante) y a quien subió e
   const asig = armarCorreoFondeo({ tipo: 'asignado', fondeo: f, comprobantes: [{ filename: 'saldo.png', adjunto: true, por: 'Omar Tesorería' }] });
   assert.match(asig.html, /saldo\.png/); assert.match(asig.html, /subido por Omar Tesorería/);
 });
+
+test('correo de saldo asignado: dice qué usuario realizó el fondeo (con su correo) y cuándo; rechazado y cancelada, quién y cuándo', () => {
+  const f = { folio: 'F1', ruta: 'Acme', empresa_nombre: 'Acme', fondeo: 1000, comision: 5, iva: 0.8, monto_recibido: 1005.8, solicitante_nombre: 'Ana Pérez',
+    validado_por: 'Omar Lara', validado_por_email: 'omar.lara@polipay.io', validado_at: '2026-10-26T22:45:00.000Z', rechazado_por: 'Tere Tesorería', cancelado_por: 'Ana Pérez' };
+  const a = armarCorreoFondeo({ tipo: 'asignado', fondeo: f });
+  assert.match(a.html, /Fondeo realizado por/); assert.match(a.html, /Omar Lara · omar\.lara@polipay\.io/); assert.match(a.html, /Asignado el/); assert.match(a.html, /26\/10\/2026 4:45 p\. ?m\./);
+  assert.match(a.text, /Fondeo realizado por: Omar Lara · omar\.lara@polipay\.io/);
+  assert.match(armarCorreoFondeo({ tipo: 'asignado', fondeo: { ...f, validado_por_email: null } }).html, /Fondeo realizado por[\s\S]*Omar Lara/);   // fondeos anteriores: solo el nombre
+  assert.match(armarCorreoFondeo({ tipo: 'rechazado', fondeo: f }).html, /Rechazado por/);
+  assert.match(armarCorreoFondeo({ tipo: 'cancelado', fondeo: f }).html, /Cancelado por/);
+  assert.doesNotMatch(armarCorreoFondeo({ tipo: 'por_asignar', fondeo: f }).html, /Fondeo realizado por/);        // aún no se realiza
+});
