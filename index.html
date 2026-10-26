@@ -875,7 +875,7 @@ function can(cap){if(!SES)return false;const M={
   disputas_ver:['admin','operador','tesoreria','bancos','consulta'],
   // Cards: se decide por el rol de Cards de la persona (SES.rol_cards), independiente de su rol en POS.
   cards_ver:['admin','comercial','cards_admin','cards_tesoreria','cards_consulta'],cards_panel:['admin','cards_admin','cards_consulta'],cards_fondeos:['admin','cards_admin','cards_tesoreria','cards_consulta'],
-  cards_solicitar:['admin','comercial','cards_admin'],cards_manual:['admin','cards_admin'],cards_asignar:['admin','cards_admin','cards_tesoreria'],cards_estructura:['admin','cards_admin'],cards_mis:['comercial'],
+  cards_solicitar:['admin','comercial','cards_admin'],cards_manual:['admin','cards_admin'],cards_asignar:['admin','cards_admin','cards_tesoreria'],cards_estructura:['admin','cards_admin'],cards_mis:['comercial'],cards_contabilidad:['admin','cards_admin','cards_consulta'],cards_contabilidad_adm:['admin','cards_admin'],
   ver:['admin','operador','tesoreria','bancos','consulta']
 };return (M[cap]||[]).includes(cap.startsWith('cards_')?SES.rol_cards:SES.rol);}
 
@@ -1315,6 +1315,8 @@ const NAV_CARDS=[
   {sec:'Catálogo',cap:'cards_estructura'},
   {id:'cards_estructura',t:'Empresas, UN y tarjetas',ic:'ic_09',cap:'cards_estructura'},
   {id:'cards_bancos',t:'Bancos',ic:'ic_12',cap:'cards_estructura'},
+  {sec:'Contabilidad',cap:'cards_contabilidad'},
+  {id:'cards_contabilidad',t:'Corte de comisiones',ic:'ic_15',cap:'cards_contabilidad'},
   {sec:'Avisos',cap:'cards_estructura'},
   {id:'cards_destinatarios',t:'Destinatarios',ic:'ic_17',cap:'cards_estructura'},
 ];
@@ -1358,7 +1360,7 @@ function renderNav(){
     (curBody || nav).append(link);
   }
 }
-const TITLES={cards_bandeja:['Por asignar','Fondeos con CEP aceptado, esperando que tesorería confirme la asignación del saldo'],cards_solicitudes:['Mis solicitudes','Solicita fondeos a tus empresas y sube el CEP del depósito'],cards_panel:['Polipay Cards Settlement · Panel','Fondeos recibidos, comisión e IVA y pendientes de control'],cards_fondeos:['Fondeos','Solicitudes de fondeo y depósitos recibidos de empresas, unidades de negocio y tarjetas, con su CEP'],cards_estructura:['Empresas, unidades de negocio y tarjetas','Estructura de Cards y la cuenta de fondeo (CLABE, beneficiario y banco) de cada una'],cards_bancos:['Bancos','Catálogo de bancos de Cards: identifica el banco de cada CLABE y se compara con el CEP'],cards_destinatarios:['Destinatarios','A quién se envía cada correo de Cards: nueva solicitud, por asignar, asignado, rechazado y cancelada'],dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],inventario:['Inventario de terminales','Terminales POS activas por grupo de cliente y afiliación, derivado de las transacciones ya ingestadas'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],retenciones:['Retenciones','Retenciones por financiamiento y revenue share aplicadas al monto a dispersar'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],
+const TITLES={cards_bandeja:['Por asignar','Fondeos con CEP aceptado, esperando que tesorería confirme la asignación del saldo'],cards_solicitudes:['Mis solicitudes','Solicita fondeos a tus empresas y sube el CEP del depósito'],cards_panel:['Polipay Cards Settlement · Panel','Fondeos recibidos, comisión e IVA y pendientes de control'],cards_fondeos:['Fondeos','Solicitudes de fondeo y depósitos recibidos de empresas, unidades de negocio y tarjetas, con su CEP'],cards_estructura:['Empresas, unidades de negocio y tarjetas','Estructura de Cards y la cuenta de fondeo (CLABE, beneficiario y banco) de cada una'],cards_bancos:['Bancos','Catálogo de bancos de Cards: identifica el banco de cada CLABE y se compara con el CEP'],cards_contabilidad:['Corte de comisiones','Comisiones cobradas más IVA, con la razón social y el RFC a facturar: lo guardado hasta cada corte'],cards_destinatarios:['Destinatarios','A quién se envía cada correo de Cards: nueva solicitud, por asignar, asignado, rechazado y cancelada'],dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],inventario:['Inventario de terminales','Terminales POS activas por grupo de cliente y afiliación, derivado de las transacciones ya ingestadas'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],retenciones:['Retenciones','Retenciones por financiamiento y revenue share aplicadas al monto a dispersar'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],
 cumplimiento:['PLD y antifraude','KPIs de cumplimiento por grupo de cliente y afiliación — monto procesado, operaciones inusuales, tasa de contracargos, duplicadas y devoluciones sospechosas'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],umbrales:['Parametrización de umbrales','Umbrales de PLD y antifraude que controlan las alertas automáticas y los indicadores de riesgo'],destinatarios:['Destinatarios','Correos que reciben el aviso automático de corte'],adm_usuarios:['Usuarios y accesos','Quién entra a cada sistema (POS Settlement, Tareas Ops y Cards) y con qué rol'],bitacora:['Bitácora','Trazabilidad de acciones'],
 disp_dashboard:['Panel de disputas','KPIs de contracargos, devoluciones y duplicados'],
 disp_chargebacks:['Disputas','Ciclo completo de disputa: 1er contracargo → representación → arbitraje'],
@@ -1412,7 +1414,7 @@ async function render(){renderNav();if(WORKSPACE==='cards')cardsContadores();
   try{await ({dashboard:vDashboard,ingesta:vIngesta,inventario:vInventario,contracargos:vContracargos,retenciones:vRetenciones,cortes:vCortes,contable:vContabilidadCortes,cumplimiento:vCumplimiento,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,umbrales:vUmbrales,destinatarios:vDestinatarios,bitacora:vBitacora,
     disp_dashboard:vDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC,disp_providers:vDispProviders,disp_reports:vDispReports,
     dest_liquidacion:vDestinatariosCorte,dest_liquidacion_cli:vDestinatariosCliente,dest_contabilidad:vDestinatariosContabilidad,dest_disputas:vDestDisputas,dest_alertas:vDestinatariosAlertas,
-    cards_panel:vCardsPanel,cards_fondeos:vCardsFondeos,cards_bandeja:vCardsBandeja,cards_solicitudes:vCardsSolicitudes,cards_estructura:vCardsEstructura,cards_bancos:vCardsBancos,cards_destinatarios:vCardsDestinatarios,adm_usuarios:vAdmUsuarios,
+    cards_panel:vCardsPanel,cards_fondeos:vCardsFondeos,cards_bandeja:vCardsBandeja,cards_solicitudes:vCardsSolicitudes,cards_estructura:vCardsEstructura,cards_bancos:vCardsBancos,cards_destinatarios:vCardsDestinatarios,cards_contabilidad:vCardsContabilidad,adm_usuarios:vAdmUsuarios,
     tar_mis_rutinas:vTarMisRutinas,tar_mis_tareas:vTarMisTareas,tar_tablero:vTarTablero,tar_emisor:vTarPorProducto,tar_spei:vTarPorProducto,tar_agregador:vTarPorProducto,tar_calendario:vTarCalendario,tar_entregables:vEntregables,tar_reportes:vTarReportes,tar_miembros:vTarMiembros}[VIEW]||vDashboard)(v);}
   catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
 }
@@ -5687,8 +5689,9 @@ async function editEntidad(e,nuevo,ents){
   const esNueva=!e;
   const nivel=esNueva?nuevo.nivel:e.nivel;
   const padre=esNueva&&nuevo.parent_id?ents.find(x=>x.id===nuevo.parent_id):(e&&e.parent_id?ents.find(x=>x.id===e.parent_id):null);
-  const refLbl={EMPRESA:'RFC',UN:'Clave interna',TARJETA:'Últimos 4 dígitos o alias'}[nivel];
+  const refLbl={EMPRESA:'RFC para facturar',UN:'Clave interna',TARJETA:'Últimos 4 dígitos o alias'}[nivel];
   const nombre=el('input',{id:'enNombre',maxlength:'120',autocomplete:'off',value:e?e.nombre:''});
+  const razon=el('input',{id:'enRazon',maxlength:'160',autocomplete:'off',placeholder:'Como aparece en su constancia fiscal',value:e&&e.razon_social?e.razon_social:''});
   const ref=el('input',{id:'enRef',maxlength:'60',autocomplete:'off',value:e&&e.referencia?e.referencia:''});
   const clabe=el('input',{id:'enClabe',inputmode:'numeric',maxlength:'22',autocomplete:'off',placeholder:'18 dígitos',value:e?e.clabe:''});
   const aviso=el('div',{class:'req-note','aria-live':'polite'});
@@ -5717,7 +5720,7 @@ async function editEntidad(e,nuevo,ents){
   const activo=el('input',{id:'enActivo',type:'checkbox'});activo.checked=e?e.activo:true;
   const body=el('div',{});
   if(padre)body.append(el('div',{class:'banner'},'Pertenece a: ',el('b',{},padre.ruta)));
-  body.append(fld('Nombre',nombre),el('div',{class:'form-grid'},fld(refLbl+' (opcional)',ref),fld('CLABE de fondeo',clabe)),aviso,
+  body.append(fld('Nombre',nombre),...(nivel==='EMPRESA'?[fld('Razón social para facturar',razon)]:[]),el('div',{class:'form-grid'},fld(refLbl+(nivel==='EMPRESA'?'':' (opcional)'),ref),fld('CLABE de fondeo',clabe)),aviso,
     el('div',{class:'form-grid'},fld('Beneficiario',benef),fld('Banco beneficiario',bancoBox)),
     el('div',{class:'form-grid'},fld('Comisión % sobre el fondeo'+(nivel==='EMPRESA'?'':' (vacío = hereda)'),com),fld('IVA % sobre la comisión'+(nivel==='EMPRESA'?'':' (vacío = hereda)'),iva)));
   body.append(fld('Notas',notas));
@@ -5728,7 +5731,7 @@ async function editEntidad(e,nuevo,ents){
   const guardar=el('button',{class:'btn',type:'button'},'Guardar');
   foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),guardar);
   guardar.onclick=async()=>{guardar.disabled=true;try{
-    const b={nombre:nombre.value,referencia:ref.value,clabe:clabe.value,beneficiario:benef.value,banco_codigo:bancoCod,comision_pct:com.value,iva_pct:iva.value,notas:notas.value};
+    const b={nombre:nombre.value,razon_social:razon.value,referencia:ref.value,clabe:clabe.value,beneficiario:benef.value,banco_codigo:bancoCod,comision_pct:com.value,iva_pct:iva.value,notas:notas.value};
     if(esNueva){b.nivel=nivel;if(nuevo.parent_id)b.parent_id=nuevo.parent_id;await api('POST','/api/cards/entidades',b);}
     else{b.activo=activo.checked;await api('PUT','/api/cards/entidades/'+e.id,b);}
     closeModal();toast('Guardado','ok');render();
@@ -5759,9 +5762,9 @@ async function vCardsDestinatarios(v){
     grid.append(el('section',{class:'mz-card','aria-label':ev.nombre},
       el('div',{class:'dst-cab'},el('h5',{},ev.nombre),el('label',{class:'chk',title:'Enviar este correo'},activo,' Se envía')),
       el('small',{class:'muted'},ev.cuando),res,
-      el('div',{class:'dst-sec'},'Recibe automáticamente'),
-      chk('as_'+ev.id,'Quien solicitó','a_solicitante'),chk('at_'+ev.id,'Tesorería Cards (usuarios con ese rol)','a_tesoreria'),
-      el('div',{class:'dst-sec'},'Además, estos correos'),filas,
+      ...(ev.auto===false?[]:[el('div',{class:'dst-sec'},'Recibe automáticamente'),chk('as_'+ev.id,'Quien solicitó','a_solicitante'),chk('at_'+ev.id,'Tesorería Cards (usuarios con ese rol)','a_tesoreria')]),
+      ...(ev.id==='corte'?[el('div',{class:'dst-sec'},'Cuándo se hace'),chk('cp_'+ev.id,'Junto con cada corte de POS Settlement','con_corte_pos')]:[]),
+      el('div',{class:'dst-sec'},ev.auto===false?'Se envía a estos correos':'Además, estos correos'),filas,
       el('button',{class:'btn ghost sm',type:'button',style:'align-self:flex-start;margin-top:6px',onclick:()=>editDestinatarioCards(null,ev)},'+ Agregar correo')));
   });
   v.append(grid);
@@ -5779,6 +5782,65 @@ function editDestinatarioCards(d,ev){
   foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),guardar);
   guardar.onclick=async()=>{guardar.disabled=true;try{await api('POST','/api/cards/destinatarios',{id:d.id,evento:ev.id,email:email.value,nombre:nombre.value,tipo:tipo.value,activo:activo.checked});closeModal();toast('Guardado','ok');render();}catch(er){toast(er.data&&er.data.mensaje?er.data.mensaje:errMsg(er),'err');guardar.disabled=false;}};
   modal(nuevo?'Nuevo destinatario':'Editar destinatario',body,foot);email.focus();
+}
+
+/* ---------- Contabilidad: corte de comisiones de BSO Cards (acumulado, como el de MCEB) ---------- */
+const tablaCorte=(resumen,vacio)=>tableWrap(['Razón social a facturar','RFC',{t:'Fondeos'},{t:'Comisión'},{t:'IVA'},{t:'Total a facturar'}],
+  resumen.map(e=>[`<div class="tt">${e.razon_social?esc(e.razon_social):'<span class="badge warn">Falta razón social</span>'}<small>${esc(e.empresa)}</small></div>`,e.rfc?`<span class="mono">${esc(e.rfc)}</span>${e.falta&&e.falta.includes('RFC válido')?' <span class="badge warn">RFC no válido</span>':''}`:'<span class="badge warn">Falta RFC</span>',{num:e.fondeos},{num:mxn(e.comision)},{num:mxn(e.iva)},{num:'<b>'+mxn(e.total)+'</b>'}]),{empty:vacio});
+const cifrasCorte=t=>cards([['Fondeos',t.fondeos||0],['Comisión',mxn(t.comision||0)],['IVA',mxn(t.iva||0)],['Total a facturar',mxn(t.total||0)]]);
+const depositosTxt=t=>!t||!t.deposito_desde?'sin depósitos':(t.deposito_desde===t.deposito_hasta?'depósitos del '+fmtISO(t.deposito_desde):'depósitos del '+fmtISO(t.deposito_desde)+' al '+fmtISO(t.deposito_hasta));
+async function vCardsContabilidad(v){
+  const d=await api('GET','/api/cards/contabilidad');
+  const adm=can('cards_contabilidad_adm');
+  v.innerHTML='';
+  cardsAcciones(adm&&el('button',{class:'btn',onclick:()=>hacerCorteCards(d)},'Hacer corte'));
+  v.append(el('div',{class:'banner',html:`Igual que el corte de MCEB: al hacer el corte entra <b>todo lo ya guardado</b> (fondeos <b>asignados</b>, con su <b>fecha de depósito</b>) que no esté en otro corte, y se manda a contabilidad con las <b>comisiones más IVA</b> y la <b>razón social y RFC</b> a facturar. Lo que no estaba guardado cae en el <b>siguiente corte</b>. ${d.envio.con_corte_pos?'Se hace <b>junto con cada corte de POS Settlement</b>.':'Está desactivado el corte junto con el de POS: se hace a mano.'} ${d.envio.destinatarios?`Se envía a <b>${d.envio.destinatarios}</b> destinatario(s) “Para”.`:'<b>Aún no hay destinatarios “Para”</b>: agrégalos en Destinatarios.'}`}));
+  const pp=el('div',{class:'panel'});
+  pp.append(el('h3',{},'Por cortar',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px'},depositosTxt(d.pendiente.totales)))),cifrasCorte(d.pendiente.totales),tablaCorte(d.pendiente.resumen,'Nada por cortar: todo lo asignado ya entró a un corte.'));
+  v.append(pp);
+  const pc=el('div',{class:'panel'});
+  pc.append(el('h3',{},'Cortes'));
+  const filas=d.cortes.map(c=>{
+    const est=c.estado==='ENVIADO'?`<span class="badge ok">Enviado</span><small class="muted" style="display:block">${c.enviado_at?new Date(c.enviado_at).toLocaleString('es-MX',{dateStyle:'short',timeStyle:'short'}):''}</small>`:'<span class="badge warn">Sin enviar</span>';
+    const r=[`<div class="tt">${esc(fmtISO(c.fecha_corte))}<small>${c.origen==='POS'?'con el corte de POS'+(c.pos_corte_id?' #'+c.pos_corte_id:''):'a mano'}</small></div>`,`<small>${esc(depositosTxt(c.totales))}</small>`,{num:c.totales.empresas||0},{num:mxn(c.totales.comision||0)},{num:mxn(c.totales.iva||0)},{num:'<b>'+mxn(c.totales.total||0)+'</b>'},est];
+    r._onclick=()=>verCorte(c.id,adm);return r;});
+  pc.append(tableWrap(['Corte','Depósitos',{t:'Empresas'},{t:'Comisión'},{t:'IVA'},{t:'Total a facturar'},'Estado'],filas,{empty:'Todavía no hay cortes. El primero se hace con el siguiente corte de POS Settlement o con “Hacer corte”.'}));
+  v.append(pc);
+}
+function hacerCorteCards(d){
+  const hasta=el('input',{id:'ctHasta',type:'date',value:d.hoy,max:d.hoy});
+  const enviar=el('input',{id:'ctEnviar',type:'checkbox'});enviar.checked=d.envio.destinatarios>0;
+  const body=el('div',{},el('div',{class:'banner'},'Entra todo lo asignado y guardado hasta ahora que no esté en otro corte. Ahora hay por cortar: ',el('b',{},(d.pendiente.totales.fondeos||0)+' fondeo(s) · '+mxn(d.pendiente.totales.total||0)+' a facturar'),'.'),
+    fld('Depósitos hasta el',hasta),el('div',{class:'req-note'},'Los depósitos posteriores a esa fecha quedan para el siguiente corte.'),
+    el('label',{class:'chk'},enviar,' Enviarlo por correo a contabilidad ahora'),d.envio.destinatarios?'':el('div',{class:'req-note'},'No hay destinatarios “Para” configurados: se hará el corte pero no se enviará.'));
+  const ok=el('button',{class:'btn',type:'button'},'Hacer corte');
+  ok.onclick=async()=>{ok.disabled=true;try{
+    const r=await api('POST','/api/cards/contabilidad/cortes',{hasta:hasta.value,enviar:enviar.checked});
+    closeModal();
+    if(r.envio&&r.envio.ok)toast('Corte hecho y enviado a '+r.envio.destinatarios+' destinatario(s)','ok');
+    else if(r.envio&&r.envio.error)toast('Corte hecho; no se envió: '+(r.envio.mensaje||r.envio.error),'err');
+    else toast('Corte hecho','ok');
+    render();verCorte(r.id,true);
+  }catch(e){toast(e.data&&e.data.mensaje?e.data.mensaje:errMsg(e),'err');ok.disabled=false;}};
+  modal('Hacer corte de comisiones',body,el('div',{},el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),ok));
+}
+async function verCorte(id,adm){
+  let c;try{c=await api('GET','/api/cards/contabilidad/cortes/'+id);}catch(e){toast(errMsg(e),'err');return;}
+  const t=c.totales||{};
+  const body=el('div',{},el('div',{class:'detalle-head'},el('span',{class:'badge '+(c.estado==='ENVIADO'?'ok':'warn')},c.estado==='ENVIADO'?'Enviado':'Sin enviar'),el('span',{class:'muted'},'Corte del '+fmtISO(c.fecha_corte)+' · '+depositosTxt(t)+(c.origen==='POS'?' · con el corte de POS'+(c.pos_corte_id?' #'+c.pos_corte_id:''):' · a mano')),
+      el('span',{class:'muted'},c.estado==='ENVIADO'&&c.enviado_at?'Enviado '+new Date(c.enviado_at).toLocaleString('es-MX',{dateStyle:'medium',timeStyle:'short'}):'')),
+    cifrasCorte(t),tablaCorte(c.resumen||[],'No hubo comisiones por facturar: no se guardó ningún fondeo nuevo desde el corte anterior.'));
+  if(c.enviado_a)body.append(el('div',{class:'req-note'},'Enviado a: '+c.enviado_a));
+  const foot=el('div',{});
+  if(adm&&c.estado!=='ENVIADO')foot.append(el('button',{class:'btn danger',type:'button',style:'margin-right:auto',onclick:async()=>{
+    if(!await confirmar('¿Deshacer este corte? Sus '+(t.fondeos||0)+' fondeo(s) vuelven a quedar por cortar.',{ok:'Deshacer corte',titulo:'Deshacer corte'}))return;
+    try{await api('DELETE','/api/cards/contabilidad/cortes/'+id);closeModal();toast('Corte deshecho','ok');render();}catch(e){toast(e.data&&e.data.mensaje?e.data.mensaje:errMsg(e),'err');}}},'Deshacer corte'));
+  foot.append(el('button',{class:'btn secondary',type:'button',onclick:()=>descargar('/api/cards/contabilidad/cortes/'+id+'/excel','corte_comisiones_'+c.fecha_corte+'_'+id+'.xlsx').catch(e=>toast(errMsg(e),'err'))},'⬇ Excel'));
+  if(adm)foot.append(el('button',{class:'btn',type:'button',onclick:async()=>{
+    if(!await confirmar((c.estado==='ENVIADO'?'¿Reenviar':'¿Enviar')+' este corte a los destinatarios?',{ok:c.estado==='ENVIADO'?'Reenviar':'Enviar',peligro:false,titulo:'Enviar corte'}))return;
+    try{const r=await api('POST','/api/cards/contabilidad/cortes/'+id+'/enviar');closeModal();toast('Corte enviado a '+r.destinatarios+' destinatario(s)','ok');render();}catch(e){toast(e.data&&e.data.mensaje?e.data.mensaje:errMsg(e),'err');}}},c.estado==='ENVIADO'?'Reenviar por correo':'Enviar por correo'));
+  foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cerrar'));
+  modal('Corte de comisiones',body,foot,true);
 }
 
 /* ---------- Bancos de Cards (catálogo copiado de Bancos SPEI) ---------- */

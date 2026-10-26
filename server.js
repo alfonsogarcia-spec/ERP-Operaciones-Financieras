@@ -2094,6 +2094,8 @@ app.get('/api/cortes/fechas', auth, async (req, res) => {
   res.json({ fechas: rows.map(r => ({ iso: r.fecha_liq, n: r.n })), sinLiq });
 });
 
+// Gancho con Cards (BSO): al hacerse un corte aquí se hace también el corte de comisiones de Cards (lib/cards-routes.js).
+const cardsHooks = {};
 app.post('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res) => {
   if (!dbReady(res)) return;
   const iso = (req.body || {}).fecha_liq; if (!iso) return res.status(400).json({ error: 'fecha_liq' });
@@ -2115,6 +2117,7 @@ app.post('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res)
   // generación del corte.
   const alertasTrans = await evaluarAlertasTransaccionalidad(idCorte, c.calculos, iso).catch(e => { console.error('[alertas_transaccionalidad]', e.message); return []; });
   await bit(req, 'corte_generar', `${E.fmtFecha(E.parseFecha(iso))}, ${c.calculos.length} grupos${aplicadas?`, ledger: ${aplicadas} aplicaciones por ${montoAplicado}`:''}${alertasTrans.length?`, ⚠ ${alertasTrans.length} caída(s) de transaccionalidad`:''}`, { resource_type: 'corte', resource_id: idCorte });
+  if (cardsHooks.alCortePOS) cardsHooks.alCortePOS({ idCorte, fecha_liq: iso, quien: req.user.nombre }).catch(() => { /* de mejor esfuerzo */ });
   res.json({ id_corte: idCorte, contracargos_no_aplicados: c.cc_no_aplicados, ledger_aplicaciones: aplicadas, ledger_monto_aplicado: montoAplicado, alertas_transaccionalidad: alertasTrans });
 });
 
@@ -5173,7 +5176,7 @@ mountTareasRoutes(app, { auth, requiereRol, bit, db, X });
 
 /* ---------- Módulo CARDS (BSO) · fondeos de empresas, UN y tarjetas ---------- */
 const { mountCardsRoutes } = require('./lib/cards-routes.js');
-mountCardsRoutes(app, { auth, requiereRol, bit, db, C, X, enviarXLSX, sesEnabled, sendSES });
+mountCardsRoutes(app, { auth, requiereRol, bit, db, C, X, enviarXLSX, sesEnabled, sendSES, hooks: cardsHooks });
 
 /* ---------- Módulo ENTREGABLES · Portal de solicitudes (fase 5) ---------- */
 const { mountEntregablesRoutes } = require('./lib/entregables-routes.js');

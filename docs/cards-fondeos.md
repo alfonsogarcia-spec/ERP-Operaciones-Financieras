@@ -80,6 +80,16 @@ Un archivo **no se acepta repetido**, ni como CEP ni como comprobante del sistem
 - Un archivo ya cargado como CEP no se acepta como comprobante, y al revés.
 Cada intento rechazado queda en el historial del fondeo. Solo detecta archivos **idénticos**: una captura vuelta a tomar o guardada de nuevo es otro archivo distinto.
 
+## Contabilidad: corte de comisiones (BSO Cards)
+
+Cards → **Contabilidad → Corte de comisiones**. Funciona **como el corte de MCEB**: al hacer el corte entra **todo lo que ya está guardado** y no ha entrado a otro corte, y se manda a contabilidad con las **comisiones cobradas más IVA** y la **razón social y el RFC a los que se factura**, con el detalle en Excel.
+- **Qué entra:** los fondeos **asignados** por tesorería, **según su fecha de depósito** (el corte lleva “depósitos hasta el…”; por defecto, hasta hoy). Cada fondeo entra a **un solo corte**. **Lo que no estaba guardado** (o se asigna después) **cae en el siguiente corte**, aunque su depósito sea anterior. Se suma por empresa (las UN y tarjetas se acumulan en su empresa): comisión + IVA = **total a facturar**, con la comisión y el IVA congelados en cada fondeo.
+- **Cuándo se hace:** **junto con cada corte de POS Settlement** (al generarse el corte en POS se hace también el de Cards y se manda; es de mejor esfuerzo y nunca interfiere con el de POS; no repite si hace menos de 30 minutos que ya se hizo uno) o **a mano** con **Hacer corte** (con la fecha “Depósitos hasta el…” y la opción de enviarlo en el momento). Lo de “junto con el corte de POS” se puede apagar en Destinatarios.
+- **Si no hay nada nuevo**, el corte se hace y **se envía igual, en ceros**.
+- **Datos fiscales:** en Empresas, UN y tarjetas, cada empresa tiene **Razón social para facturar** y **RFC** (se valida: 12 caracteres persona moral, 13 persona física; se guarda en mayúsculas). Si falta alguno, el corte lo marca (“Falta razón social”, “Falta RFC”) y el correo lo lista en “Datos fiscales por completar”.
+- **El correo** (“[BSO Cards] Corte de comisiones · al 26 de octubre de 2026 · $… a facturar”, remitente “Polipay · Operaciones · BSO”): la fecha del corte y el rango de depósitos, una tabla por empresa (razón social, RFC, comisión, IVA, total a facturar), el total, y el Excel adjunto (hoja de facturación y detalle por fondeo con su fecha de depósito). Se manda a los destinatarios del correo **“Corte de comisiones (contabilidad)”** en Destinatarios (Para/CC/CCO); **sin al menos un “Para” el corte se hace pero no se envía**.
+- **La pantalla:** **Por cortar** (lo asignado que aún no entra a un corte, por empresa), la lista de **Cortes** (fecha, si fue con el de POS o a mano, depósitos, empresas, comisión, IVA, total, enviado), y el detalle de cada corte con **Excel**, **Reenviar** y **Deshacer corte** (solo si no se ha enviado: sus fondeos vuelven a quedar por cortar). Lo ven administradores y Consulta Cards; hacer, enviar y deshacer, solo administradores.
+
 ## Candado de asignación
 
 **Sin un CEP validado por el sistema no se puede poner “saldo asignado”**, ni con nota, ni siendo administrador. Se exige en tres capas:
@@ -177,6 +187,7 @@ El envío nunca bloquea la operación.
 - **Panel**: asignado del periodo, por empresa y pendientes de control.
 - **Empresas, UN y tarjetas**: árbol con cuenta de fondeo (CLABE, beneficiario y banco), tasas.
 - **Bancos**: catálogo de bancos de Cards.
+- **Corte de comisiones** (Contabilidad): lo por cortar y los cortes hechos, con Excel, reenvío y “Hacer corte”.
 - **Destinatarios**: a quién se envía cada correo de Cards (automáticos y fijos, por correo). Correo y nombre se guardan cifrados.
 
 ## Pendiente de decidir

@@ -233,3 +233,31 @@ on conflict do nothing;
 -- Los correos de estatus posteriores salen como respuesta suya ("Re: …") y caen en la misma conversación.
 alter table cards.fondeos add column if not exists correo_msgid  text;
 alter table cards.fondeos add column if not exists correo_asunto text;
+
+-- ===== CONTABILIDAD: corte de comisiones (acumulado, como el corte de MCEB) =====
+-- Razón social con la que se factura a la empresa (el RFC es `referencia`, como siempre).
+alter table cards.entidades add column if not exists razon_social text;
+-- Cada corte congela lo cobrado y guardado hasta ese momento: fondeos ASIGNADOS con su fecha de depósito, que aún no entraron a otro corte.
+-- Lo que no estaba guardado (o se asigna después) cae en el siguiente corte. Cada fondeo entra a un solo corte.
+create table if not exists cards.cortes_comision (
+  id             serial primary key,
+  fecha_corte    date not null,                          -- día en que se hizo (hora de CDMX)
+  depositos_hasta date not null,                         -- entran los depósitos hasta esta fecha
+  origen         text not null default 'MANUAL' check (origen in ('MANUAL','POS')),
+  pos_corte_id   integer,                                -- el corte de POS Settlement con el que se hizo
+  estado         text not null default 'GENERADO' check (estado in ('GENERADO','ENVIADO')),
+  resumen        jsonb not null default '[]'::jsonb,     -- por empresa: razón social, RFC, fondeos, comisión, IVA, total a facturar
+  detalle        jsonb not null default '[]'::jsonb,     -- por fondeo
+  totales        jsonb not null default '{}'::jsonb,
+  generado_por   text,
+  generado_at    timestamptz not null default now(),
+  enviado_at     timestamptz,
+  enviado_por    text,
+  enviado_a      text,
+  message_id     text
+);
+alter table cards.fondeos add column if not exists corte_comision_id integer references cards.cortes_comision(id) on delete set null;
+create index if not exists idx_cards_fon_corte on cards.fondeos(corte_comision_id);
+-- "Corte de comisiones" en Destinatarios: ¿se hace junto con cada corte de POS Settlement?
+alter table cards.avisos add column if not exists con_corte_pos boolean not null default true;
+insert into cards.avisos(evento, a_solicitante, a_tesoreria) values ('corte', false, false) on conflict do nothing;
