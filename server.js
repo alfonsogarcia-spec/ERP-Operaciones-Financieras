@@ -1153,6 +1153,7 @@ async function construirInventarioTerminales() {
      group by cliente, numero_afiliacion, terminal
   `)).rows;
   const grupos = await getGrupos();
+  const razonPorAfil = new Map((await getAfiliaciones()).map(a => [String(a.numero_afiliacion), a.razon_social || '']));
   const grupoPorNombre = nombre => grupos.find(g => nrm(g.nombre_cliente) === nrm(nombre));
   const porGrupo = new Map();
   for (const r of rows) {
@@ -1161,7 +1162,7 @@ async function construirInventarioTerminales() {
     const nombreGrupo = g ? g.nombre_cliente : (r.cliente || '(sin homologar)');
     if (!porGrupo.has(idGrupo)) porGrupo.set(idGrupo, { id_grupo: idGrupo, nombre_cliente: nombreGrupo, afiliaciones: new Map() });
     const grupoObj = porGrupo.get(idGrupo);
-    if (!grupoObj.afiliaciones.has(r.numero_afiliacion)) grupoObj.afiliaciones.set(r.numero_afiliacion, { numero_afiliacion: r.numero_afiliacion, terminales: [] });
+    if (!grupoObj.afiliaciones.has(r.numero_afiliacion)) grupoObj.afiliaciones.set(r.numero_afiliacion, { numero_afiliacion: r.numero_afiliacion, razon_social: razonPorAfil.get(String(r.numero_afiliacion)) || '', terminales: [] });
     grupoObj.afiliaciones.get(r.numero_afiliacion).terminales.push({ terminal: r.terminal, n_trx: r.n_trx, primera: r.primera, ultima: r.ultima });
   }
   return [...porGrupo.values()].map(g => {
@@ -1194,14 +1195,14 @@ app.get('/api/inventario/terminales.xlsx', auth, async (req, res) => {
   for (const g of filtrados) {
     for (const a of g.afiliaciones) {
       if (afilFiltro && a.numero_afiliacion !== afilFiltro) continue;
-      for (const t of a.terminales) rowsL.push([g.nombre_cliente, a.numero_afiliacion, t.terminal, t.n_trx, t.primera, t.ultima]);
+      for (const t of a.terminales) rowsL.push([g.nombre_cliente, a.numero_afiliacion, a.razon_social, t.terminal, t.n_trx, t.primera, t.ultima]);
     }
   }
-  const head = ['Grupo de cliente', 'Afiliación', 'Número de serie (terminal)', 'Transacciones', 'Primera transacción', 'Última transacción'];
+  const head = ['Grupo de cliente', 'Afiliación', 'Razón social', 'Número de serie (terminal)', 'Transacciones', 'Primera transacción', 'Última transacción'];
   const buf = X.buildXLSX([{
     name: 'INVENTARIO',
     aoa: [head, ...rowsL],
-    cols: [{ wch: 28 }, { wch: 16 }, { wch: 24 }, { wch: 14 }, { wch: 16 }, { wch: 16 }],
+    cols: [{ wch: 28 }, { wch: 16 }, { wch: 34 }, { wch: 24 }, { wch: 14 }, { wch: 16 }, { wch: 16 }],
   }]);
   await bit(req, 'inventario_terminales', `exportó inventario de terminales${idGrupo != null ? ' grupo #' + idGrupo : ''}${afilFiltro ? ' afil ' + afilFiltro : ''} (${rowsL.length} terminales)`);
   enviarXLSX(res, `inventario_terminales${idGrupo != null ? '_grupo' + idGrupo : ''}${afilFiltro ? '_' + afilFiltro : ''}.xlsx`, buf);

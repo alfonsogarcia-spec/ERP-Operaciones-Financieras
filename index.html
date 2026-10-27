@@ -2387,7 +2387,7 @@ function abrirDetalleInventario(g){
   g.afiliaciones.forEach(a=>{
     const sec=el('div',{style:'margin-bottom:18px'});
     sec.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'},
-      el('div',{},el('b',{},'Afiliación '+esc(a.numero_afiliacion)),el('span',{class:'muted',style:'margin-left:8px'},a.n_terminales+' terminal(es)')),
+      el('div',{},el('b',{},'Afiliación '+esc(a.numero_afiliacion)),el('span',{class:'muted',style:'margin-left:8px'},a.n_terminales+' terminal(es)'),a.razon_social?el('div',{style:'margin-top:2px'},a.razon_social):''),
       el('button',{class:'btn ghost sm',onclick:()=>descargar('/api/inventario/terminales.xlsx?id_grupo='+g.id_grupo+'&afil='+encodeURIComponent(a.numero_afiliacion),'inventario_'+g.nombre_cliente.replace(/\W+/g,'_')+'_'+a.numero_afiliacion+'.xlsx').catch(e=>toast(errMsg(e),'err'))},'⬇ Descargar')
     ));
     const rowsA=a.terminales.map(t=>[t.terminal,{num:t.n_trx},fmtISO(t.primera||''),fmtISO(t.ultima||'')]);
