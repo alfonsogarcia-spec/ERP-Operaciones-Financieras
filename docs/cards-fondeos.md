@@ -178,6 +178,8 @@ Cada correo tiene **sus propios destinatarios**, que se configuran en Cards → 
 
 Por cada correo se define: **Se envía** (se puede apagar; queda constancia en el historial), **Recibe automáticamente** (quien solicitó y/o los usuarios Tesorería Cards, en cualquier combinación) y **Además, estos correos** (fijos, cada uno Para, CC o CCO; el mismo correo puede estar en varios avisos). Se necesita al menos un destinatario “Para”; si “Por asignar” queda sin nadie, va a los administradores. Los correos y nombres fijos se guardan cifrados.
 
+**Agregar varios a la vez.** Cada tarjeta tiene **+ Agregar varios**: se pegan los correos (separados por coma, punto y coma, espacios o un correo por renglón; también sirve «Nombre <correo>»), se elige Para / CC / CCO y a **cuáles correos de Cards** se agregan (por omisión, el de esa tarjeta; se pueden marcar varios). Antes de guardar se muestra cuántos son nuevos, cuántos ya estaban y cuáles no son válidos (se omiten); máximo 200 por alta. Los que ya estaban en un aviso no se duplican.
+
 Requiere el correo (SES) configurado en el servidor; si no lo está, el fondeo avanza igual y el historial deja constancia (“no se envió”).
 El envío nunca bloquea la operación.
 

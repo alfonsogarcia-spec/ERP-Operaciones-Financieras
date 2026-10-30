@@ -5768,9 +5768,48 @@ async function vCardsDestinatarios(v){
       ...(ev.auto===false?[]:[el('div',{class:'dst-sec'},'Recibe automáticamente'),chk('as_'+ev.id,'Quien solicitó','a_solicitante'),chk('at_'+ev.id,'Tesorería Cards (usuarios con ese rol)','a_tesoreria')]),
       ...(ev.id==='corte'?[el('div',{class:'dst-sec'},'Cuándo se hace'),chk('cp_'+ev.id,'Junto con cada corte de POS Settlement','con_corte_pos')]:[]),
       el('div',{class:'dst-sec'},ev.auto===false?'Se envía a estos correos':'Además, estos correos'),filas,
-      el('button',{class:'btn ghost sm',type:'button',style:'align-self:flex-start;margin-top:6px',onclick:()=>editDestinatarioCards(null,ev)},'+ Agregar correo')));
+      el('div',{style:'display:flex;gap:8px;flex-wrap:wrap;margin-top:6px'},
+        el('button',{class:'btn ghost sm',type:'button',onclick:()=>editDestinatarioCards(null,ev)},'+ Agregar correo'),
+        el('button',{class:'btn ghost sm',type:'button',onclick:()=>masivoDestinatariosCards(ev,d.eventos)},'+ Agregar varios'))));
   });
   v.append(grid);
+}
+/* Alta masiva: se pegan varios correos y se agregan a este aviso (o a varios a la vez). */
+function masivoDestinatariosCards(ev,eventos){
+  const texto=el('textarea',{id:'dmTexto',rows:'7',autocomplete:'off',spellcheck:'false',style:'width:100%;font-family:inherit',placeholder:'ana@empresa.com\nbeto@empresa.com, carla@empresa.com\nDaniela Ruiz <daniela@empresa.com>'});
+  const tipo=el('select',{id:'dmTipo'},el('option',{value:'to'},'Para (To)'),el('option',{value:'cc'},'Copia (CC)'),el('option',{value:'bcc'},'Copia oculta (CCO)'));
+  const cks=eventos.map(e=>{const i=el('input',{id:'dmEv_'+e.id,type:'checkbox'});i.checked=e.id===ev.id;i.addEventListener('change',revisa);return [e,i];});
+  const resumen=el('div',{class:'muted',style:'min-height:1.4em;font-size:var(--fs-sm)',role:'status','aria-live':'polite'});
+  const guardar=el('button',{class:'btn',type:'button',disabled:true},'Agregar');
+  const elegidos=()=>cks.filter(([,i])=>i.checked).map(([e])=>e.id);
+  let seq=0,temporizador=null,ultimo=null;
+  async function revisa(){
+    clearTimeout(temporizador);ultimo=null;guardar.disabled=true;guardar.textContent='Agregar';
+    if(!texto.value.trim()){resumen.textContent='Pega los correos, separados por coma, espacio o un renglón por correo. Puedes escribir «Nombre <correo>».';return;}
+    if(!elegidos().length){resumen.textContent='Elige al menos un correo de Cards.';return;}
+    const mi=++seq;
+    temporizador=setTimeout(async()=>{
+      try{
+        const r=await api('POST','/api/cards/destinatarios/masivo',{eventos:elegidos(),texto:texto.value,tipo:tipo.value,simular:true});
+        if(mi!==seq)return;
+        ultimo=r;
+        const nuevos=r.eventos.reduce((a,x)=>a+x.nuevos,0);
+        const partes=[r.detectados+' correo'+(r.detectados===1?'':'s')+' detectado'+(r.detectados===1?'':'s')];
+        r.eventos.forEach(x=>{const e=eventos.find(y=>y.id===x.evento);partes.push((r.eventos.length>1?e.nombre+': ':'')+x.nuevos+' nuevo'+(x.nuevos===1?'':'s')+(x.repetidos?' · '+x.repetidos+' ya estaba'+(x.repetidos===1?'':'n'):''));});
+        if(r.repetidos_en_texto)partes.push(r.repetidos_en_texto+' repetido'+(r.repetidos_en_texto===1?'':'s')+' en lo pegado');
+        resumen.innerHTML=esc(partes.join(' · '))+(r.n_invalidos?'<br><span style="color:var(--bad,#b3261e)">No son correos válidos ('+r.n_invalidos+'): '+esc(r.invalidos.join(', '))+'. Se omiten.</span>':'');
+        guardar.disabled=nuevos===0;guardar.textContent=nuevos?'Agregar '+nuevos:'Agregar';
+      }catch(er){if(mi!==seq)return;resumen.textContent=er.data&&er.data.mensaje?er.data.mensaje:errMsg(er);}
+    },300);
+  }
+  texto.addEventListener('input',revisa);tipo.addEventListener('change',revisa);
+  const lista=el('div',{style:'display:grid;gap:4px'},...cks.map(([e,i])=>el('label',{class:'chk'},i,' '+e.nombre)));
+  const body=el('div',{},el('div',{class:'banner'},'Correo: ',el('b',{},ev.nombre)),fld('Correos',texto),fld('Tipo',tipo),
+    el('div',{class:'dst-sec'},'Agregar a estos correos de Cards'),lista,resumen);
+  const foot=el('div',{});
+  foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),guardar);
+  guardar.onclick=async()=>{guardar.disabled=true;try{const r=await api('POST','/api/cards/destinatarios/masivo',{eventos:elegidos(),texto:texto.value,tipo:tipo.value});const n=r.eventos.reduce((a,x)=>a+x.nuevos,0);closeModal();toast(n+' correo'+(n===1?'':'s')+' agregado'+(n===1?'':'s'),'ok');render();}catch(er){toast(er.data&&er.data.mensaje?er.data.mensaje:errMsg(er),'err');guardar.disabled=false;}};
+  modal('Agregar varios correos',body,foot);texto.focus();revisa();
 }
 function editDestinatarioCards(d,ev){
   const nuevo=!d;d=d||{};
