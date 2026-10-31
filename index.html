@@ -5477,10 +5477,11 @@ async function formularioFondeo(ex){
 /* ---------- Detalle de un fondeo: por pasos para tesorería (por asignar) y ticket para todo lo demás ---------- */
 const fmtCheck=(k,x)=>x==null||x===''?'—':(k==='monto'?mxn(x):k==='clabe'?clabeFmt(x):k==='fecha'?fmtISO(x):x);
 
-async function abrirFondeo(id){
+async function abrirFondeo(id,pasoIni){
   let f;try{f=await api('GET','/api/cards/fondeos/'+id);}catch(e){toast(errMsg(e),'err');return;}
   const pu=f.puede||{},tesoreria=can('cards_asignar'),sol=f.origen==='SOLICITUD',cand=f.candado||{abierto:true};
-  const recargar=()=>{render();abrirFondeo(id);};
+  let pasoVivo=null;                         // paso en el que está tesorería: al recargar (subir/quitar archivos) se vuelve a abrir ahí
+  const recargar=()=>{render();abrirFondeo(id,pasoVivo);};
   const dif=f.fondeo_solicitado!=null&&f.monto_recibido!=null?f.fondeo-f.fondeo_solicitado:null;
   const instr=textoInstrucciones({total:f.monto_esperado||f.monto_recibido,fondeo:f.fondeo,comision:f.comision,iva:f.iva,entidad:f.ruta,beneficiario:f.beneficiario_destino,banco:f.banco_destino,clabe:f.clabe_destino});
   const ultimoCep=f.ceps[f.ceps.length-1];
@@ -5546,7 +5547,8 @@ async function abrirFondeo(id){
 
   /* ===== POR PASOS: tesorería con el fondeo por asignar ===== */
   if(tesoreria&&f.estatus==='POR_ASIGNAR'){
-    let paso=1,subiendoNota='';
+    // La barra arranca donde va el flujo: con CEP ya subido (lo hizo el comercial) tesorería empieza en CEP; con comprobante ya cargado, en Confirmar.
+    let paso=pasoIni||((f.comprobantes||[]).length?4:f.ceps.length?2:1),subiendoNota='';
     const NOMBRES=['Solicitud','CEP','Comprobante','Confirmar'];
     const cuerpo=el('div',{class:'pasos-cuerpo'}),pie=el('div',{style:'display:flex;align-items:center;gap:var(--sp-2);width:100%;flex-wrap:wrap'});
     const barra=()=>el('div',{class:'pasos'},...NOMBRES.map((n,i)=>el('div',{class:'paso'+(i+1<paso?' hecho':i+1===paso?' actual':''),...(i+1===paso?{'aria-current':'step'}:{})},(i+1<paso?'✓ ':(i+1)+'. ')+n)));
@@ -5557,7 +5559,7 @@ async function abrirFondeo(id){
         toast(errMsg(e),'err');}
     };
     const pintar=()=>{
-      cuerpo.innerHTML='';pie.innerHTML='';
+      cuerpo.innerHTML='';pie.innerHTML='';pasoVivo=paso;
       cuerpo.append(el('div',{class:'cab-paso'},cabecera()),barra());
       if(paso===1){
         cuerpo.append(el('h4',{class:'paso-t'},'Solicitud'),datosSolicitud());
