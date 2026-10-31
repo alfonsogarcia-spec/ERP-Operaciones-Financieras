@@ -62,3 +62,25 @@ test('el esquema se puede volver a aplicar (migración idempotente) y el candado
   const f = await fondeo(); await completar(f);
   await rechaza(asignar(f), /Candado de tesorería/);
 });
+
+// Única excepción: tesorería asigna SIN CEP (la ruta solo la deja a ese rol); la base exige monto, fecha y un motivo.
+const sinCep = (f, motivo = 'El cliente depositó y el CEP no se pudo descargar del banco') =>
+  db.query(`update cards.fondeos set estatus='ASIGNADO', asignado_sin_cep=true, sin_cep_motivo=$2, monto_recibido=1005.8, fecha=current_date where id=$1`, [f, motivo]);
+test('asignar sin CEP: con monto, fecha y motivo sí pasa (sin CEP y sin clave de rastreo)', async () => {
+  const f = await fondeo(); await sinCep(f);
+  const r = (await db.query('select estatus, asignado_sin_cep, sin_cep_motivo from cards.fondeos where id=$1', [f])).rows[0];
+  assert.equal(r.estatus, 'ASIGNADO'); assert.equal(r.asignado_sin_cep, true); assert.match(r.sin_cep_motivo, /CEP no se pudo/);
+});
+test('asignar sin CEP exige un motivo de al menos 10 caracteres, monto y fecha', async () => {
+  const f = await fondeo();
+  await rechaza(sinCep(f, ''), /exige monto, fecha y el motivo/);
+  await rechaza(sinCep(f, 'corto'), /exige monto, fecha y el motivo/);
+  await rechaza(db.query(`update cards.fondeos set estatus='ASIGNADO', asignado_sin_cep=true, sin_cep_motivo='motivo suficientemente largo' where id=$1`, [f]), /exige monto, fecha y el motivo/);
+  assert.equal((await db.query('select estatus from cards.fondeos where id=$1', [f])).rows[0].estatus, 'POR_ASIGNAR');
+});
+test('una vez asignado no se puede cambiar si fue sin CEP (ni disfrazar uno normal como sin CEP)', async () => {
+  const f = await fondeo(); await sinCep(f);
+  await rechaza(db.query('update cards.fondeos set asignado_sin_cep=false where id=$1', [f]), /no se cambia si se asignó sin CEP/);
+  const g = await fondeo(); await completar(g); await cep(g, true); await asignar(g);
+  await rechaza(db.query('update cards.fondeos set asignado_sin_cep=true where id=$1', [g]), /no se cambia si se asignó sin CEP/);
+});

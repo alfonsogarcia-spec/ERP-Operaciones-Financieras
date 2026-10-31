@@ -174,3 +174,10 @@ test('correo de saldo asignado: dice qué usuario realizó el fondeo (con su cor
   assert.match(armarCorreoFondeo({ tipo: 'cancelado', fondeo: f }).html, /Cancelado por/);
   assert.doesNotMatch(armarCorreoFondeo({ tipo: 'por_asignar', fondeo: f }).html, /Fondeo realizado por/);        // aún no se realiza
 });
+
+test('asignar sin CEP: solo tesorería, y solo esperando CEP o por asignar', () => {
+  const p = (est, rol) => FL.permisos(est, rol, true);
+  for (const est of ['SOLICITADO', 'POR_ASIGNAR']) assert.equal(p(est, 'cards_tesoreria').asignar_sin_cep, true, est);
+  for (const rol of ['admin', 'cards_admin', 'comercial', 'cards_consulta']) assert.equal(p('POR_ASIGNAR', rol).asignar_sin_cep, false, rol);
+  for (const est of ['ASIGNADO', 'RECHAZADO', 'CANCELADO']) assert.equal(p(est, 'cards_tesoreria').asignar_sin_cep, false, est);
+});

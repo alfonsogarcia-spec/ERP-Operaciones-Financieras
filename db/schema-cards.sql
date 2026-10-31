@@ -133,10 +133,20 @@ update cards.fondeo_ceps c set validado = true
    and (c.datos->>'monto')::numeric > 0 and nullif(c.datos->>'clave_rastreo','') is not null
    and c.datos->'beneficiario'->>'cuenta' = (select f.clabe_destino from cards.fondeos f where f.id = c.fondeo_id);
 
+-- Única excepción: tesorería puede asignar SIN CEP (asignado_sin_cep) dejando el motivo; entonces solo se exigen monto, fecha y motivo.
+alter table cards.fondeos add column if not exists asignado_sin_cep boolean not null default false;
+alter table cards.fondeos add column if not exists sin_cep_motivo text;
 create or replace function cards.candado_asignacion() returns trigger language plpgsql as $$
 begin
+  if tg_op = 'UPDATE' and old.estatus = 'ASIGNADO' and new.asignado_sin_cep is distinct from old.asignado_sin_cep then
+    raise exception 'El fondeo % ya está asignado: no se cambia si se asignó sin CEP.', new.folio using errcode = '23514';
+  end if;
   if new.estatus = 'ASIGNADO' and (tg_op = 'INSERT' or old.estatus is distinct from 'ASIGNADO') then
-    if new.monto_recibido is null or new.monto_recibido <= 0 or new.fecha is null or new.clave_rastreo is null
+    if new.asignado_sin_cep then
+      if new.monto_recibido is null or new.monto_recibido <= 0 or new.fecha is null or length(btrim(coalesce(new.sin_cep_motivo, ''))) < 10 then
+        raise exception 'Candado de tesorería: asignar sin CEP exige monto, fecha y el motivo (mínimo 10 caracteres) en el fondeo %.', new.folio using errcode = '23514';
+      end if;
+    elsif new.monto_recibido is null or new.monto_recibido <= 0 or new.fecha is null or new.clave_rastreo is null
        or not exists (select 1 from cards.fondeo_ceps c where c.fondeo_id = new.id and c.validado) then
       raise exception 'Candado de tesorería: no se puede asignar el saldo del fondeo % sin un CEP validado.', new.folio using errcode = '23514';
     end if;
@@ -144,7 +154,7 @@ begin
   return new;
 end $$;
 drop trigger if exists trg_cards_candado on cards.fondeos;
-create trigger trg_cards_candado before insert or update of estatus on cards.fondeos
+create trigger trg_cards_candado before insert or update of estatus, asignado_sin_cep on cards.fondeos
   for each row execute function cards.candado_asignacion();
 
 create or replace function cards.cep_inmutable() returns trigger language plpgsql as $$

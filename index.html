@@ -5260,7 +5260,7 @@ const CARDS_ESTATUS={SOLICITADO:['info','Esperando CEP'],POR_ASIGNAR:['warn','Po
 const CARDS_NIVEL={EMPRESA:'Empresa',UN:'Unidad de negocio',TARJETA:'Tarjeta'};
 const CEP_FORMATO={cep_banxico:'CEP de Banxico',dispersion_polipay:'Comprobante de dispersión Polipay',xml:'XML del CEP',pdf_generico:'PDF (formato no reconocido)',consulta_estado_banxico:'Consulta de estado de Banxico',imagen:'Imagen',pdf_sin_texto:'PDF sin texto',error:'No legible',desconocido:'Sin lectura'};
 const CEP_CONF={alta:['ok','Lectura confiable'],media:['warn','Revisa los datos'],baja:['danger','Lectura incierta']};
-const EVT_TXT={solicitado:'Solicitado',registrado:'Registrado',edicion:'Editado',cep_alta:'CEP cargado',cep_baja:'CEP quitado',cep_rechazado:'CEP no aceptado',comprobante_alta:'Comprobante del saldo cargado',comprobante_baja:'Comprobante del saldo quitado',comprobante_rechazado:'Comprobante no aceptado',por_asignar:'Pasó a tesorería',esperando_cep:'Esperando CEP',asignado:'Saldo asignado',rechazado:'Rechazado',cancelado:'Cancelado',notificado:'Aviso por correo'};
+const EVT_TXT={solicitado:'Solicitado',registrado:'Registrado',edicion:'Editado',cep_alta:'CEP cargado',cep_baja:'CEP quitado',cep_rechazado:'CEP no aceptado',comprobante_alta:'Comprobante del saldo cargado',comprobante_baja:'Comprobante del saldo quitado',comprobante_rechazado:'Comprobante no aceptado',por_asignar:'Pasó a tesorería',esperando_cep:'Esperando CEP',asignado:'Saldo asignado',asignado_sin_cep:'Saldo asignado SIN CEP',rechazado:'Rechazado',cancelado:'Cancelado',notificado:'Aviso por correo'};
 const badgeFondeo=e=>{const [c,l]=CARDS_ESTATUS[e]||['neutral',esc(e)];return `<span class="badge ${c}">${l}</span>`;};
 const hoyMX=()=>new Date().toLocaleDateString('en-CA',{timeZone:'America/Mexico_City'});
 const pctTxt=n=>Number(n).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:4})+'%';
@@ -5310,7 +5310,7 @@ function tablaFondeos(rows){
     const monto=r.monto_recibido!=null?`${mxn(r.monto_recibido)}<small class="muted"> recibido</small>`:(r.monto_esperado!=null?`${mxn(r.monto_esperado)}<small class="muted"> a depositar</small>`:'—');
     const x=[`<div class="tt">${esc(r.folio)}<small>${r.fecha?fmtISO(r.fecha):'solicitado '+fmtISO(String(r.solicitado_at||r.creado_at).slice(0,10))}</small></div>`,
       `<div class="tt">${esc(r.entidad_nombre)}<small>${esc(r.solicitante_nombre?'Solicitó '+r.solicitante_nombre:(r.ruta||''))}</small></div>`,{num:monto},{num:mxn(r.fondeo)},{num:mxn(r.comision)},{num:mxn(r.iva)},
-      r.n_ceps?`<span class="badge ok">${r.n_ceps} archivo${r.n_ceps>1?'s':''}</span>`:(['SOLICITADO','RECHAZADO'].includes(r.estatus)?'<span class="badge danger">Falta CEP</span>':'—'),
+      r.n_ceps?`<span class="badge ok">${r.n_ceps} archivo${r.n_ceps>1?'s':''}</span>`:(r.asignado_sin_cep?'<span class="badge orange" title="Tesorería asignó el saldo sin CEP">Sin CEP</span>':(['SOLICITADO','RECHAZADO'].includes(r.estatus)?'<span class="badge danger">Falta CEP</span>':'—')),
       badgeFondeo(r.estatus)+(r.difiere?' <span class="badge orange" title="El fondeo resultante es distinto de lo solicitado">≠ solicitado</span>':'')];
     x._onclick=()=>abrirFondeo(r.id);return x;}),{empty:'No hay fondeos con esos filtros.'});
 }
@@ -5543,7 +5543,7 @@ async function abrirFondeo(id,pasoIni){
   const botonRechazar=()=>el('button',{class:'btn ghost sm lk-peligro',type:'button',onclick:async()=>{
     const m=await pedir('Motivo por el que no se puede asignar '+f.folio+' (lo verá el comercial):',{titulo:'Rechazar fondeo',ok:'Rechazar'});if(m===null)return;
     try{await api('POST',`/api/cards/fondeos/${id}/rechazar`,{motivo:m});closeModal();toast('Rechazado: se avisó al comercial','ok');render();}catch(e){toast(errMsg(e),'err');}}},'Rechazar');
-  const cabecera=()=>el('div',{class:'detalle-head'},el('span',{html:badgeFondeo(f.estatus)}),el('span',{class:'badge soft'},sol?'Solicitud':'Registro manual'),f.difiere?el('span',{class:'badge orange',title:'El fondeo resultante es distinto de lo solicitado'},'≠ solicitado'):'',el('span',{class:'muted'},f.fecha?fmtISO(f.fecha):''));
+  const cabecera=()=>el('div',{class:'detalle-head'},el('span',{html:badgeFondeo(f.estatus)}),el('span',{class:'badge soft'},sol?'Solicitud':'Registro manual'),f.difiere?el('span',{class:'badge orange',title:'El fondeo resultante es distinto de lo solicitado'},'≠ solicitado'):'',f.asignado_sin_cep?el('span',{class:'badge orange',title:'Tesorería asignó el saldo sin CEP: '+(f.sin_cep_motivo||'')},'Sin CEP'):'',el('span',{class:'muted'},f.fecha?fmtISO(f.fecha):''));
 
   /* ===== POR PASOS: tesorería con el fondeo por asignar ===== */
   if(tesoreria&&f.estatus==='POR_ASIGNAR'){
@@ -5661,9 +5661,33 @@ async function abrirFondeo(id,pasoIni){
   }
   if(pu.cancelar)foot.append(botonCancelar());
   if(pu.editar&&f.origen==='MANUAL')foot.append(el('button',{class:'btn secondary',type:'button',onclick:()=>formularioFondeo(f)},'Editar'));
+  if(pu.asignar_sin_cep)foot.append(el('button',{class:'btn secondary',type:'button',title:'Solo tesorería puede asignar un saldo sin CEP, dejando el motivo',onclick:()=>formularioSinCep(f)},'Asignar sin CEP'));
   if(bloqueado){const b=el('button',{class:'btn ok',type:'button',disabled:true,title:'Bloqueado: '+cand.motivo,'aria-describedby':'candadoMotivo'},'Confirmar saldo asignado');foot.append(b);}
   foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cerrar'));
   modal(f.folio,body,foot);
+}
+
+/* Asignar un saldo SIN CEP: única excepción al candado, solo tesorería. Captura lo que normalmente viene del CEP y el motivo. */
+function formularioSinCep(f){
+  const fecha=el('input',{id:'scFecha',type:'date',value:hoyMX(),max:hoyMX()});
+  const monto=el('input',{id:'scMonto',type:'number',step:'0.01',min:'0',value:f.monto_esperado!=null?String(f.monto_esperado):''});
+  const rastreo=el('input',{id:'scRastreo',maxlength:'40',autocomplete:'off',placeholder:'Opcional'});
+  const motivo=el('textarea',{id:'scMotivo',rows:'3',maxlength:'300',placeholder:'Por qué se asigna sin CEP (queda en el historial y en el correo)'});
+  const body=el('div',{},
+    el('div',{class:'banner warn'},el('b',{},'Sin CEP no hay evidencia del depósito. '),'Solo tesorería puede hacerlo: queda marcado «Sin CEP» a tu nombre, en el historial, la bitácora y el correo al comercial.'),
+    el('div',{class:'banner'},el('b',{},f.folio),' · ',esc(f.ruta),' · fondeo neto ',mxn(f.fondeo),' · total a depositar ',f.monto_esperado!=null?mxn(f.monto_esperado):'—'),
+    el('div',{class:'form-grid'},fld('Fecha en que se recibió el depósito',fecha),fld('Monto recibido',monto)),
+    fld('Clave de rastreo',rastreo),fld('Motivo (obligatorio)',motivo));
+  const foot=el('div',{}),ok=el('button',{class:'btn ok',type:'button'},'Asignar sin CEP');
+  foot.append(el('button',{class:'btn secondary',type:'button',onclick:()=>{closeModal();abrirFondeo(f.id);}},'Cancelar'),ok);
+  ok.onclick=async()=>{
+    if(motivo.value.trim().length<10)return toast('Escribe el motivo (mínimo 10 caracteres)','err');
+    if(!await confirmar('¿Asignar el saldo de '+f.folio+' SIN CEP?\nQuedará registrado a tu nombre con el motivo que escribiste.'))return;
+    ok.disabled=true;
+    try{await api('POST',`/api/cards/fondeos/${f.id}/asignar-sin-cep`,{fecha:fecha.value,monto_recibido:monto.value,clave_rastreo:rastreo.value,motivo:motivo.value});closeModal();toast('Saldo asignado sin CEP: se avisó al comercial','ok');render();abrirFondeo(f.id);}
+    catch(er){toast(er.data&&er.data.mensaje?er.data.mensaje:errMsg(er),'err');ok.disabled=false;}
+  };
+  modal('Asignar sin CEP',body,foot);motivo.focus();
 }
 
 /* ---------- Estructura: empresas · unidades de negocio · tarjetas ---------- */

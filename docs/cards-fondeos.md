@@ -92,7 +92,7 @@ Cards → **Contabilidad → Corte de comisiones**. Funciona **como el corte de 
 
 ## Candado de asignación
 
-**Sin un CEP validado por el sistema no se puede poner “saldo asignado”**, ni con nota, ni siendo administrador. Se exige en tres capas:
+**Sin un CEP validado por el sistema no se puede poner “saldo asignado”**, ni con nota, ni siendo administrador (la única excepción está más abajo: tesorería, con motivo). Se exige en tres capas:
 
 1. **Pantalla:** sobre los botones aparece una fila discreta de requisitos (✓ Solicitud creada · ○ CEP cargado · ○ CEP validado) y *Confirmar saldo asignado* queda deshabilitado, con el motivo al pasar el cursor. Sin recuadros de aviso.
 2. **Servidor:** `POST /fondeos/:id/asignar` responde `409 candado` con el motivo y deja el intento en el historial (`asignacion_bloqueada`).
@@ -100,6 +100,14 @@ Cards → **Contabilidad → Corte de comisiones**. Funciona **como el corte de 
 
 “Validado” lo marca el sistema al aceptar el archivo (es un CEP legible, la CLABE beneficiaria es la de la entidad, trae monto y clave de rastreo); un archivo rechazado nunca se guarda. Una vez asignado, el CEP **no se puede quitar ni alterar** (otro *trigger*).
 Los CEP que ya existían al activar el candado se validaron con la misma regla en la migración.
+
+### Única excepción: asignar sin CEP (solo tesorería)
+
+**Únicamente el rol Tesorería Cards** puede asignar un fondeo sin CEP; **administrador y administrador Cards no pueden**, ni el comercial. Aplica a un fondeo *Esperando CEP* o *Por asignar* que no tiene un CEP validado (si ya lo tiene, se asigna normal). En el detalle del fondeo, tesorería ve **Asignar sin CEP** junto al botón bloqueado.
+
+- Como no hay CEP, tesorería **captura** lo que normalmente se toma de él: fecha en que se recibió el depósito (no futura), monto recibido (por omisión, el total a depositar; si es distinto se recalcula el fondeo neto con la comisión y el IVA del fondeo) y, opcional, la clave de rastreo (no puede repetirse el mismo día). Y **el motivo es obligatorio** (mínimo 10 caracteres).
+- Queda marcado **«Sin CEP»** (insignia en el detalle y en la lista de fondeos), con el motivo y quién lo hizo; el historial dice *Saldo asignado SIN CEP*, la bitácora guarda `cards_fondeo_asignar_sin_cep` y el correo de *Saldo asignado* lleva «Asignado sin CEP» y el motivo. A la comisión y al corte de contabilidad les afecta igual que cualquier fondeo asignado.
+- Tres capas, igual que el candado: pantalla (solo se ofrece a tesorería), servidor (`POST /fondeos/:id/asignar-sin-cep`, 403 para otros roles) y el *trigger*, que para estos casos exige monto, fecha y motivo, y no deja cambiar después la marca `asignado_sin_cep`.
 
 ## Cuenta de fondeo: CLABE, beneficiario y banco
 
@@ -132,7 +140,7 @@ Cada persona tiene **dos accesos independientes**: un **rol en POS Settlement y 
 |---|---|
 | **Administrador de POS** | Todo en Cards (acceso total implícito) |
 | **Administrador Cards** (`cards_admin`) | Todo en Cards: usuarios de Cards, empresas, UN y tarjetas, bancos, destinatarios, solicitar, registrar fondeos recibidos, asignar o rechazar, cancelar |
-| **Tesorería Cards** (`cards_tesoreria`) | Solo **Por asignar** y **Fondeos**: revisa el CEP y su validación, **confirma o rechaza el saldo** y **sube el comprobante del sistema**. No solicita, no cancela, no edita CEP, empresas, bancos ni destinatarios. Recibe el aviso de “por asignar” |
+| **Tesorería Cards** (`cards_tesoreria`) | Solo **Por asignar** y **Fondeos**: revisa el CEP y su validación, **confirma o rechaza el saldo** (y es la **única** que puede asignar **sin CEP**, con motivo) y **sube el comprobante del sistema**. No solicita, no cancela, no edita CEP, empresas, bancos ni destinatarios. Recibe el aviso de “por asignar” |
 | **Comercial** (`comercial`) | Solicita y sube el CEP; ve y gestiona solo lo que él solicitó |
 | **Consulta Cards** (`cards_consulta`) | Solo lectura |
 
