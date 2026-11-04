@@ -247,6 +247,8 @@ alter table cards.fondeos add column if not exists correo_asunto text;
 -- ===== CONTABILIDAD: corte de comisiones (acumulado, como el corte de MCEB) =====
 -- Razón social con la que se factura a la empresa (el RFC es `referencia`, como siempre).
 alter table cards.entidades add column if not exists razon_social text;
+-- Nombre comercial de la empresa: con el que se le conoce. El `nombre` sigue siendo la razón social con la que se factura.
+alter table cards.entidades add column if not exists nombre_comercial text;
 -- Cada corte congela lo cobrado y guardado hasta ese momento: fondeos ASIGNADOS con su fecha de depósito, que aún no entraron a otro corte.
 -- Lo que no estaba guardado (o se asigna después) cae en el siguiente corte. Cada fondeo entra a un solo corte.
 create table if not exists cards.cortes_comision (

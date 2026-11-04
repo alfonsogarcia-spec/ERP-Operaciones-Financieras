@@ -5704,7 +5704,8 @@ async function vCardsEstructura(v){
     }
     const nombre=el('div',{class:'tt arbol','data-prof':String(e.profundidad),style:'padding-left:'+(e.profundidad*22)+'px'},
       el('span',{html:(e.profundidad?'<span class="rama" aria-hidden="true">└</span> ':'')+esc(e.nombre)}),
-      el('small',{},CARDS_NIVEL[e.nivel]+(e.referencia?' · '+e.referencia:'')));
+      el('small',{},CARDS_NIVEL[e.nivel]+(e.referencia?' · '+e.referencia:'')),
+      e.nombre_comercial?el('small',{class:'muted'},'Comercial: '+e.nombre_comercial):'');
     const cuenta=el('div',{},chipClabe(e.clabe),el('small',{class:'muted',style:'display:block;margin-top:4px'},[e.beneficiario,e.banco_nombre].filter(Boolean).join(' · '),e.beneficiario?'':el('span',{class:'badge warn',title:'Complétalo para poder compararlo con el CEP'},'Sin beneficiario')));
     const x=[nombre,cuenta,{num:pctTxt(e.comision_efectiva)+(e.hereda_comision&&e.nivel!=='EMPRESA'?' <small class="muted">hereda</small>':'')},{num:pctTxt(e.iva_efectivo)},{num:e.n_fondeos},
       e.activo?'<span class="badge ok">Activa</span>':'<span class="badge neutral">Inactiva</span>',el('div',{class:'acciones'},...hij)];
@@ -5721,6 +5722,7 @@ async function editEntidad(e,nuevo,ents){
   const padre=esNueva&&nuevo.parent_id?ents.find(x=>x.id===nuevo.parent_id):(e&&e.parent_id?ents.find(x=>x.id===e.parent_id):null);
   const refLbl={EMPRESA:'RFC para facturar',UN:'Clave interna',TARJETA:'Últimos 4 dígitos o alias'}[nivel];
   const nombre=el('input',{id:'enNombre',maxlength:'120',autocomplete:'off',value:e?e.nombre:''});
+  const comercial=el('input',{id:'enComercial',maxlength:'120',autocomplete:'off',placeholder:'Como se le conoce (opcional)',value:e&&e.nombre_comercial?e.nombre_comercial:''});
   const ref=el('input',{id:'enRef',maxlength:'60',autocomplete:'off',value:e&&e.referencia?e.referencia:''});
   const clabe=el('input',{id:'enClabe',inputmode:'numeric',maxlength:'22',autocomplete:'off',placeholder:'18 dígitos',value:e?e.clabe:''});
   const aviso=el('div',{class:'req-note','aria-live':'polite'});
@@ -5749,7 +5751,9 @@ async function editEntidad(e,nuevo,ents){
   const activo=el('input',{id:'enActivo',type:'checkbox'});activo.checked=e?e.activo:true;
   const body=el('div',{});
   if(padre)body.append(el('div',{class:'banner'},'Pertenece a: ',el('b',{},padre.ruta)));
-  body.append(fld(nivel==='EMPRESA'?'Nombre (razón social, con la que se factura)':'Nombre',nombre),el('div',{class:'form-grid'},fld(refLbl+(nivel==='EMPRESA'?'':' (opcional)'),ref),fld('CLABE de fondeo',clabe)),aviso,
+  body.append(fld(nivel==='EMPRESA'?'Razón social (con la que se factura)':'Nombre',nombre));
+  if(nivel==='EMPRESA')body.append(fld('Nombre comercial',comercial));
+  body.append(el('div',{class:'form-grid'},fld(refLbl+(nivel==='EMPRESA'?'':' (opcional)'),ref),fld('CLABE de fondeo',clabe)),aviso,
     el('div',{class:'form-grid'},fld('Beneficiario',benef),fld('Banco beneficiario',bancoBox)),
     el('div',{class:'form-grid'},fld('Comisión % sobre el fondeo'+(nivel==='EMPRESA'?'':' (vacío = hereda)'),com),fld('IVA % sobre la comisión'+(nivel==='EMPRESA'?'':' (vacío = hereda)'),iva)));
   body.append(fld('Notas',notas));
@@ -5760,7 +5764,7 @@ async function editEntidad(e,nuevo,ents){
   const guardar=el('button',{class:'btn',type:'button'},'Guardar');
   foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),guardar);
   guardar.onclick=async()=>{guardar.disabled=true;try{
-    const b={nombre:nombre.value,referencia:ref.value,clabe:clabe.value,beneficiario:benef.value,banco_codigo:bancoCod,comision_pct:com.value,iva_pct:iva.value,notas:notas.value};
+    const b={nombre:nombre.value,nombre_comercial:comercial.value,referencia:ref.value,clabe:clabe.value,beneficiario:benef.value,banco_codigo:bancoCod,comision_pct:com.value,iva_pct:iva.value,notas:notas.value};
     if(esNueva){b.nivel=nivel;if(nuevo.parent_id)b.parent_id=nuevo.parent_id;await api('POST','/api/cards/entidades',b);}
     else{b.activo=activo.checked;await api('PUT','/api/cards/entidades/'+e.id,b);}
     closeModal();toast('Guardado','ok');render();
