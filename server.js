@@ -2525,7 +2525,7 @@ app.get('/api/cortes/:id/detalle-transaccional.xlsx', auth, async (req, res) => 
 // Construye el .xlsx con "Resumen" + una hoja por grupo cliente (agrupado por
 // cliente/afiliación tal como lo agrupa el motor). Muestra sólo la información
 // que un cliente debe ver: monto, comisión pactada, IVA y monto a dispersar.
-const DETALLE_MAX_TX = 200000;   // tope de transacciones por descarga de detalle (se arma en memoria)
+const DETALLE_MAX_TX = 50000;   // tope de transacciones por descarga de detalle (se leen a memoria; el libro sale por flujo)
 // Tasas pactadas por grupo/afiliación/producto, para calcular comisión, IVA y monto a dispersar de cada transacción.
 function ayudaDetalleTx(cat) {
   const { params, grupos, afilGrupo } = cat;
@@ -2669,8 +2669,20 @@ async function buildDetalleTransaccionalHistoricoXLSX({ cortes, cal, txs, cat, c
     if (!txPor.has(k)) txPor.set(k, []);
     txPor.get(k).push(t);
   }
-  const resumen = [], detalle = [];
+  // Primera pasada: el resumen y los totales. El detalle no se guarda: se vuelve a recorrer al escribir (el libro sale por flujo).
+  const resumen = [];
   let totTx = 0, totOp = 0, totCom = 0, totIVA = 0, totDisp = 0;
+  const lineas = function* (llenar) {
+    for (const cc of cal) {
+      const nombreGrupo = cc.razon || cc.cliente || 'Sin grupo';
+      for (const t of (txPor.get(`${cc._fli}||${nombreGrupo}||${cc.afil}`) || [])) {
+        const monto = Number(t.monto) || 0;
+        const com = E.round2(monto * tasaPACPorProducto(cc.id_grupo, cc.afil, t.producto));
+        const iva = E.round2(com * IVA);
+        yield llenar(cc, nombreGrupo, t, monto, com, iva, E.round2(monto - com - iva));
+      }
+    }
+  };
   for (const cc of cal) {
     const nombreGrupo = cc.razon || cc.cliente || 'Sin grupo';
     let n = 0, sMonto = 0, sCom = 0, sIVA = 0, sDisp = 0;
@@ -2678,15 +2690,13 @@ async function buildDetalleTransaccionalHistoricoXLSX({ cortes, cal, txs, cat, c
       const monto = Number(t.monto) || 0;
       const com = E.round2(monto * tasaPACPorProducto(cc.id_grupo, cc.afil, t.producto));
       const iva = E.round2(com * IVA);
-      const disp = E.round2(monto - com - iva);
-      detalle.push([`#${cc._corte}`, cc._fli, t.fecha || '', t.hora || '', nombreGrupo, t.afil || '', t.producto || '', t.referencia || '', t.autorizacion || '', t.comercio || '', monto, com, iva, disp]);
-      n++; sMonto += monto; sCom += com; sIVA += iva; sDisp += disp;
+      n++; sMonto += monto; sCom += com; sIVA += iva; sDisp += E.round2(monto - com - iva);
     }
     resumen.push([`#${cc._corte}`, cc._fli, nombreGrupo, cc.afil, n, E.round2(sMonto), E.round2(sCom), E.round2(sIVA), E.round2(sDisp)]);
     totTx += n; totOp += sMonto; totCom += sCom; totIVA += sIVA; totDisp += sDisp;
   }
   const meta = X.metaCorte({ fli: null });
-  return X.buildPolipayXLSX({
+  return X.buildPolipayXLSXStream({
     title: 'Detalle transaccional · histórico de cortes' + (cliente ? ' · ' + cliente : ''),
     meta: `Cortes ${desde} a ${hasta}   ·   ${cortes.length} corte(s)   ·   Generado ${meta.hoy}`,
     footer: `Polipay POS Settlement · Generado ${meta.hoy} por ${creado_por || '—'}   ·   Todas las cifras en MXN`,
@@ -2705,7 +2715,8 @@ async function buildDetalleTransaccionalHistoricoXLSX({ cortes, cal, txs, cat, c
         { header: 'Autorización', width: 14, align: 'center' }, { header: 'Comercio', width: 26, align: 'left' },
         { header: 'Monto', width: 14, numFmt: 'mxn' }, { header: 'Comisión pactada', width: 16, numFmt: 'mxn' },
         { header: 'IVA', width: 12, numFmt: 'mxn' }, { header: 'Monto a dispersar', width: 18, numFmt: 'mxn' },
-      ], rows: detalle, total: ['', '', '', '', '', '', '', '', '', 'TOTAL', E.round2(totOp), E.round2(totCom), E.round2(totIVA), E.round2(totDisp)] },
+      ], rows: lineas((cc, grupo, t, monto, com, iva, disp) => [`#${cc._corte}`, cc._fli, t.fecha || '', t.hora || '', grupo, t.afil || '', t.producto || '', t.referencia || '', t.autorizacion || '', t.comercio || '', monto, com, iva, disp]),
+        total: ['', '', '', '', '', '', '', '', '', 'TOTAL', E.round2(totOp), E.round2(totCom), E.round2(totIVA), E.round2(totDisp)] },
     ],
   });
 }
