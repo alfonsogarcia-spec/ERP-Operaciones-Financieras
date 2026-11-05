@@ -2775,8 +2775,12 @@ async function buildReporteXLSX(c, cal, opts = {}) {
    Ingresos por comisión (tasa pactada + IVA) por producto (TDD/TDC/AMEX/INT),
    dispersión, e ingreso por banca (Telematic) + IVA. Por FECHA + AFILIACIÓN.
    ========================================================================= */
-async function computeContable(desde, hasta, afilFiltro) {
-  const txs = (await db.query("select fecha_liq::text as fl, cliente, numero_afiliacion, producto, monto from transacciones where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'" + (afilFiltro ? ' and numero_afiliacion=$3' : '') + ' order by fecha_liq', afilFiltro ? [desde, hasta, afilFiltro] : [desde, hasta])).rows;
+async function computeContable(desde, hasta, afilFiltro, clienteFiltro) {
+  const vals = [desde, hasta];
+  let extra = '';
+  if (afilFiltro) { vals.push(afilFiltro); extra += ' and numero_afiliacion=$' + vals.length; }
+  if (clienteFiltro) { vals.push(clienteFiltro); extra += ' and lower(trim(cliente))=$' + vals.length; }   // grupo de cliente (mismo criterio que nrm)
+  const txs = (await db.query("select fecha_liq::text as fl, cliente, numero_afiliacion, producto, monto from transacciones where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'" + extra + ' order by fecha_liq', vals)).rows;
   const [params, grupos, afilGrupo, costos, afiliaciones] = [await getParams(), await getGrupos(), await getAfilGrupo(), await getCostos(), await getAfiliaciones()];
   const grupoPorNombre = nombre => grupos.find(g => nrm(g.nombre_cliente) === nrm(nombre));
   const tasasDe = (idg, afil) => afilGrupo.find(a => String(a.id_grupo) === String(idg) && String(a.numero_afiliacion) === String(afil));
@@ -2834,18 +2838,28 @@ app.get('/api/dashboard/resumen', auth, async (req, res) => {
   let hasta = fechaOk(req.query.hasta) ? req.query.hasta : new Date(Date.UTC(+hoy.slice(0, 4), +hoy.slice(5, 7), 0)).toISOString().slice(0, 10);
   if (desde > hasta) return res.status(400).json({ error: 'rango_invalido', mensaje: 'La fecha "desde" no puede ser posterior a "hasta".' });
   const afil = String(req.query.afiliacion || '').replace(/\D/g, '');
-  const n = (await db.query("select count(*)::int n from transacciones where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'" + (afil ? ' and numero_afiliacion=$3' : ''), afil ? [desde, hasta, afil] : [desde, hasta])).rows[0].n;
-  if (n > DASH_MAX_TX) return res.status(413).json({ error: 'periodo_muy_grande', total: n, maximo: DASH_MAX_TX, mensaje: `El periodo tiene ${n} transacciones y el máximo por consulta es ${DASH_MAX_TX}. Acota las fechas o elige una afiliación.` });
-  const rows = await computeContable(desde, hasta, afil);
+  const [grupos, afilGrupo] = [await getGrupos(), await getAfilGrupo()];
+  const idGrupo = String(req.query.grupo || '').replace(/\D/g, '');
+  const grupo = idGrupo ? grupos.find(g => String(g.id_grupo) === idGrupo) : null;
+  if (idGrupo && !grupo) return res.status(400).json({ error: 'grupo_invalido', mensaje: 'El grupo de cliente no existe.' });
+  const cliente = grupo ? nrm(grupo.nombre_cliente) : '';
+  const vals = [desde, hasta]; let extra = '';
+  if (afil) { vals.push(afil); extra += ' and numero_afiliacion=$' + vals.length; }
+  if (cliente) { vals.push(cliente); extra += ' and lower(trim(cliente))=$' + vals.length; }
+  const n = (await db.query("select count(*)::int n from transacciones where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'" + extra, vals)).rows[0].n;
+  if (n > DASH_MAX_TX) return res.status(413).json({ error: 'periodo_muy_grande', total: n, maximo: DASH_MAX_TX, mensaje: `El periodo tiene ${n} transacciones y el máximo por consulta es ${DASH_MAX_TX}. Acota las fechas o elige una afiliación o un grupo.` });
+  const rows = await computeContable(desde, hasta, afil, cliente);
   const S = k => E.round2(rows.reduce((a, r) => a + (r[k] || 0), 0));
   const monto = S('monto');
   const comision = E.round2(S('com_tdd') + S('com_tdc') + S('com_amex') + S('com_int'));
   const iva = E.round2(S('iva_tdd') + S('iva_tdc') + S('iva_amex') + S('iva_int'));
   const afiliaciones = await getAfiliaciones();
+  const gruposDe = a => afilGrupo.filter(x => String(x.numero_afiliacion) === String(a)).map(x => x.id_grupo);   // para angostar la lista de afiliaciones al elegir un grupo
   res.json({
-    desde, hasta, afiliacion: afil || null, n_trx: rows.reduce((a, r) => a + (r.n_trx || 0), 0),
+    desde, hasta, afiliacion: afil || null, grupo: grupo ? grupo.id_grupo : null, n_trx: rows.reduce((a, r) => a + (r.n_trx || 0), 0),
     monto, comision, iva, banca: E.round2(S('banca') + S('iva_banca')), dispersado: S('disp'),
-    opciones: afiliaciones.map(a => ({ afil: String(a.numero_afiliacion), razon: a.razon_social || '' })).sort((x, y) => x.afil < y.afil ? -1 : 1),
+    opciones: afiliaciones.map(a => ({ afil: String(a.numero_afiliacion), razon: a.razon_social || '', grupos: gruposDe(a.numero_afiliacion) })).sort((x, y) => x.afil < y.afil ? -1 : 1),
+    opciones_grupos: grupos.filter(g => g.activo !== false).map(g => ({ id: g.id_grupo, nombre: g.nombre_cliente })).sort((x, y) => String(x.nombre).localeCompare(String(y.nombre), 'es')),
   });
 });
 

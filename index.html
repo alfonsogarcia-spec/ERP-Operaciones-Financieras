@@ -1427,8 +1427,8 @@ async function vDashboard(v){
   const hoy = new Date();
   const y = hoy.getFullYear(), mo = hoy.getMonth()+1;
   // Filtros del resumen (persisten mientras la sesión); '' = el servidor usa el mes en curso / todas las afiliaciones.
-  const F = vDashboard._f || (vDashboard._f = {desde:'',hasta:'',afil:''});
-  const qsF = new URLSearchParams({desde:F.desde,hasta:F.hasta,afiliacion:F.afil}).toString();
+  const F = vDashboard._f || (vDashboard._f = {desde:'',hasta:'',afil:'',grupo:''});
+  const qsF = new URLSearchParams({desde:F.desde,hasta:F.hasta,afiliacion:F.afil,grupo:F.grupo||''}).toString();
   const [cortes,tx,cbsResp,refsResp,dashDisp,contab,alertasTrans,resumen]=await Promise.all([
     api('GET','/api/cortes').catch(()=>[]),
     api('GET','/api/transacciones').catch(()=>({total:0,aprobadas:0,montoAprobado:0,items:[]})),
@@ -1443,17 +1443,23 @@ async function vDashboard(v){
   const cbs  = Array.isArray(cbsResp)  ? cbsResp  : (cbsResp?.rows  || []);
   const refs = Array.isArray(refsResp) ? refsResp : (refsResp?.rows || []);
   v.innerHTML='';
-  // Resumen del periodo: monto, comisión pactada, IVA y dispersado (neto), con filtro por afiliación y fechas.
+  // Resumen del periodo: monto, comisión pactada, IVA y dispersado (neto), con filtro por grupo de cliente, afiliación y fechas.
   const rs = resumen && !resumen._err ? resumen : null;
   const barra=el('div',{style:'display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px'});
-  const selAf=el('select',{id:'dashAfil'});selAf.append(el('option',{value:''},'Todas las afiliaciones'));
-  (rs?rs.opciones:[]).forEach(o=>selAf.append(el('option',{value:o.afil},o.afil+(o.razon?' · '+o.razon:''))));selAf.value=F.afil;
+  const selGr=el('select',{id:'dashGrupo'});selGr.append(el('option',{value:''},'Todos los grupos'));
+  (rs?rs.opciones_grupos:[]).forEach(g=>selGr.append(el('option',{value:String(g.id)},g.nombre)));selGr.value=F.grupo||'';
+  // La lista de afiliaciones se angosta a las del grupo elegido (sin volver al servidor).
+  const selAf=el('select',{id:'dashAfil'});
+  const pintaAfil=previa=>{const g=selGr.value;selAf.innerHTML='';selAf.append(el('option',{value:''},'Todas las afiliaciones'));
+    (rs?rs.opciones:[]).filter(o=>!g||(o.grupos||[]).map(String).includes(g)).forEach(o=>selAf.append(el('option',{value:o.afil},o.afil+(o.razon?' · '+o.razon:''))));
+    selAf.value=[...selAf.options].some(o=>o.value===previa)?previa:'';};
+  pintaAfil(F.afil);selGr.addEventListener('change',()=>pintaAfil(selAf.value));
   const fFechas=filtroFechas({desde:rs?rs.desde:F.desde,hasta:rs?rs.hasta:F.hasta,permiteVacio:false,placeholder:'Mes en curso',titulo:'Fecha de liquidación'});const inDesde=fFechas.desde,inHasta=fFechas.hasta;
-  barra.append(el('label',{class:'field',style:'margin:0;min-width:240px'},'Afiliación',selAf),el('label',{class:'field',style:'margin:0'},'Fecha de liquidación',fFechas),
+  barra.append(el('label',{class:'field',style:'margin:0;min-width:240px'},'Grupo de cliente',selGr),el('label',{class:'field',style:'margin:0;min-width:240px'},'Afiliación',selAf),el('label',{class:'field',style:'margin:0'},'Fecha de liquidación',fFechas),
     el('button',{class:'btn',onclick:()=>{
       if(inDesde.value&&inHasta.value&&inDesde.value>inHasta.value){toast('La fecha "desde" no puede ser posterior a "hasta"','err');return;}
-      vDashboard._f={desde:inDesde.value,hasta:inHasta.value,afil:selAf.value};render();}},'Aplicar'),
-    el('button',{class:'btn ghost',onclick:()=>{vDashboard._f={desde:'',hasta:'',afil:''};render();}},'Mes en curso'));
+      vDashboard._f={desde:inDesde.value,hasta:inHasta.value,afil:selAf.value,grupo:selGr.value};render();}},'Aplicar'),
+    el('button',{class:'btn ghost',onclick:()=>{vDashboard._f={desde:'',hasta:'',afil:'',grupo:''};render();}},'Mes en curso'));
   v.append(el('h3',{style:'margin:0 0 10px;font-size:15px'},'Resumen del periodo'),barra);
   if(!rs){
     const msg=resumen&&resumen._err&&resumen._err.data&&resumen._err.data.mensaje;
