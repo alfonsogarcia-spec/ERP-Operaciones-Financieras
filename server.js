@@ -2881,11 +2881,19 @@ async function buildReporteXLSX(c, cal, opts = {}) {
    Ingresos por comisión (tasa pactada + IVA) por producto (TDD/TDC/AMEX/INT),
    dispersión, e ingreso por banca (Telematic) + IVA. Por FECHA + AFILIACIÓN.
    ========================================================================= */
+// Valor de filtro para "No identificada": la afiliación no está ligada a ningún grupo del catálogo / el cliente no coincide con ningún grupo.
+const NO_IDENT = '__no_identificada__';
+function filtroTx(afilFiltro, clienteFiltro, vals) {
+  let extra = '';
+  if (afilFiltro === NO_IDENT) extra += ' and not exists (select 1 from afil_grupo ag where ag.numero_afiliacion = transacciones.numero_afiliacion)';
+  else if (afilFiltro) { vals.push(afilFiltro); extra += ' and numero_afiliacion=$' + vals.length; }
+  if (clienteFiltro === NO_IDENT) extra += ' and not exists (select 1 from grupos g where lower(trim(g.nombre_cliente)) = lower(trim(transacciones.cliente)))';
+  else if (clienteFiltro) { vals.push(clienteFiltro); extra += ' and lower(trim(cliente))=$' + vals.length; }   // grupo de cliente (mismo criterio que nrm)
+  return extra;
+}
 async function computeContable(desde, hasta, afilFiltro, clienteFiltro) {
   const vals = [desde, hasta];
-  let extra = '';
-  if (afilFiltro) { vals.push(afilFiltro); extra += ' and numero_afiliacion=$' + vals.length; }
-  if (clienteFiltro) { vals.push(clienteFiltro); extra += ' and lower(trim(cliente))=$' + vals.length; }   // grupo de cliente (mismo criterio que nrm)
+  const extra = filtroTx(afilFiltro, clienteFiltro, vals);
   const txs = (await db.query("select fecha_liq::text as fl, cliente, numero_afiliacion, producto, monto from transacciones where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'" + extra + ' order by fecha_liq', vals)).rows;
   const [params, grupos, afilGrupo, costos, afiliaciones] = [await getParams(), await getGrupos(), await getAfilGrupo(), await getCostos(), await getAfiliaciones()];
   const grupoPorNombre = nombre => grupos.find(g => nrm(g.nombre_cliente) === nrm(nombre));
@@ -2943,15 +2951,18 @@ app.get('/api/dashboard/resumen', auth, async (req, res) => {
   let desde = fechaOk(req.query.desde) ? req.query.desde : hoy.slice(0, 8) + '01';
   let hasta = fechaOk(req.query.hasta) ? req.query.hasta : new Date(Date.UTC(+hoy.slice(0, 4), +hoy.slice(5, 7), 0)).toISOString().slice(0, 10);
   if (desde > hasta) return res.status(400).json({ error: 'rango_invalido', mensaje: 'La fecha "desde" no puede ser posterior a "hasta".' });
-  const afil = String(req.query.afiliacion || '').replace(/\D/g, '');
+  // "ninguna" / "ninguno" = las transacciones que no se pueden ligar al catálogo (afiliación sin grupo / cliente sin grupo).
+  const afilQ = String(req.query.afiliacion || '');
+  const afil = afilQ === 'ninguna' ? NO_IDENT : afilQ.replace(/\D/g, '');
   const [grupos, afilGrupo] = [await getGrupos(), await getAfilGrupo()];
-  const idGrupo = String(req.query.grupo || '').replace(/\D/g, '');
+  const grupoQ = String(req.query.grupo || '');
+  const sinGrupo = grupoQ === 'ninguno';
+  const idGrupo = sinGrupo ? '' : grupoQ.replace(/\D/g, '');
   const grupo = idGrupo ? grupos.find(g => String(g.id_grupo) === idGrupo) : null;
   if (idGrupo && !grupo) return res.status(400).json({ error: 'grupo_invalido', mensaje: 'El grupo de cliente no existe.' });
-  const cliente = grupo ? nrm(grupo.nombre_cliente) : '';
-  const vals = [desde, hasta]; let extra = '';
-  if (afil) { vals.push(afil); extra += ' and numero_afiliacion=$' + vals.length; }
-  if (cliente) { vals.push(cliente); extra += ' and lower(trim(cliente))=$' + vals.length; }
+  const cliente = sinGrupo ? NO_IDENT : (grupo ? nrm(grupo.nombre_cliente) : '');
+  const vals = [desde, hasta];
+  const extra = filtroTx(afil, cliente, vals);
   const n = (await db.query("select count(*)::int n from transacciones where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'" + extra, vals)).rows[0].n;
   if (n > DASH_MAX_TX) return res.status(413).json({ error: 'periodo_muy_grande', total: n, maximo: DASH_MAX_TX, mensaje: `El periodo tiene ${n} transacciones y el máximo por consulta es ${DASH_MAX_TX}. Acota las fechas o elige una afiliación o un grupo.` });
   const rows = await computeContable(desde, hasta, afil, cliente);
@@ -2961,10 +2972,20 @@ app.get('/api/dashboard/resumen', auth, async (req, res) => {
   const iva = E.round2(S('iva_tdd') + S('iva_tdc') + S('iva_amex') + S('iva_int'));
   const afiliaciones = await getAfiliaciones();
   const gruposDe = a => afilGrupo.filter(x => String(x.numero_afiliacion) === String(a)).map(x => x.id_grupo);   // para angostar la lista de afiliaciones al elegir un grupo
+  // Las opciones salen del catálogo (grupos y sus afiliaciones), no de todas las afiliaciones que existan en la base.
+  // Lo que no se pueda ligar al catálogo se ofrece como "No identificada", con su número de transacciones del periodo.
+  const razonDeAfil = new Map(afiliaciones.map(a => [String(a.numero_afiliacion), a.razon_social || '']));
+  const enCatalogo = [...new Set(afilGrupo.map(x => String(x.numero_afiliacion)))];
+  if (afil && afil !== NO_IDENT && !enCatalogo.includes(afil)) enCatalogo.push(afil);   // una afiliación pedida que ya no está en el catálogo no desaparece del selector
+  const opciones = enCatalogo.map(a => ({ afil: a, razon: razonDeAfil.get(a) || '', grupos: gruposDe(a) })).sort((x, y) => x.afil < y.afil ? -1 : 1);
+  const ni = (await db.query(
+    `select count(*) filter (where not exists (select 1 from afil_grupo ag where ag.numero_afiliacion = transacciones.numero_afiliacion))::int as afil,
+            count(*) filter (where not exists (select 1 from grupos g where lower(trim(g.nombre_cliente)) = lower(trim(transacciones.cliente))))::int as grupo
+       from transacciones where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'`, [desde, hasta])).rows[0];
   res.json({
-    desde, hasta, afiliacion: afil || null, grupo: grupo ? grupo.id_grupo : null, n_trx: rows.reduce((a, r) => a + (r.n_trx || 0), 0),
+    desde, hasta, afiliacion: afil === NO_IDENT ? 'ninguna' : (afil || null), grupo: sinGrupo ? 'ninguno' : (grupo ? grupo.id_grupo : null), n_trx: rows.reduce((a, r) => a + (r.n_trx || 0), 0),
     monto, comision, iva, banca: E.round2(S('banca') + S('iva_banca')), dispersado: S('disp'),
-    opciones: afiliaciones.map(a => ({ afil: String(a.numero_afiliacion), razon: a.razon_social || '', grupos: gruposDe(a.numero_afiliacion) })).sort((x, y) => x.afil < y.afil ? -1 : 1),
+    opciones, no_identificadas: { afiliacion: ni.afil, grupo: ni.grupo },
     opciones_grupos: grupos.filter(g => g.activo !== false).map(g => ({ id: g.id_grupo, nombre: g.nombre_cliente })).sort((x, y) => String(x.nombre).localeCompare(String(y.nombre), 'es')),
   });
 });

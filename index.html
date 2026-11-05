@@ -1446,12 +1446,16 @@ async function vDashboard(v){
   // Resumen del periodo: monto, comisión pactada, IVA y dispersado (neto), con filtro por grupo de cliente, afiliación y fechas.
   const rs = resumen && !resumen._err ? resumen : null;
   const barra=el('div',{style:'display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px'});
+  const niCnt=rs&&rs.no_identificadas?rs.no_identificadas:{afiliacion:0,grupo:0};
   const selGr=el('select',{id:'dashGrupo'});selGr.append(el('option',{value:''},'Todos los grupos'));
-  (rs?rs.opciones_grupos:[]).forEach(g=>selGr.append(el('option',{value:String(g.id)},g.nombre)));selGr.value=F.grupo||'';
+  (rs?rs.opciones_grupos:[]).forEach(g=>selGr.append(el('option',{value:String(g.id)},g.nombre)));
+  if(niCnt.grupo>0||F.grupo==='ninguno')selGr.append(el('option',{value:'ninguno'},'No identificado ('+niCnt.grupo.toLocaleString('es-MX')+' trx)'));
+  selGr.value=F.grupo||'';
   // La lista de afiliaciones se angosta a las del grupo elegido (sin volver al servidor).
   const selAf=el('select',{id:'dashAfil'});
   const pintaAfil=previa=>{const g=selGr.value;selAf.innerHTML='';selAf.append(el('option',{value:''},'Todas las afiliaciones'));
-    (rs?rs.opciones:[]).filter(o=>!g||(o.grupos||[]).map(String).includes(g)).forEach(o=>selAf.append(el('option',{value:o.afil},o.afil+(o.razon?' · '+o.razon:''))));
+    (rs?rs.opciones:[]).filter(o=>!g||g==='ninguno'||(o.grupos||[]).map(String).includes(g)).forEach(o=>selAf.append(el('option',{value:o.afil},o.afil+(o.razon?' · '+o.razon:'')+((o.grupos||[]).length?'':' (sin grupo en el catálogo)'))));
+    if(niCnt.afiliacion>0||previa==='ninguna')selAf.append(el('option',{value:'ninguna'},'No identificada ('+niCnt.afiliacion.toLocaleString('es-MX')+' trx)'));
     selAf.value=[...selAf.options].some(o=>o.value===previa)?previa:'';};
   pintaAfil(F.afil);selGr.addEventListener('change',()=>pintaAfil(selAf.value));
   const fFechas=filtroFechas({desde:rs?rs.desde:F.desde,hasta:rs?rs.hasta:F.hasta,permiteVacio:false,placeholder:'Mes en curso',titulo:'Fecha de liquidación'});const inDesde=fFechas.desde,inHasta=fFechas.hasta;
@@ -1472,6 +1476,7 @@ async function vDashboard(v){
       ['IVA',mxn(rs.iva),'Sobre la comisión pactada'],
       ['Monto dispersado (neto)',mxn(rs.dispersado),'Monto − comisión − IVA − banca'],
     ]));
+    if(rs.afiliacion==='ninguna'||rs.grupo==='ninguno')v.append(el('div',{class:'banner warn',html:'Estas transacciones <b>no están ligadas al catálogo</b> '+(rs.afiliacion==='ninguna'?'(su afiliación no pertenece a ningún grupo)':'(su cliente no coincide con ningún grupo)')+': no tienen tasa pactada, por eso la comisión sale en $0. Para identificarlas, agrega la afiliación al grupo en Catálogos.'}));
   }
   // KPIs
   const ultimoCorte = cortes[0];
