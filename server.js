@@ -2131,9 +2131,9 @@ app.get('/api/cortes', auth, async (req, res) => {
 });
 // Reporte por cliente de UN corte (?corte=) o HISTÓRICO (?desde=&hasta=&estado=), opcionalmente de un solo
 // cliente (?cliente= razón del grupo). Va antes de /api/cortes/:id para que Express no lo tome como id.
-app.get('/api/cortes/reporte-cliente.xlsx', auth, async (req, res) => {
-  if (!dbReady(res)) return;
-  const q = req.query || {};
+// Cortes (y sus cálculos por grupo/afiliación) que pide la consulta: UN corte (?corte=) o HISTÓRICO
+// (?desde=&hasta=&estado=), opcionalmente de un solo cliente (?cliente=). Lo comparten el reporte por cliente y el detalle transaccional.
+async function cortesYCalculos(q) {
   const isoOk = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
   const where = [], args = [];
   if (q.corte) { args.push(parseInt(q.corte, 10)); where.push(`id_corte=$${args.length}`); }
@@ -2143,13 +2143,22 @@ app.get('/api/cortes/reporte-cliente.xlsx', auth, async (req, res) => {
     if (q.estado) { args.push(String(q.estado)); where.push(`estado=$${args.length}`); }
   }
   const cortes = (await db.query(`select *, fecha_liq_iso::text as fli from cortes${where.length ? ' where ' + where.join(' and ') : ''} order by fecha_liq_iso, id_corte`, args)).rows;
-  if (!cortes.length) return res.status(404).json({ error: 'sin_datos', mensaje: 'No hay cortes con esos filtros.' });
+  if (!cortes.length) return { error: { status: 404, body: { error: 'sin_datos', mensaje: 'No hay cortes con esos filtros.' } } };
   const cliente = q.cliente ? String(q.cliente) : '';
   const porId = new Map(cortes.map(c => [c.id_corte, c]));
   let cal = (await db.query('select * from calculos where corte_id = any($1::int[]) order by corte_id, razon, afil', [cortes.map(c => c.id_corte)])).rows
     .map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc, _corte: x.corte_id, _fli: porId.get(x.corte_id).fli }));
   if (cliente) cal = cal.filter(x => nrm(x.razon) === nrm(cliente));
-  if (!cal.length) return res.status(404).json({ error: 'sin_datos', mensaje: 'Ese cliente no aparece en los cortes seleccionados.' });
+  if (!cal.length) return { error: { status: 404, body: { error: 'sin_datos', mensaje: 'Ese cliente no aparece en los cortes seleccionados.' } } };
+  return { cortes, cal, cliente };
+}
+// Reporte por cliente de UN corte (?corte=) o HISTÓRICO (?desde=&hasta=&estado=), opcionalmente de un solo
+// cliente (?cliente= razón del grupo). Va antes de /api/cortes/:id para que Express no lo tome como id.
+app.get('/api/cortes/reporte-cliente.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const r = await cortesYCalculos(req.query || {});
+  if (r.error) return res.status(r.error.status).json(r.error.body);
+  const { cortes, cal, cliente } = r;
   const slug = cliente ? '_' + cliente.replace(/[^\w]+/g, '_').slice(0, 40) : '';
   if (cortes.length === 1) {
     const c = cortes[0];
@@ -2163,6 +2172,35 @@ app.get('/api/cortes/reporte-cliente.xlsx', auth, async (req, res) => {
   await bit(req, 'reporte', `exportó reporte por cliente histórico ${desde} a ${hasta} (${usados.length} cortes)${cliente ? ' · ' + cliente : ''}`);
   const buf = await buildReporteXLSX({ fli: null, creado_por: req.user.nombre }, cal, { historico: { desde, hasta, n: usados.length }, cliente });
   enviarXLSX(res, `reporte_cliente_historico_${desde}_a_${hasta}${slug}.xlsx`, buf);
+});
+// Detalle transaccional (cada transacción con su comisión pactada, IVA y monto a dispersar) de UN corte o HISTÓRICO,
+// con los mismos filtros que el reporte por cliente. Un corte trae el mismo libro que /api/cortes/:id/detalle-transaccional.xlsx;
+// el histórico trae una hoja de resumen y una sola hoja con todas las transacciones de los cortes del rango.
+app.get('/api/cortes/detalle-transaccional.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const r = await cortesYCalculos(req.query || {});
+  if (r.error) return res.status(r.error.status).json(r.error.body);
+  const { cortes, cal, cliente } = r;
+  const slug = cliente ? '_' + cliente.replace(/[^\w]+/g, '_').slice(0, 40) : '';
+  const usados = cortes.filter(c => cal.some(x => x._corte === c.id_corte));
+  const fechas = [...new Set(usados.map(c => c.fli))];
+  const vals = [fechas]; let extra = '';
+  if (cliente) { vals.push(nrm(cliente)); extra = ' and lower(trim(cliente))=$2'; }
+  const sel = "from transacciones where fecha_liq = any($1::date[]) and upper(estatus)='APROBADO'" + extra;
+  const n = (await db.query('select count(*)::int n ' + sel, vals)).rows[0].n;
+  if (n > DETALLE_MAX_TX) return res.status(413).json({ error: 'periodo_muy_grande', total: n, maximo: DETALLE_MAX_TX, mensaje: `El detalle tiene ${n} transacciones y el máximo por descarga es ${DETALLE_MAX_TX}. Acota las fechas o elige un cliente.` });
+  const txs = (await db.query('select fecha_liq::text as fl, fecha,hora,cliente,comercio,numero_afiliacion as afil,producto,monto,folio,referencia,autorizacion,terminal ' + sel + ' order by fecha_liq, fecha, hora, id', vals)).rows;
+  const cat = { params: await getParams(), grupos: await getGrupos(), afilGrupo: await getAfilGrupo(), costos: await getCostos() };
+  if (usados.length === 1) {
+    const c = usados[0];
+    await bit(req, 'reporte', `exportó detalle transaccional corte #${c.id_corte}${cliente ? ' · ' + cliente : ''}`);
+    const buf = await buildDetalleTransaccionalXLSX(c, cal.filter(x => x._corte === c.id_corte), txs, cat);
+    return enviarXLSX(res, `detalle_transaccional_corte_${c.id_corte}_${c.fli}${slug}.xlsx`, buf);
+  }
+  const desde = usados[0].fli, hasta = usados[usados.length - 1].fli;
+  await bit(req, 'reporte', `exportó detalle transaccional histórico ${desde} a ${hasta} (${usados.length} cortes, ${n} transacciones)${cliente ? ' · ' + cliente : ''}`);
+  const buf = await buildDetalleTransaccionalHistoricoXLSX({ cortes: usados, cal, txs, cat, cliente, desde, hasta, creado_por: req.user.nombre });
+  enviarXLSX(res, `detalle_transaccional_historico_${desde}_a_${hasta}${slug}.xlsx`, buf);
 });
 // Auditoría (solo lectura): cortes donde se retuvo de más por afiliaciones compartidas por varios grupos.
 app.get('/api/cortes/auditoria-retenciones', auth, requiereRol('admin', 'tesoreria', 'bancos'), async (req, res) => {
@@ -2487,7 +2525,9 @@ app.get('/api/cortes/:id/detalle-transaccional.xlsx', auth, async (req, res) => 
 // Construye el .xlsx con "Resumen" + una hoja por grupo cliente (agrupado por
 // cliente/afiliación tal como lo agrupa el motor). Muestra sólo la información
 // que un cliente debe ver: monto, comisión pactada, IVA y monto a dispersar.
-async function buildDetalleTransaccionalXLSX(corte, calculos, txs, cat) {
+const DETALLE_MAX_TX = 200000;   // tope de transacciones por descarga de detalle (se arma en memoria)
+// Tasas pactadas por grupo/afiliación/producto, para calcular comisión, IVA y monto a dispersar de cada transacción.
+function ayudaDetalleTx(cat) {
   const { params, grupos, afilGrupo } = cat;
   const IVA = Number(params.iva) || 0.16;
   const grupoPorNombre = nombre => grupos.find(g => nrm(g.nombre_cliente) === nrm(nombre));
@@ -2501,6 +2541,10 @@ async function buildDetalleTransaccionalXLSX(corte, calculos, txs, cat) {
     if (k === 'int') return Number(t.tasa_pac_int) || 0;
     return 0;
   };
+  return { IVA, grupoPorNombre, tasaPACPorProducto };
+}
+async function buildDetalleTransaccionalXLSX(corte, calculos, txs, cat) {
+  const { IVA, grupoPorNombre, tasaPACPorProducto } = ayudaDetalleTx(cat);
   // Agrupar tx por (cliente, afil) — misma llave que usa computeCorte()
   const grupTx = new Map();
   for (const t of txs) {
@@ -2611,6 +2655,57 @@ async function buildDetalleTransaccionalXLSX(corte, calculos, txs, cat) {
       { name: 'Resumen', columns: colsResumen, rows: resumenRows, total: ['TOTAL', '', totTx, E.round2(totOp), E.round2(totCom), E.round2(totIVA), E.round2(totDisp)] },
       ...hojasGrupo,
       hojaBanco,
+    ],
+  });
+}
+
+// Detalle transaccional HISTÓRICO: varios cortes en un solo libro. "Resumen" por corte, grupo y afiliación,
+// y "Detalle" con cada transacción (columnas Corte y Fecha liq. al inicio). Misma cuenta que el detalle de un corte.
+async function buildDetalleTransaccionalHistoricoXLSX({ cortes, cal, txs, cat, cliente, desde, hasta, creado_por }) {
+  const { IVA, grupoPorNombre, tasaPACPorProducto } = ayudaDetalleTx(cat);
+  const txPor = new Map();   // fecha de liquidación + grupo + afiliación -> transacciones
+  for (const t of txs) {
+    const g = grupoPorNombre(t.cliente); const k = `${t.fl}||${g ? g.nombre_cliente : t.cliente}||${t.afil}`;
+    if (!txPor.has(k)) txPor.set(k, []);
+    txPor.get(k).push(t);
+  }
+  const resumen = [], detalle = [];
+  let totTx = 0, totOp = 0, totCom = 0, totIVA = 0, totDisp = 0;
+  for (const cc of cal) {
+    const nombreGrupo = cc.razon || cc.cliente || 'Sin grupo';
+    let n = 0, sMonto = 0, sCom = 0, sIVA = 0, sDisp = 0;
+    for (const t of (txPor.get(`${cc._fli}||${nombreGrupo}||${cc.afil}`) || [])) {
+      const monto = Number(t.monto) || 0;
+      const com = E.round2(monto * tasaPACPorProducto(cc.id_grupo, cc.afil, t.producto));
+      const iva = E.round2(com * IVA);
+      const disp = E.round2(monto - com - iva);
+      detalle.push([`#${cc._corte}`, cc._fli, t.fecha || '', t.hora || '', nombreGrupo, t.afil || '', t.producto || '', t.referencia || '', t.autorizacion || '', t.comercio || '', monto, com, iva, disp]);
+      n++; sMonto += monto; sCom += com; sIVA += iva; sDisp += disp;
+    }
+    resumen.push([`#${cc._corte}`, cc._fli, nombreGrupo, cc.afil, n, E.round2(sMonto), E.round2(sCom), E.round2(sIVA), E.round2(sDisp)]);
+    totTx += n; totOp += sMonto; totCom += sCom; totIVA += sIVA; totDisp += sDisp;
+  }
+  const meta = X.metaCorte({ fli: null });
+  return X.buildPolipayXLSX({
+    title: 'Detalle transaccional · histórico de cortes' + (cliente ? ' · ' + cliente : ''),
+    meta: `Cortes ${desde} a ${hasta}   ·   ${cortes.length} corte(s)   ·   Generado ${meta.hoy}`,
+    footer: `Polipay POS Settlement · Generado ${meta.hoy} por ${creado_por || '—'}   ·   Todas las cifras en MXN`,
+    sheets: [
+      { name: 'Resumen', columns: [
+        { header: 'Corte', width: 9, align: 'center' }, { header: 'Fecha liq.', width: 12, align: 'center' },
+        { header: 'Grupo cliente', width: 30, align: 'left' }, { header: 'Afiliación', width: 14, align: 'left' },
+        { header: 'Transacciones', width: 14, align: 'right' }, { header: 'Monto operado', width: 18, numFmt: 'mxn' },
+        { header: 'Comisión pactada', width: 18, numFmt: 'mxn' }, { header: 'IVA', width: 14, numFmt: 'mxn' }, { header: 'Monto a dispersar', width: 18, numFmt: 'mxn' },
+      ], rows: resumen, total: ['TOTAL', '', '', '', totTx, E.round2(totOp), E.round2(totCom), E.round2(totIVA), E.round2(totDisp)] },
+      { name: 'Detalle transaccional', columns: [
+        { header: 'Corte', width: 9, align: 'center' }, { header: 'Fecha liq.', width: 12, align: 'center' },
+        { header: 'Fecha', width: 12, align: 'center' }, { header: 'Hora', width: 10, align: 'center' },
+        { header: 'Grupo cliente', width: 24, align: 'left' }, { header: 'Afiliación', width: 14, align: 'left' },
+        { header: 'Producto', width: 12, align: 'center' }, { header: 'Referencia', width: 18, align: 'left' },
+        { header: 'Autorización', width: 14, align: 'center' }, { header: 'Comercio', width: 26, align: 'left' },
+        { header: 'Monto', width: 14, numFmt: 'mxn' }, { header: 'Comisión pactada', width: 16, numFmt: 'mxn' },
+        { header: 'IVA', width: 12, numFmt: 'mxn' }, { header: 'Monto a dispersar', width: 18, numFmt: 'mxn' },
+      ], rows: detalle, total: ['', '', '', '', '', '', '', '', '', 'TOTAL', E.round2(totOp), E.round2(totCom), E.round2(totIVA), E.round2(totDisp)] },
     ],
   });
 }
