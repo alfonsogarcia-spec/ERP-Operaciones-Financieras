@@ -2254,11 +2254,35 @@ app.post('/api/cortes/:id/retener', auth, requiereRol('admin', 'operador'), asyn
   if (!dbReady(res)) return;
   const idCorte = parseInt(req.params.id, 10);
   const b = req.body || {};
-  const idCalc = parseInt(b.calculo_id, 10), idCargo = parseInt(b.cargo_id, 10);
-  if (!idCorte || !idCalc || !idCargo) return res.status(400).json({ error: 'datos_requeridos', mensaje: 'Indica el grupo del corte y la retención.' });
+  const idCalc = parseInt(b.calculo_id, 10);
+  let idCargo = parseInt(b.cargo_id, 10);
+  const nueva = !idCargo;   // sin cargo_id: se da de alta una retención nueva con su concepto, ligada a la afiliación y al grupo de la fila
+  if (!idCorte || !idCalc || (nueva && !String(b.concepto || '').trim())) return res.status(400).json({ error: 'datos_requeridos', mensaje: nueva ? 'Escribe el concepto de la retención.' : 'Indica el grupo del corte y la retención.' });
   const F = await filaRetenible(idCorte, idCalc);
   if (F.error) return res.status(F.error.status).json(F.error.body);
-  const { fila } = F;
+  const { fila, corte } = F;
+  if (nueva) {
+    const tipoN = ['financiamiento', 'revenue_share'].includes(b.tipo) ? b.tipo : 'financiamiento';
+    const bloqueN = String(b.bloque || 'DOM').toUpperCase() === 'AMEX' ? 'AMEX' : 'DOM';
+    const montoN = E.round2(Number(b.monto));
+    if (!(montoN > 0)) return res.status(400).json({ error: 'monto_invalido', mensaje: 'El monto a retener debe ser mayor a cero.' });
+    const dN = disponibleFila(fila.calc);
+    const propioN = bloqueN === 'AMEX' ? dN.amex : dN.dom, otroN = bloqueN === 'AMEX' ? dN.dom : dN.amex;
+    if (propioN + otroN <= 0.004) return res.status(409).json({ error: 'sin_saldo', mensaje: `Este grupo no tiene saldo por dispersar para retener (${dN.dom} DOM · ${dN.amex} AMEX).` });
+    // Alta como cualquier retención nueva: aparece en Retenciones y en el libro de cargos con su folio. Lo que no quepa en el saldo queda pendiente.
+    const concepto = String(b.concepto).trim().slice(0, 200);
+    const folio = await folioFIN(db);
+    await db.query(
+      `insert into financiamientos(folio, cargado_en_fecha, numero_afiliacion, grupo_cliente, tipo, concepto, bloque, monto, moneda, estatus, archivo_origen, creado_por)
+       values($1,$2,$3,$4,$5,$6,$7,$8,'MXN','Pendiente',$9,$10)`,
+      [folio, corte.fecha, String(fila.afil), fila.cliente, tipoN, concepto, bloqueN, montoN, `manual desde corte #${idCorte}`, req.user.nombre]);
+    const alta = await L.registrarCargo(db, {
+      origen: 'financiamiento_legacy', origen_ref: folio, numero_afiliacion: String(fila.afil), grupo_cliente: fila.cliente, bloque: bloqueN,
+      tipo: tipoN, monto: montoN, fecha_retencion_desde: corte.fecha,
+      snapshot_correo: { grupo: fila.cliente, afil: fila.afil, concepto, tipo: tipoN, monto: montoN, manual_desde_corte: idCorte },
+      creado_por: req.user.nombre });
+    idCargo = alta.id;
+  }
   const g = (await db.query('select * from comercio_ledger_cargos where id=$1', [idCargo])).rows[0];
   if (!g || !['Pendiente', 'Parcial'].includes(g.estatus)) return res.status(409).json({ error: 'cargo_no_pendiente', mensaje: 'Esa retención ya no está pendiente.' });
   if ((await db.query('select 1 from corte_aplicaciones where corte_id=$1 and cargo_id=$2', [idCorte, idCargo])).rows.length)
@@ -2291,8 +2315,8 @@ app.post('/api/cortes/:id/retener', auth, requiereRol('admin', 'operador'), asyn
   const tot = (await db.query("select coalesce(sum((calc->>'disp_total')::numeric),0) as d from calculos where corte_id=$1", [idCorte])).rows[0];
   await db.query('update cortes set total_disp=$1 where id_corte=$2', [E.round2(Number(tot.d)), idCorte]);
   const restante = E.round2(pendiente - monto);
-  await bit(req, 'corte_retener', `retención manual ${g.origen_ref} por ${monto} en ${fila.razon || fila.cliente} · afil ${fila.afil}${restante > 0.004 ? ` (quedan ${restante} pendientes)` : ''}${String(g.numero_afiliacion) !== String(fila.afil) ? ` ⚠ la retención era de la afiliación ${g.numero_afiliacion}` : ''}`, { resource_type: 'corte', resource_id: idCorte });
-  res.json({ ok: true, retenido: monto, pendiente_restante: restante, a_dispersar_fila: calc.disp_total });
+  await bit(req, 'corte_retener', `retención ${nueva ? 'nueva' : 'manual'} ${g.origen_ref}${nueva ? ' «' + String(b.concepto).trim().slice(0, 60) + '»' : ''} por ${monto} en ${fila.razon || fila.cliente} · afil ${fila.afil}${restante > 0.004 ? ` (quedan ${restante} pendientes)` : ''}${String(g.numero_afiliacion) !== String(fila.afil) ? ` ⚠ la retención era de la afiliación ${g.numero_afiliacion}` : ''}`, { resource_type: 'corte', resource_id: idCorte });
+  res.json({ ok: true, folio: g.origen_ref, nueva, retenido: monto, pendiente_restante: restante, a_dispersar_fila: calc.disp_total });
 });
 
 function transicionValida(estado, accion) {

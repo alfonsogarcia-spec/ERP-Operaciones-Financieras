@@ -2183,30 +2183,30 @@ function detalleCalculo(cc,corte){const r=cc.calc;const body=el('div',{});
   pie.append(el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'));
   modal('Desglose del cálculo',body,pie,true);
 }
-// Aplica una retención pendiente a un grupo de un corte en Borrador, sin esperar a la fecha piso ni a que el grupo coincida.
-async function openRetenerEnCorte(corte,cc){
-  let d;try{d=await api('GET','/api/cortes/'+corte.id_corte+'/retenibles?calculo='+cc.id);}catch(e){toast((e.data&&e.data.mensaje)||errMsg(e),'err');return;}
+// Da de alta una retención nueva (concepto, tipo, bloque y monto) ligada a la afiliación y al grupo de esta fila del corte, y la aplica en el acto.
+// Queda en Retenciones con su folio como cualquier otra. Solo se retiene hasta el saldo por dispersar; lo que no quepa queda pendiente.
+function openRetenerEnCorte(corte,cc){
+  const r=cc.calc||{};const dom=Math.max(Number(r.disp_dom||0),0),amex=Math.max(Number(r.disp_amex||0),0);
   const body=el('div',{});
-  body.append(el('div',{class:'banner',html:`<b>${esc(cc.razon)}</b> · Afiliación ${esc(cc.afil)} · Disponible por dispersar: <b>DOM ${mxn(d.disponible.dom)}</b> · <b>AMEX ${mxn(d.disponible.amex)}</b>. Solo se puede retener hasta ese saldo.`}));
-  const libres=d.cargos.filter(c=>!c.ya_en_corte);
-  if(!libres.length){body.append(el('div',{class:'banner warn'},'No hay retenciones ni contracargos pendientes para aplicar en este corte.'));modal('Retener en este corte',body,el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'));return;}
-  const sel=el('select',{id:'retCargo'},...libres.map(c=>el('option',{value:c.id},`${c.folio} · ${c.tipo==='revenue_share'?'Revenue share':c.tipo==='financiamiento'?'Financiamiento':c.tipo==='contracargo'?'Contracargo':c.tipo} · ${c.bloque} · ${mxn(c.pendiente)} · ${c.grupo||'—'} · afil ${c.afil}${c.coincide_afil?'':' (OTRA afiliación)'}`)));
-  const monto=el('input',{type:'number',step:'0.01',min:'0.01',id:'retMonto'});
-  const aviso=el('div',{class:'muted',style:'margin-top:6px'});
-  const pinta=()=>{const c=libres.find(x=>String(x.id)===sel.value);if(!c)return;
-    const tope=(c.bloque==='AMEX'?d.disponible.amex:d.disponible.dom)+((c.tipo==='financiamiento'||c.tipo==='revenue_share')?(c.bloque==='AMEX'?d.disponible.dom:d.disponible.amex):0);
-    monto.value=Math.min(c.pendiente,tope).toFixed(2);
-    aviso.innerHTML=`Pendiente <b>${mxn(c.pendiente)}</b> · Se puede retener hasta <b>${mxn(tope)}</b> en este grupo`+(c.desde?` · fecha aplica ${esc(c.desde)}`:'')+(c.coincide_afil?'':' · <span style="color:var(--danger-ink)">⚠ esta retención es de otra afiliación</span>');};
-  sel.addEventListener('change',pinta);pinta();
-  body.append(el('label',{class:'field'},'Retención pendiente',sel),el('label',{class:'field'},'Monto a retener',monto),aviso,
-    el('div',{class:'muted',style:'margin-top:10px'},'Se descuenta del a dispersar de este grupo y queda registrada en el corte. Si borras el corte, la retención vuelve a quedar pendiente.'));
+  body.append(el('div',{class:'banner',html:`Disponible por dispersar en este grupo: <b>DOM ${mxn(dom)}</b> · <b>AMEX ${mxn(amex)}</b>. Solo se puede retener hasta ese saldo.`}));
+  const ro=(id,v)=>el('input',{id,value:v,readonly:true,style:'background:var(--bg-soft,#f4f5f7)'});
+  const tipo=el('select',{id:'retTipo'},el('option',{value:'financiamiento'},'Financiamiento'),el('option',{value:'revenue_share'},'Revenue share'));
+  const bloque=el('select',{id:'retBloque'},el('option',{value:'DOM'},'DOM'),el('option',{value:'AMEX'},'AMEX'));
+  const concepto=el('input',{id:'retConcepto',type:'text',maxlength:'200',placeholder:'Ej. Ajuste de saldo, financiamiento noviembre…'});
+  const monto=el('input',{id:'retMonto',type:'number',step:'0.01',min:'0.01',placeholder:'0.00'});
+  body.append(
+    el('div',{class:'form-grid'},el('label',{class:'field'},'Grupo de cliente',ro('retGrupo',cc.cliente||cc.razon||'')),el('label',{class:'field'},'Afiliación',ro('retAfil',cc.afil))),
+    el('div',{class:'form-grid'},el('label',{class:'field'},'Tipo',tipo),el('label',{class:'field'},'Bloque',bloque)),
+    el('label',{class:'field'},'Concepto de la retención',concepto),
+    el('label',{class:'field'},'Monto a retener',monto),
+    el('div',{class:'muted',style:'margin-top:10px'},'Se crea como una retención nueva (aparece en Retenciones con su folio) y se descuenta ahora del a dispersar de este grupo. Si borras el corte, queda pendiente.'));
   const foot=el('div',{});
   foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
-    const c=libres.find(x=>String(x.id)===sel.value);
-    if(!c||!(Number(monto.value)>0)){toast('Indica un monto mayor a cero','err');return;}
-    if(!c.coincide_afil&&!await confirmar('Esta retención es de la afiliación '+c.afil+' y la vas a aplicar al grupo de la afiliación '+cc.afil+'. ¿Continuar?'))return;
-    try{const r=await withBusy('Aplicando retención…',()=>api('POST','/api/cortes/'+corte.id_corte+'/retener',{calculo_id:cc.id,cargo_id:c.id,monto:Number(monto.value)}));
-      closeModal();toast('Retenido '+mxn(r.retenido)+(r.pendiente_restante>0.004?' · quedan '+mxn(r.pendiente_restante)+' pendientes':''),'ok');abrirCorte(corte.id_corte);}
+    if(!concepto.value.trim()){toast('Escribe el concepto de la retención','err');concepto.focus();return;}
+    const m=Number(monto.value);if(!(m>0)){toast('Indica un monto mayor a cero','err');monto.focus();return;}
+    if(dom+amex<=0.004){toast('Este grupo no tiene saldo por dispersar para retener','err');return;}
+    try{const x=await withBusy('Aplicando retención…',()=>api('POST','/api/cortes/'+corte.id_corte+'/retener',{calculo_id:cc.id,tipo:tipo.value,bloque:bloque.value,concepto:concepto.value.trim(),monto:m}));
+      closeModal();toast('Retención '+x.folio+' por '+mxn(x.retenido)+' aplicada'+(x.pendiente_restante>0.004?' · no alcanzó el saldo, quedan '+mxn(x.pendiente_restante)+' pendientes':''),'ok');abrirCorte(corte.id_corte);}
     catch(e){toast((e.data&&e.data.mensaje)||errMsg(e),'err');}
   }},'Retener'));
   modal('Retener en este corte',body,foot);
