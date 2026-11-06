@@ -2219,6 +2219,82 @@ app.get('/api/cortes/:id', auth, async (req, res) => {
   res.json({ corte: { ...c, total_monto: Number(c.total_monto), total_comp: Number(c.total_comp), total_disp: Number(c.total_disp) }, calculos: cal });
 });
 
+// Retención manual DESDE el corte: el operador elige una retención/contracargo pendiente y la aplica a una fila (grupo + afiliación)
+// de un corte en Borrador, sin depender del piso de fecha, de que el nombre del grupo coincida ni de la afiliación.
+// Solo se puede retener lo que la fila tiene disponible en sus bolsas (DOM / AMEX): el a dispersar nunca queda negativo.
+// Se registra en corte_aplicaciones (igual que la automática), así que borrar el corte revierte la retención.
+async function filaRetenible(idCorte, idCalculo) {
+  const c = (await db.query('select id_corte, estado, fecha_liq_iso::text as fecha from cortes where id_corte=$1', [idCorte])).rows[0];
+  if (!c) return { error: { status: 404, body: { error: 'no_existe' } } };
+  if (c.estado !== 'Borrador') return { error: { status: 409, body: { error: 'corte_no_borrador', estado: c.estado, mensaje: `El corte está ${c.estado}: solo se puede retener mientras está en Borrador. Borra el corte y vuelve a generarlo, o registra el ajuste en el siguiente corte.` } } };
+  const f = (await db.query('select * from calculos where corte_id=$1 and id=$2', [idCorte, idCalculo])).rows[0];
+  if (!f) return { error: { status: 404, body: { error: 'fila_no_existe', mensaje: 'Ese grupo no pertenece a este corte.' } } };
+  const j = v => (typeof v === 'string' ? JSON.parse(v) : (v || {}));
+  return { corte: c, fila: { ...f, calc: j(f.calc), ajustes: j(f.ajustes) } };
+}
+const disponibleFila = calc => ({ dom: Math.max(E.round2(calc.disp_dom || 0), 0), amex: Math.max(E.round2(calc.disp_amex || 0), 0) });
+app.get('/api/cortes/:id/retenibles', auth, requiereRol('admin', 'operador'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const idCorte = parseInt(req.params.id, 10), idCalc = parseInt(req.query.calculo, 10);
+  if (!idCorte || !idCalc) return res.status(400).json({ error: 'calculo_requerido' });
+  const F = await filaRetenible(idCorte, idCalc);
+  if (F.error) return res.status(F.error.status).json(F.error.body);
+  const { fila } = F;
+  const cargos = (await db.query(
+    `select g.id, g.origen_ref as folio, g.tipo, g.bloque, g.grupo_cliente as grupo, g.numero_afiliacion as afil,
+            (g.monto_original - g.monto_retenido) as pendiente, g.estatus, g.fecha_retencion_desde::text as desde,
+            exists(select 1 from corte_aplicaciones a where a.corte_id=$1 and a.cargo_id=g.id) as ya_en_corte
+       from comercio_ledger_cargos g
+      where g.estatus in ('Pendiente','Parcial') and g.monto_original - g.monto_retenido > 0.004
+      order by (g.numero_afiliacion = $2) desc, g.creado_at asc, g.id asc`, [idCorte, String(fila.afil)])).rows
+    .map(r => ({ ...r, pendiente: E.round2(r.pendiente), coincide_afil: String(r.afil) === String(fila.afil), coincide_grupo: nrm(r.grupo) === nrm(fila.cliente) }));
+  res.json({ fila: { id: fila.id, razon: fila.razon, cliente: fila.cliente, afil: fila.afil }, disponible: disponibleFila(fila.calc), cargos });
+});
+app.post('/api/cortes/:id/retener', auth, requiereRol('admin', 'operador'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const idCorte = parseInt(req.params.id, 10);
+  const b = req.body || {};
+  const idCalc = parseInt(b.calculo_id, 10), idCargo = parseInt(b.cargo_id, 10);
+  if (!idCorte || !idCalc || !idCargo) return res.status(400).json({ error: 'datos_requeridos', mensaje: 'Indica el grupo del corte y la retención.' });
+  const F = await filaRetenible(idCorte, idCalc);
+  if (F.error) return res.status(F.error.status).json(F.error.body);
+  const { fila } = F;
+  const g = (await db.query('select * from comercio_ledger_cargos where id=$1', [idCargo])).rows[0];
+  if (!g || !['Pendiente', 'Parcial'].includes(g.estatus)) return res.status(409).json({ error: 'cargo_no_pendiente', mensaje: 'Esa retención ya no está pendiente.' });
+  if ((await db.query('select 1 from corte_aplicaciones where corte_id=$1 and cargo_id=$2', [idCorte, idCargo])).rows.length)
+    return res.status(409).json({ error: 'ya_aplicado_en_corte', mensaje: 'Esa retención ya se aplicó (total o parcialmente) en este corte. Un corte registra una sola aplicación por retención.' });
+  const pendiente = E.round2(Number(g.monto_original) - Number(g.monto_retenido));
+  const pedido = b.monto == null || b.monto === '' ? pendiente : E.round2(Number(b.monto));
+  if (!(pedido > 0)) return res.status(400).json({ error: 'monto_invalido', mensaje: 'El monto a retener debe ser mayor a cero.' });
+  if (pedido > pendiente + 0.004) return res.status(400).json({ error: 'monto_excede', mensaje: `La retención solo tiene ${pendiente} pendiente.` });
+  // Bolsas disponibles: contracargos y ajustes son de su marca (solo su bolsa); financiamientos y revenue share completan con la otra.
+  const disp = disponibleFila(fila.calc);
+  const propio = g.bloque === 'AMEX' ? 'amex' : 'dom', otro = propio === 'dom' ? 'amex' : 'dom';
+  const sinMarca = ['financiamiento', 'revenue_share'].includes(g.tipo);
+  const tope = disp[propio] + (sinMarca ? disp[otro] : 0);
+  if (tope <= 0.004) return res.status(409).json({ error: 'sin_saldo', mensaje: `Este grupo no tiene saldo por dispersar en el bloque ${g.bloque} para retener (${disp.dom} DOM · ${disp.amex} AMEX).` });
+  const monto = E.round2(Math.min(pedido, tope));
+  const tomaPropio = E.round2(Math.min(monto, disp[propio])), tomaOtro = E.round2(monto - tomaPropio);
+  const take = { dom: propio === 'dom' ? tomaPropio : tomaOtro, amex: propio === 'amex' ? tomaPropio : tomaOtro };
+  // Actualiza la fila: el a dispersar baja lo retenido y el desglose lo muestra como retención de su tipo.
+  const calc = { ...fila.calc }, aj = { ...fila.ajustes };
+  calc.contracargos_dom = E.round2((calc.contracargos_dom || 0) + take.dom);   calc.contracargos_amex = E.round2((calc.contracargos_amex || 0) + take.amex);
+  calc.disp_dom = E.round2((calc.disp_dom || 0) - take.dom);                   calc.disp_amex = E.round2((calc.disp_amex || 0) - take.amex);
+  calc.disp_total = E.round2(calc.disp_dom + calc.disp_amex);                  calc.comprobacion = calc.disp_total; calc.diferencia = 0;
+  aj.contracargos_dom = calc.contracargos_dom; aj.contracargos_amex = calc.contracargos_amex;
+  const esCC = ['contracargo', 'ajuste_manual'].includes(g.tipo);
+  const k = esCC ? 'contracargo_solo_' : 'financiamiento_';
+  aj[k + 'dom'] = E.round2((aj[k + 'dom'] || 0) + take.dom); aj[k + 'amex'] = E.round2((aj[k + 'amex'] || 0) + take.amex);
+  aj.manuales = (aj.manuales || []).concat([{ cargo_id: idCargo, folio: g.origen_ref, monto, por: req.user.nombre, fecha: new Date().toISOString() }]);
+  await db.query('update calculos set calc=$1, ajustes=$2 where id=$3', [JSON.stringify(calc), JSON.stringify(aj), fila.id]);
+  await L.aplicarEnCorte(db, idCorte, [{ cargo_id: idCargo, monto_aplicado: monto, bloque: g.bloque }]);
+  const tot = (await db.query("select coalesce(sum((calc->>'disp_total')::numeric),0) as d from calculos where corte_id=$1", [idCorte])).rows[0];
+  await db.query('update cortes set total_disp=$1 where id_corte=$2', [E.round2(Number(tot.d)), idCorte]);
+  const restante = E.round2(pendiente - monto);
+  await bit(req, 'corte_retener', `retención manual ${g.origen_ref} por ${monto} en ${fila.razon || fila.cliente} · afil ${fila.afil}${restante > 0.004 ? ` (quedan ${restante} pendientes)` : ''}${String(g.numero_afiliacion) !== String(fila.afil) ? ` ⚠ la retención era de la afiliación ${g.numero_afiliacion}` : ''}`, { resource_type: 'corte', resource_id: idCorte });
+  res.json({ ok: true, retenido: monto, pendiente_restante: restante, a_dispersar_fila: calc.disp_total });
+});
+
 function transicionValida(estado, accion) {
   return (accion === 'validar' && estado === 'Borrador') || (accion === 'dispersar' && estado === 'Validado') || (accion === 'cerrar' && estado === 'Dispersado');
 }
@@ -2912,7 +2988,7 @@ async function computeContable(desde, hasta, afilFiltro, clienteFiltro) {
       costos: co ? { int_tdd: Number(co.int_tdd), int_tdc: Number(co.int_tdc), int_amex: co.int_amex == null ? null : Number(co.int_amex), int_int: co.int_int == null ? null : Number(co.int_int), fee_broxel: co.fee_broxel == null ? null : Number(co.fee_broxel) } : {},
     };
     const r = E.calcularCompensacion(groups[k], cat, params, {});
-    rows.push({ fl, afil, razon: razonDe(afil) || cliente, monto: r.m_tdd + r.m_tdc + r.m_amex + r.m_int, n_trx: r.num_trx,
+    rows.push({ fl, afil, cliente, grupo: g ? g.nombre_cliente : null, razon: razonDe(afil) || cliente, monto: r.m_tdd + r.m_tdc + r.m_amex + r.m_int, n_trx: r.num_trx,
       com_tdd: r.com_tdd, iva_tdd: r.iva_com_tdd, com_tdc: r.com_tdc, iva_tdc: r.iva_com_tdc,
       com_amex: r.com_amex, iva_amex: r.iva_com_amex, com_int: r.com_int, iva_int: r.iva_com_int,
       disp: r.disp_total, banca: r.banca, iva_banca: r.iva_banca });
@@ -2944,27 +3020,34 @@ app.get('/api/contable.xlsx', auth, async (req, res) => {
 // (neto), por rango de FECHA DE LIQUIDACIÓN y afiliación opcional. Usa el mismo cálculo que
 // Registro contable (computeContable) para que las cifras cuadren con contabilidad.
 const DASH_MAX_TX = 200000;   // tope de transacciones por consulta: computeContable las carga en memoria
-app.get('/api/dashboard/resumen', auth, async (req, res) => {
-  if (!dbReady(res)) return;
+// Filtros del Panel (fechas de liquidación, afiliación y grupo de cliente) → valores listos para consultar, o {error:{status,body}}.
+async function panelFiltros(q) {
   const fechaOk = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
   const hoy = hoyISOmx();
-  let desde = fechaOk(req.query.desde) ? req.query.desde : hoy.slice(0, 8) + '01';
-  let hasta = fechaOk(req.query.hasta) ? req.query.hasta : new Date(Date.UTC(+hoy.slice(0, 4), +hoy.slice(5, 7), 0)).toISOString().slice(0, 10);
-  if (desde > hasta) return res.status(400).json({ error: 'rango_invalido', mensaje: 'La fecha "desde" no puede ser posterior a "hasta".' });
+  const desde = fechaOk(q.desde) ? q.desde : hoy.slice(0, 8) + '01';
+  const hasta = fechaOk(q.hasta) ? q.hasta : new Date(Date.UTC(+hoy.slice(0, 4), +hoy.slice(5, 7), 0)).toISOString().slice(0, 10);
+  if (desde > hasta) return { error: { status: 400, body: { error: 'rango_invalido', mensaje: 'La fecha "desde" no puede ser posterior a "hasta".' } } };
   // "ninguna" / "ninguno" = las transacciones que no se pueden ligar al catálogo (afiliación sin grupo / cliente sin grupo).
-  const afilQ = String(req.query.afiliacion || '');
+  const afilQ = String(q.afiliacion || '');
   const afil = afilQ === 'ninguna' ? NO_IDENT : afilQ.replace(/\D/g, '');
   const [grupos, afilGrupo] = [await getGrupos(), await getAfilGrupo()];
-  const grupoQ = String(req.query.grupo || '');
+  const grupoQ = String(q.grupo || '');
   const sinGrupo = grupoQ === 'ninguno';
   const idGrupo = sinGrupo ? '' : grupoQ.replace(/\D/g, '');
   const grupo = idGrupo ? grupos.find(g => String(g.id_grupo) === idGrupo) : null;
-  if (idGrupo && !grupo) return res.status(400).json({ error: 'grupo_invalido', mensaje: 'El grupo de cliente no existe.' });
+  if (idGrupo && !grupo) return { error: { status: 400, body: { error: 'grupo_invalido', mensaje: 'El grupo de cliente no existe.' } } };
   const cliente = sinGrupo ? NO_IDENT : (grupo ? nrm(grupo.nombre_cliente) : '');
   const vals = [desde, hasta];
   const extra = filtroTx(afil, cliente, vals);
   const n = (await db.query("select count(*)::int n from transacciones where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'" + extra, vals)).rows[0].n;
-  if (n > DASH_MAX_TX) return res.status(413).json({ error: 'periodo_muy_grande', total: n, maximo: DASH_MAX_TX, mensaje: `El periodo tiene ${n} transacciones y el máximo por consulta es ${DASH_MAX_TX}. Acota las fechas o elige una afiliación o un grupo.` });
+  if (n > DASH_MAX_TX) return { error: { status: 413, body: { error: 'periodo_muy_grande', total: n, maximo: DASH_MAX_TX, mensaje: `El periodo tiene ${n} transacciones y el máximo por consulta es ${DASH_MAX_TX}. Acota las fechas o elige una afiliación o un grupo.` } } };
+  return { desde, hasta, afil, sinGrupo, grupo, cliente, grupos, afilGrupo };
+}
+app.get('/api/dashboard/resumen', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const P = await panelFiltros(req.query || {});
+  if (P.error) return res.status(P.error.status).json(P.error.body);
+  const { desde, hasta, afil, sinGrupo, grupo, cliente, grupos, afilGrupo } = P;
   const rows = await computeContable(desde, hasta, afil, cliente);
   const S = k => E.round2(rows.reduce((a, r) => a + (r[k] || 0), 0));
   const monto = S('monto');
@@ -2988,6 +3071,81 @@ app.get('/api/dashboard/resumen', auth, async (req, res) => {
     opciones, no_identificadas: { afiliacion: ni.afil, grupo: ni.grupo },
     opciones_grupos: grupos.filter(g => g.activo !== false).map(g => ({ id: g.id_grupo, nombre: g.nombre_cliente })).sort((x, y) => String(x.nombre).localeCompare(String(y.nombre), 'es')),
   });
+});
+
+// Reporte de los KPIs del Panel en Excel: mismos filtros que el resumen (fechas de liquidación, grupo y afiliación) y un desglose
+// por día, semana contable (1-10, 11-17, 18-24, 25-fin), mes, grupo de cliente o afiliación.
+const PANEL_AGRUPAR = {
+  dia:        { titulo: 'Día',              hoja: 'Por día' },
+  semana:     { titulo: 'Semana contable',  hoja: 'Por semana contable' },
+  mes:        { titulo: 'Mes',              hoja: 'Por mes' },
+  grupo:      { titulo: 'Grupo de cliente', hoja: 'Por grupo de cliente' },
+  afiliacion: { titulo: 'Afiliación',       hoja: 'Por afiliación' },
+};
+function claveDesglose(modo, r) {
+  const [y, m, d] = r.fl.split('-');
+  if (modo === 'dia') return { k: r.fl, label: r.fl, orden: r.fl };
+  if (modo === 'mes') return { k: `${y}-${m}`, label: `${nombreMes(+m)} ${y}`, orden: `${y}-${m}` };
+  if (modo === 'semana') {
+    const sem = +d <= 10 ? 1 : +d <= 17 ? 2 : +d <= 24 ? 3 : 4;
+    const rng = ['01-10', '11-17', '18-24', '25-fin'][sem - 1];
+    return { k: `${y}-${m}-${sem}`, label: `${nombreMes(+m)} ${y} · Semana ${sem} (${rng})`, orden: `${y}-${m}-${sem}` };
+  }
+  if (modo === 'grupo') { const g = r.grupo || 'No identificado'; return { k: g, label: g, orden: null }; }
+  return { k: String(r.afil), label: `${r.afil}${r.razon ? ' · ' + r.razon : ''}`, orden: null };   // afiliacion
+}
+app.get('/api/dashboard/reporte.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const modo = PANEL_AGRUPAR[req.query.agrupar] ? req.query.agrupar : 'dia';
+  const P = await panelFiltros(req.query || {});
+  if (P.error) return res.status(P.error.status).json(P.error.body);
+  const { desde, hasta, afil, sinGrupo, grupo, cliente } = P;
+  const rows = await computeContable(desde, hasta, afil, cliente);
+  if (!rows.length) return res.status(404).json({ error: 'sin_datos', mensaje: 'No hay transacciones aprobadas con esos filtros en el periodo.' });
+  const R2 = E.round2;
+  const suma = (rs, k) => R2(rs.reduce((a, r) => a + (r[k] || 0), 0));
+  const kpis = rs => {
+    const comision = R2(suma(rs, 'com_tdd') + suma(rs, 'com_tdc') + suma(rs, 'com_amex') + suma(rs, 'com_int'));
+    const iva = R2(suma(rs, 'iva_tdd') + suma(rs, 'iva_tdc') + suma(rs, 'iva_amex') + suma(rs, 'iva_int'));
+    return { n: rs.reduce((a, r) => a + (r.n_trx || 0), 0), monto: suma(rs, 'monto'), comision, iva, banca: R2(suma(rs, 'banca') + suma(rs, 'iva_banca')), disp: suma(rs, 'disp') };
+  };
+  const T = kpis(rows);
+  // Desglose
+  const cub = new Map();
+  for (const r of rows) { const c = claveDesglose(modo, r); const e = cub.get(c.k) || { ...c, rs: [] }; e.rs.push(r); cub.set(c.k, e); }
+  const lineas = [...cub.values()].map(e => ({ label: e.label, orden: e.orden, ...kpis(e.rs) }));
+  if (['dia', 'semana', 'mes'].includes(modo)) lineas.sort((a, b) => a.orden < b.orden ? -1 : a.orden > b.orden ? 1 : 0);
+  else lineas.sort((a, b) => b.monto - a.monto || String(a.label).localeCompare(String(b.label), 'es'));
+  const filtroTxt = [
+    sinGrupo ? 'Grupo: No identificado' : grupo ? `Grupo: ${grupo.nombre_cliente}` : 'Todos los grupos',
+    afil === NO_IDENT ? 'Afiliación: No identificada' : afil ? `Afiliación: ${afil}` : 'Todas las afiliaciones',
+  ].join(' · ');
+  const hoyStr = new Date().toLocaleDateString('es-MX', { timeZone: 'America/Mexico_City' });
+  const numCols = [
+    { header: 'Transacciones', width: 15, numFmt: '#,##0' },
+    { header: 'Monto transaccionado', width: 22, numFmt: 'mxn' },
+    { header: 'Comisión pactada', width: 20, numFmt: 'mxn' },
+    { header: 'IVA', width: 16, numFmt: 'mxn' },
+    { header: 'Banca (Telematic) + IVA', width: 22, numFmt: 'mxn' },
+    { header: 'Monto dispersado (neto)', width: 24, numFmt: 'mxn' },
+  ];
+  const vals = k => [k.n, k.monto, k.comision, k.iva, k.banca, k.disp];
+  const buf = await X.buildPolipayXLSX({
+    title: 'Panel POS · Indicadores del periodo',
+    meta: `Fecha de liquidación del ${desde} al ${hasta}   ·   ${filtroTxt}   ·   Desglose: ${PANEL_AGRUPAR[modo].titulo}   ·   Generado ${hoyStr} por ${req.user.nombre || '—'}`,
+    footer: 'Polipay POS Settlement · Solo transacciones aprobadas, por fecha de liquidación · Monto dispersado = monto − comisión − IVA − banca · Todas las cifras en MXN',
+    sheets: [
+      { name: 'Resumen',
+        columns: [{ header: 'Periodo (fecha de liquidación)', width: 30, align: 'left' }, { header: 'Grupo', width: 28, align: 'left' }, { header: 'Afiliación', width: 24, align: 'left' }, ...numCols, { header: 'Comisión / monto', width: 17, numFmt: '0.00%' }],
+        rows: [[`${desde} a ${hasta}`, sinGrupo ? 'No identificado' : grupo ? grupo.nombre_cliente : 'Todos', afil === NO_IDENT ? 'No identificada' : afil || 'Todas', ...vals(T), T.monto ? T.comision / T.monto : 0]] },
+      { name: PANEL_AGRUPAR[modo].hoja,
+        columns: [{ header: PANEL_AGRUPAR[modo].titulo, width: modo === 'afiliacion' || modo === 'semana' ? 46 : 32, align: 'left' }, ...numCols],
+        rows: lineas.map(l => [l.label, ...vals(l)]),
+        total: ['TOTAL', ...vals(T)] },
+    ],
+  });
+  await bit(req, 'reporte', `exportó indicadores del panel ${desde}..${hasta} por ${modo}${grupo ? ' · ' + grupo.nombre_cliente : ''}${afil && afil !== NO_IDENT ? ' · afil ' + afil : ''}`);
+  enviarXLSX(res, `panel_indicadores_${desde}_a_${hasta}_por_${modo}.xlsx`, buf);
 });
 
 function semanasDelMes(anio, mes) {

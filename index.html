@@ -1464,6 +1464,19 @@ async function vDashboard(v){
       if(inDesde.value&&inHasta.value&&inDesde.value>inHasta.value){toast('La fecha "desde" no puede ser posterior a "hasta"','err');return;}
       vDashboard._f={desde:inDesde.value,hasta:inHasta.value,afil:selAf.value,grupo:selGr.value};render();}},'Aplicar'),
     el('button',{class:'btn ghost',onclick:()=>{vDashboard._f={desde:'',hasta:'',afil:'',grupo:''};render();}},'Mes en curso'));
+  // Reporte en Excel de estos indicadores, con los filtros que están en pantalla y un desglose por día, semana contable, mes, grupo o afiliación.
+  const selAgr=el('select',{id:'dashAgrupar',title:'Cómo se desglosa el reporte'},
+    ...[['dia','Día'],['semana','Semana contable'],['mes','Mes'],['grupo','Grupo de cliente'],['afiliacion','Afiliación']].map(([k,t])=>el('option',{value:k},t)));
+  selAgr.value=vDashboard._agr||'dia';selAgr.addEventListener('change',()=>{vDashboard._agr=selAgr.value;});
+  barra.append(el('span',{style:'flex:1 1 0'}),
+    el('label',{class:'field',style:'margin:0;min-width:170px'},'Desglosar reporte por',selAgr),
+    el('button',{class:'btn secondary',onclick:async()=>{
+      if(inDesde.value&&inHasta.value&&inDesde.value>inHasta.value){toast('La fecha "desde" no puede ser posterior a "hasta"','err');return;}
+      const q={desde:inDesde.value,hasta:inHasta.value,afiliacion:selAf.value,grupo:selGr.value,agrupar:selAgr.value};
+      const d=inDesde.value||(rs&&rs.desde)||'',h=inHasta.value||(rs&&rs.hasta)||'';
+      try{await withBusy('Generando reporte…',()=>descargar('/api/dashboard/reporte.xlsx?'+new URLSearchParams(q).toString(),'panel_indicadores_'+d+'_a_'+h+'_por_'+selAgr.value+'.xlsx'));}
+      catch(e){toast([404,413].includes(e.status)?((e.data&&e.data.mensaje)||'Sin datos para esos filtros'):errMsg(e),'err');}
+    }},'⬇ Descargar reporte'));
   v.append(el('h3',{style:'margin:0 0 10px;font-size:15px'},'Resumen del periodo'),barra);
   if(!rs){
     const msg=resumen&&resumen._err&&resumen._err.data&&resumen._err.data.mensaje;
@@ -2098,7 +2111,7 @@ async function abrirCorte(id){
   pa.append(el('div',{class:'foot-links'},`Creado por ${esc(c.creado_por||'—')}`,c.validado_por?`· Validado por ${esc(c.validado_por)}`:'',c.dispersado_por?`· Dispersado por ${esc(c.dispersado_por)}`:''));
   v.append(pa);
   const pt=el('div',{class:'panel'});pt.append(el('h3',{},'Compensación y dispersión por grupo'));
-  const rows=cal.map(cc=>{const r=cc.calc;const tr=[`<div class="tt">${esc(cc.razon)}<small>Afil. ${esc(cc.afil)} · ${esc(cc.concepto||'sin grupo')}</small></div>`,{num:r.num_trx},{num:mxn(r.m_tdd+r.m_tdc+r.m_amex+r.m_int)},{num:mxn(r.comp_total)},{num:mxn(r.banca+r.iva_banca)},{num:mxn(r.disp_total)},Math.abs(r.diferencia)<=0.01?'<span class="flagok">0.00</span>':`<span class="flagbad">${num(r.diferencia)}</span>`,(cc.faltantes&&cc.faltantes.length)?`<span class="badge warn">falta ${cc.faltantes.join(', ')}</span>`:'<span class="badge ok">ok</span>'];tr._onclick=()=>detalleCalculo(cc);return tr;});
+  const rows=cal.map(cc=>{const r=cc.calc;const tr=[`<div class="tt">${esc(cc.razon)}<small>Afil. ${esc(cc.afil)} · ${esc(cc.concepto||'sin grupo')}</small></div>`,{num:r.num_trx},{num:mxn(r.m_tdd+r.m_tdc+r.m_amex+r.m_int)},{num:mxn(r.comp_total)},{num:mxn(r.banca+r.iva_banca)},{num:mxn(r.disp_total)},Math.abs(r.diferencia)<=0.01?'<span class="flagok">0.00</span>':`<span class="flagbad">${num(r.diferencia)}</span>`,(cc.faltantes&&cc.faltantes.length)?`<span class="badge warn">falta ${cc.faltantes.join(', ')}</span>`:'<span class="badge ok">ok</span>'];tr._onclick=()=>detalleCalculo(cc,c);return tr;});
   pt.append(tableWrap(['Grupo / Afiliación',{t:'Trx'},{t:'Monto'},{t:'A compensar'},{t:'Banca+IVA'},{t:'A dispersar'},'Dif.','Estado'],rows));
   pt.append(el('div',{class:'muted',style:'margin-top:8px'},'Clic en un grupo para ver el desglose completo.'));
   v.append(pt);
@@ -2148,7 +2161,7 @@ function openMarcarDispersion(id,cal,pendientesAnteriores){
   modal('Marcar dispersado',body,foot,true);
 }
 
-function detalleCalculo(cc){const r=cc.calc;const body=el('div',{});
+function detalleCalculo(cc,corte){const r=cc.calc;const body=el('div',{});
   body.append(el('div',{class:'banner',html:`<b>${esc(cc.razon)}</b> · Afiliación ${esc(cc.afil)} · ${esc(cc.concepto||'—')} · ${r.num_trx} trx`}));
   const kv=(k,val,strong)=>el('div',{class:'testline'},el('span',{style:'flex:1'},k),el('span',{class:strong?'flagok':'',style:'font-variant-numeric:tabular-nums'},val));
   const col=(title,lines)=>{const d=el('div',{class:'panel',style:'margin:0 0 14px'});d.append(el('h3',{style:'font-size:14px'},title));lines.forEach(l=>d.append(kv(l[0],l[1],l[2])));return d;};
@@ -2161,7 +2174,42 @@ function detalleCalculo(cc){const r=cc.calc;const body=el('div',{});
   g.append(col('Dispersión (RN-09)',[['Bloque dom.+INT',mxn(r.disp_dom)],['Bloque AMEX',mxn(r.disp_amex)],['Total a dispersar',mxn(r.disp_total),true]]));
   body.append(g);
   body.append(el('div',{class:'banner '+(Math.abs(r.diferencia)<=0.01?'ok':'err'),html:`Comprobación: ${mxn(r.comprobacion)} · Diferencia: <b>${num(r.diferencia)}</b> · Utilidad: <b>${mxn(r.utilidad)}</b>`}));
-  modal('Desglose del cálculo',body,el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'),true);
+  // Retenciones que ya entraron en este grupo (automáticas o manuales) y, en Borrador, la opción de retener directo desde el corte.
+  const aj=(typeof cc.ajustes==='string'?JSON.parse(cc.ajustes||'{}'):cc.ajustes)||{};
+  const retDom=Number(r.contracargos_dom||0),retAmex=Number(r.contracargos_amex||0);
+  body.append(el('div',{class:'banner'+((retDom+retAmex)>0?' ok':''),html:(retDom+retAmex)>0?`Retenido en este corte: <b>${mxn(retDom+retAmex)}</b> (DOM ${mxn(retDom)} · AMEX ${mxn(retAmex)})`+((aj.manuales||[]).length?' · manual: '+aj.manuales.map(m=>esc(m.folio)+' '+mxn(m.monto)).join(', '):''):'En este corte no se retuvo nada a este grupo.'}));
+  const pie=el('div',{});
+  if(corte&&corte.estado==='Borrador'&&can('corte'))pie.append(el('button',{class:'btn secondary',onclick:()=>openRetenerEnCorte(corte,cc)},'Retener en este corte'),' ');
+  pie.append(el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'));
+  modal('Desglose del cálculo',body,pie,true);
+}
+// Aplica una retención pendiente a un grupo de un corte en Borrador, sin esperar a la fecha piso ni a que el grupo coincida.
+async function openRetenerEnCorte(corte,cc){
+  let d;try{d=await api('GET','/api/cortes/'+corte.id_corte+'/retenibles?calculo='+cc.id);}catch(e){toast((e.data&&e.data.mensaje)||errMsg(e),'err');return;}
+  const body=el('div',{});
+  body.append(el('div',{class:'banner',html:`<b>${esc(cc.razon)}</b> · Afiliación ${esc(cc.afil)} · Disponible por dispersar: <b>DOM ${mxn(d.disponible.dom)}</b> · <b>AMEX ${mxn(d.disponible.amex)}</b>. Solo se puede retener hasta ese saldo.`}));
+  const libres=d.cargos.filter(c=>!c.ya_en_corte);
+  if(!libres.length){body.append(el('div',{class:'banner warn'},'No hay retenciones ni contracargos pendientes para aplicar en este corte.'));modal('Retener en este corte',body,el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'));return;}
+  const sel=el('select',{id:'retCargo'},...libres.map(c=>el('option',{value:c.id},`${c.folio} · ${c.tipo==='revenue_share'?'Revenue share':c.tipo==='financiamiento'?'Financiamiento':c.tipo==='contracargo'?'Contracargo':c.tipo} · ${c.bloque} · ${mxn(c.pendiente)} · ${c.grupo||'—'} · afil ${c.afil}${c.coincide_afil?'':' (OTRA afiliación)'}`)));
+  const monto=el('input',{type:'number',step:'0.01',min:'0.01',id:'retMonto'});
+  const aviso=el('div',{class:'muted',style:'margin-top:6px'});
+  const pinta=()=>{const c=libres.find(x=>String(x.id)===sel.value);if(!c)return;
+    const tope=(c.bloque==='AMEX'?d.disponible.amex:d.disponible.dom)+((c.tipo==='financiamiento'||c.tipo==='revenue_share')?(c.bloque==='AMEX'?d.disponible.dom:d.disponible.amex):0);
+    monto.value=Math.min(c.pendiente,tope).toFixed(2);
+    aviso.innerHTML=`Pendiente <b>${mxn(c.pendiente)}</b> · Se puede retener hasta <b>${mxn(tope)}</b> en este grupo`+(c.desde?` · fecha aplica ${esc(c.desde)}`:'')+(c.coincide_afil?'':' · <span style="color:var(--danger-ink)">⚠ esta retención es de otra afiliación</span>');};
+  sel.addEventListener('change',pinta);pinta();
+  body.append(el('label',{class:'field'},'Retención pendiente',sel),el('label',{class:'field'},'Monto a retener',monto),aviso,
+    el('div',{class:'muted',style:'margin-top:10px'},'Se descuenta del a dispersar de este grupo y queda registrada en el corte. Si borras el corte, la retención vuelve a quedar pendiente.'));
+  const foot=el('div',{});
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
+    const c=libres.find(x=>String(x.id)===sel.value);
+    if(!c||!(Number(monto.value)>0)){toast('Indica un monto mayor a cero','err');return;}
+    if(!c.coincide_afil&&!await confirmar('Esta retención es de la afiliación '+c.afil+' y la vas a aplicar al grupo de la afiliación '+cc.afil+'. ¿Continuar?'))return;
+    try{const r=await withBusy('Aplicando retención…',()=>api('POST','/api/cortes/'+corte.id_corte+'/retener',{calculo_id:cc.id,cargo_id:c.id,monto:Number(monto.value)}));
+      closeModal();toast('Retenido '+mxn(r.retenido)+(r.pendiente_restante>0.004?' · quedan '+mxn(r.pendiente_restante)+' pendientes':''),'ok');abrirCorte(corte.id_corte);}
+    catch(e){toast((e.data&&e.data.mensaje)||errMsg(e),'err');}
+  }},'Retener'));
+  modal('Retener en este corte',body,foot);
 }
 
 /* ---------- CONTABLE ---------- */
