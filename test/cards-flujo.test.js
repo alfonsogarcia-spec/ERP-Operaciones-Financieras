@@ -54,13 +54,17 @@ test('permisos por rol de Cards y estatus', () => {
   const p = (est, rol, suyo) => FL.permisos(est, rol, suyo);
   // comercial: solo lo suyo, solo mientras está abierto, nunca asigna ni rechaza
   assert.deepEqual([p('SOLICITADO', 'comercial', true).subir_cep, p('SOLICITADO', 'comercial', true).cancelar, p('SOLICITADO', 'comercial', true).asignar], [true, true, false]);
-  assert.equal(p('POR_ASIGNAR', 'comercial', true).cancelar, false);            // ya está con tesorería
+  assert.equal(p('POR_ASIGNAR', 'comercial', true).cancelar, true);             // el CEP es opcional: nace por asignar y quien la pidió aún la puede cancelar
+  assert.equal(p('ASIGNADO', 'comercial', true).cancelar, false);
   assert.equal(p('RECHAZADO', 'comercial', true).subir_cep, true);
+  assert.equal(p('RECHAZADO', 'comercial', true).reenviar, true);               // corrige y lo vuelve a enviar (con o sin CEP)
+  assert.equal(p('RECHAZADO', 'comercial', false).reenviar, false);
+  assert.equal(p('POR_ASIGNAR', 'comercial', true).reenviar, false);
   assert.equal(p('SOLICITADO', 'comercial', false).subir_cep, false);          // de otro comercial
   assert.equal(p('ASIGNADO', 'comercial', true).subir_cep, false);
   // administrador (de POS o de Cards): todo; cancelar un asignado solo ellos
   for (const rol of ['admin', 'cards_admin']) {
-    assert.equal(p('POR_ASIGNAR', rol).asignar, true, rol); assert.equal(p('POR_ASIGNAR', rol).rechazar, true, rol); assert.equal(p('SOLICITADO', rol).asignar, false, rol);
+    assert.equal(p('POR_ASIGNAR', rol).asignar, true, rol); assert.equal(p('POR_ASIGNAR', rol).rechazar, true, rol); assert.equal(p('SOLICITADO', rol).asignar, false, rol); assert.equal(p('POR_ASIGNAR', rol).asignar_sin_cep, undefined, rol);
     assert.equal(p('ASIGNADO', rol).cancelar, true, rol); assert.equal(p('CANCELADO', rol).cancelar, false, rol); assert.equal(p('SOLICITADO', rol).subir_cep, true, rol);
   }
   // tesorería de Cards: asigna o rechaza lo que está por asignar y sube el comprobante; nada más
@@ -91,30 +95,28 @@ test('correos de asignado, rechazado y cancelado llevan la nota o el motivo', ()
   assert.throws(() => armarCorreoFondeo({ tipo: 'otro', fondeo: f }));
 });
 
-test('candado de asignación: solo abre con un CEP validado, los datos completos y el comprobante validado', () => {
-  const ok = { estatus: 'POR_ASIGNAR', fondeo: 100, monto_recibido: 100, fecha: '2026-10-22', clave_rastreo: 'R1', ceps: [{ validado: true }], comprobantes: [{ validado: true, coincide_actual: true }] };
+test('candado de asignación: el CEP es OPCIONAL; el candado es el comprobante del saldo con su monto validado', () => {
+  const ok = { estatus: 'POR_ASIGNAR', fondeo: 100, comprobantes: [{ validado: true, coincide_actual: true }] };
   assert.deepEqual(FL.candadoAsignacion(ok), { abierto: true, motivo: null });
-  assert.match(FL.candadoAsignacion({ ...ok, estatus: 'SOLICITADO', ceps: [] }).motivo, /Falta el CEP/);
-  assert.match(FL.candadoAsignacion({ ...ok, estatus: 'RECHAZADO', ceps: [] }).motivo, /Está rechazado y sin CEP/);
-  assert.match(FL.candadoAsignacion({ ...ok, ceps: [{ validado: false }] }).motivo, /no está validado/);
-  assert.match(FL.candadoAsignacion({ ...ok, monto_recibido: null }).motivo, /Faltan datos/);
-  assert.match(FL.candadoAsignacion({ ...ok, clave_rastreo: null }).motivo, /Faltan datos/);
+  // sin CEP, con CEP o con CEP sin validar: no cambia nada
+  assert.equal(FL.candadoAsignacion({ ...ok, ceps: [] }).abierto, true);
+  assert.equal(FL.candadoAsignacion({ ...ok, ceps: [{ validado: false }] }).abierto, true);
+  assert.equal(FL.candadoAsignacion({ ...ok, ceps: [{ validado: true }], monto_recibido: null, clave_rastreo: null }).abierto, true);
+  assert.equal(FL.candadoAsignacion({ ...ok, estatus: 'SOLICITADO' }).abierto, true);   // las que antes esperaban CEP también se pueden asignar
   assert.match(FL.candadoAsignacion({ ...ok, estatus: 'RECHAZADO' }).motivo, /Está rechazado/);
   assert.equal(FL.candadoAsignacion({ ...ok, estatus: 'ASIGNADO' }).abierto, false);
   assert.equal(FL.candadoAsignacion({ ...ok, estatus: 'CANCELADO' }).abierto, false);
-  assert.equal(FL.candadoAsignacion({ estatus: 'POR_ASIGNAR' }).abierto, false);   // sin datos: cerrado
+  assert.equal(FL.candadoAsignacion({ estatus: 'POR_ASIGNAR' }).abierto, false);   // sin comprobante: cerrado
   // El comprobante del saldo es obligatorio y su monto debe estar validado contra el fondeo calculado.
   assert.match(FL.candadoAsignacion({ ...ok, comprobantes: [] }).motivo, /Falta el comprobante/);
   assert.match(FL.candadoAsignacion({ ...ok, comprobantes: undefined }).motivo, /Falta el comprobante/);
   assert.match(FL.candadoAsignacion({ ...ok, comprobantes: [{ validado: false }] }).motivo, /no tiene su monto validado/);
   assert.match(FL.candadoAsignacion({ ...ok, comprobantes: [{ validado: true, coincide_actual: false }] }).motivo, /no coinciden con el fondeo calculado/);
   assert.equal(FL.candadoAsignacion({ ...ok, comprobantes: [{ validado: false }, { validado: true, coincide_actual: true }] }).abierto, true);   // basta uno válido
-  // "sin CEP": se compara contra el neto que resultará de lo capturado
   assert.equal(FL.comprobanteFalta({ comprobantes: [{ validado: true, monto_leido: 300000 }] }, 300000), null);
   assert.match(FL.comprobanteFalta({ comprobantes: [{ validado: true, monto_leido: 300000 }] }, 299000), /no coinciden/);
   assert.match(FL.comprobanteFalta({ comprobantes: [] }, 300000), /\$300,000\.00/);
 });
-
 
 test('correo de nueva solicitud: quién la registró, cuenta de fondeo, total a depositar y datos escapados', () => {
   const f = { folio: 'FND-2026-000134', ruta: 'Acme <SA>', empresa_nombre: 'Acme <SA>', solicitante_nombre: 'Fátima "Ruiz"', solicitante_email: 'fatima@polipay.io', beneficiario_destino: 'Acme SA de CV', banco_destino: 'STP', clabe_destino: '646180171800000010', fondeo: 300000, comision: 1500, iva: 240, comision_pct: 0.5, iva_pct: 16, monto_esperado: 301740, notas: 'Quincena <2>' };
@@ -165,11 +167,13 @@ test('correo de saldo asignado: menciona el comprobante y si va adjunto', () => 
 });
 
 test('correos: nombran a quien subió el CEP (el solicitante) y a quien subió el comprobante (tesorería)', () => {
-  const f = { folio: 'F1', ruta: 'Acme', empresa_nombre: 'Acme', fondeo: 1000, comision: 5, iva: 0.8, monto_recibido: 1005.8, solicitante_nombre: 'Ana Pérez', cep_subido_por: 'Fátima Ruiz' };
+  const f = { folio: 'F1', ruta: 'Acme', empresa_nombre: 'Acme', fondeo: 1000, comision: 5, iva: 0.8, monto_recibido: 1005.8, solicitante_nombre: 'Ana Pérez', cep_subido_por: 'Fátima Ruiz', ceps: [{}] };
   const pa = armarCorreoFondeo({ tipo: 'por_asignar', fondeo: f, ceps: [{ filename: 'cep.pdf', por: 'Fátima Ruiz', formato: 'cep_banxico', validado: true, adjunto: true, checks: [] }] });
   assert.match(pa.html, /Fátima Ruiz cargó el CEP/); assert.match(pa.html, /subido por Fátima Ruiz/);
   const sinDato = armarCorreoFondeo({ tipo: 'por_asignar', fondeo: { ...f, cep_subido_por: null } });
   assert.match(sinDato.html, /Ana Pérez cargó el CEP/);                                  // sin dato del archivo, se usa al solicitante
+  const sinCep = armarCorreoFondeo({ tipo: 'por_asignar', fondeo: { ...f, ceps: [], cep_subido_por: null } });
+  assert.match(sinCep.html, /Ana Pérez registró este fondeo/); assert.match(sinCep.html, /CEP es opcional/);   // sin CEP: se dice que es opcional
   const asig = armarCorreoFondeo({ tipo: 'asignado', fondeo: f, comprobantes: [{ filename: 'saldo.png', adjunto: true, por: 'Omar Tesorería' }] });
   assert.match(asig.html, /saldo\.png/); assert.match(asig.html, /subido por Omar Tesorería/);
 });
@@ -186,9 +190,21 @@ test('correo de saldo asignado: dice qué usuario realizó el fondeo (con su cor
   assert.doesNotMatch(armarCorreoFondeo({ tipo: 'por_asignar', fondeo: f }).html, /Fondeo realizado por/);        // aún no se realiza
 });
 
-test('asignar sin CEP: solo tesorería, y solo esperando CEP o por asignar', () => {
-  const p = (est, rol) => FL.permisos(est, rol, true);
-  for (const est of ['SOLICITADO', 'POR_ASIGNAR']) assert.equal(p(est, 'cards_tesoreria').asignar_sin_cep, true, est);
-  for (const rol of ['admin', 'cards_admin', 'comercial', 'cards_consulta']) assert.equal(p('POR_ASIGNAR', rol).asignar_sin_cep, false, rol);
-  for (const est of ['ASIGNADO', 'RECHAZADO', 'CANCELADO']) assert.equal(p(est, 'cards_tesoreria').asignar_sin_cep, false, est);
+test('el CEP es opcional: ya no existe «asignar sin CEP» como permiso aparte', () => {
+  for (const est of ['SOLICITADO', 'POR_ASIGNAR']) for (const rol of ['cards_tesoreria', 'admin', 'cards_admin']) assert.equal(FL.permisos(est, rol, true).asignar_sin_cep, undefined);
+  assert.equal(FL.permisos('POR_ASIGNAR', 'cards_tesoreria', true).asignar, true);   // tesorería asigna con o sin CEP
+});
+
+test('correos de fondeo: salen con el nombre comercial de la empresa (y la razón social debajo)', () => {
+  const f = { folio: 'F1', ruta: 'ACME DEMO SA DE CV › Sucursal Norte', empresa_nombre: 'ACME DEMO SA DE CV', empresa_comercial: 'Acme', fondeo: 1000, comision: 5, iva: 0.8, monto_esperado: 1005.8, solicitante_nombre: 'Ana Pérez', ceps: [] };
+  for (const tipo of ['solicitado', 'por_asignar', 'asignado', 'rechazado', 'cancelado']) {
+    const c = armarCorreoFondeo({ tipo, fondeo: f });
+    assert.match(c.subject, /· Acme ·/, tipo);                       // el asunto usa el nombre comercial, no la razón social
+    assert.doesNotMatch(c.subject, /ACME DEMO SA DE CV/, tipo);
+    assert.match(c.html, /Nombre comercial/, tipo); assert.match(c.html, />Acme</, tipo); assert.match(c.html, /Razón social/, tipo); assert.match(c.html, /ACME DEMO SA DE CV/, tipo);
+  }
+  assert.match(armarCorreoFondeo({ tipo: 'solicitado', fondeo: f }).html, /solicitud de fondeo para Acme\./);
+  // sin nombre comercial se queda como antes
+  const sin = armarCorreoFondeo({ tipo: 'por_asignar', fondeo: { ...f, empresa_comercial: null } });
+  assert.match(sin.subject, /· ACME DEMO SA DE CV ·/); assert.doesNotMatch(sin.html, /Nombre comercial/);
 });

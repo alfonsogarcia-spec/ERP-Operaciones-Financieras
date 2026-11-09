@@ -1372,7 +1372,7 @@ function renderNav(){
     (curBody || nav).append(link);
   }
 }
-const TITLES={cards_bandeja:['Por asignar','Fondeos con CEP aceptado, esperando que tesorería confirme la asignación del saldo'],cards_solicitudes:['Mis solicitudes','Solicita fondeos a tus empresas y sube el CEP del depósito'],cards_panel:['Polipay Cards Settlement · Panel','Fondeos recibidos, comisión e IVA y pendientes de control'],cards_fondeos:['Fondeos','Solicitudes de fondeo y depósitos recibidos de empresas, unidades de negocio y tarjetas, con su CEP'],cards_estructura:['Empresas, unidades de negocio y tarjetas','Las empresas llevan los datos; sus unidades de negocio y tarjetas (identificadas por el correo del usuario) los heredan'],cards_bancos:['Bancos','Catálogo de bancos de Cards: identifica el banco de cada CLABE y se compara con el CEP'],cards_contabilidad:['Corte de comisiones','Comisiones cobradas más IVA, con la razón social y el RFC a facturar: lo guardado hasta cada corte'],cards_destinatarios:['Destinatarios','A quién se envía cada correo de Cards: nueva solicitud, por asignar, asignado, rechazado y cancelada'],dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],inventario:['Inventario de terminales','Terminales POS activas por grupo de cliente y afiliación, derivado de las transacciones ya ingestadas'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],retenciones:['Retenciones','Retenciones por financiamiento y revenue share aplicadas al monto a dispersar'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],
+const TITLES={cards_bandeja:['Por asignar','Fondeos esperando que tesorería confirme la asignación del saldo (el CEP es opcional)'],cards_solicitudes:['Mis solicitudes','Solicita fondeos a tus empresas; el CEP del depósito es opcional'],cards_panel:['Polipay Cards Settlement · Panel','Fondeos recibidos, comisión e IVA y pendientes de control'],cards_fondeos:['Fondeos','Solicitudes de fondeo y depósitos recibidos de empresas, unidades de negocio y tarjetas, con su CEP'],cards_estructura:['Empresas, unidades de negocio y tarjetas','Las empresas llevan los datos; sus unidades de negocio y tarjetas (identificadas por el correo del usuario) los heredan'],cards_bancos:['Bancos','Catálogo de bancos de Cards: identifica el banco de cada CLABE y se compara con el CEP'],cards_contabilidad:['Corte de comisiones','Comisiones cobradas más IVA, con la razón social y el RFC a facturar: lo guardado hasta cada corte'],cards_destinatarios:['Destinatarios','A quién se envía cada correo de Cards: nueva solicitud, por asignar, asignado, rechazado y cancelada'],dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],inventario:['Inventario de terminales','Terminales POS activas por grupo de cliente y afiliación, derivado de las transacciones ya ingestadas'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],retenciones:['Retenciones','Retenciones por financiamiento y revenue share aplicadas al monto a dispersar'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],
 cumplimiento:['PLD y antifraude','KPIs de cumplimiento por grupo de cliente y afiliación — monto procesado, operaciones inusuales, tasa de contracargos, duplicadas y devoluciones sospechosas'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],umbrales:['Parametrización de umbrales','Umbrales de PLD y antifraude que controlan las alertas automáticas y los indicadores de riesgo'],destinatarios:['Destinatarios','Correos que reciben el aviso automático de corte'],adm_usuarios:['Usuarios y accesos','Quién entra a cada sistema (POS Settlement, Tareas Ops y Cards) y con qué rol'],bitacora:['Bitácora','Trazabilidad de acciones'],
 disp_dashboard:['Panel de disputas','KPIs de contracargos, devoluciones y duplicados'],
 disp_chargebacks:['Disputas','Ciclo completo de disputa: 1er contracargo → representación → arbitraje'],
@@ -5382,8 +5382,8 @@ async function abrirTarea(id){
 
 /* ============================================================================
    CARDS (BSO) · solicitud de fondeos → CEP → asignación de saldo (control interno de tesorería)
-   El comercial solicita a una empresa suya (el sistema cotiza fondeo + comisión + IVA), sube el CEP del depósito (solo se aceptan CEP)
-   y tesorería confirma que el saldo se asignó. La empresa manda fondeo neto + comisión (% del fondeo) + IVA (% de la comisión).
+   El comercial solicita a una empresa (el sistema cotiza fondeo + comisión + IVA), puede subir el CEP del depósito (opcional; solo se aceptan CEP)
+   y tesorería confirma que el saldo se asignó con el comprobante validado. La empresa manda fondeo neto + comisión (% del fondeo) + IVA (% de la comisión).
    ========================================================================= */
 const CARDS_ESTATUS={SOLICITADO:['info','Esperando CEP'],POR_ASIGNAR:['warn','Por asignar'],ASIGNADO:['ok','Asignado'],RECHAZADO:['danger','Rechazado'],CANCELADO:['neutral','Cancelado']};
 const CARDS_NIVEL={EMPRESA:'Empresa',UN:'Unidad de negocio',TARJETA:'Tarjeta'};
@@ -5422,8 +5422,7 @@ async function vCardsPanel(v){
   v.append(cards([['Saldos asignados del periodo',t.n,fmtISO(d.desde)+' – '+fmtISO(d.hasta)],['Fondeo neto asignado',mxn(t.fondeo),'abonado a las entidades'],['Comisión',mxn(t.comision),'más IVA '+mxn(t.iva)],['Total recibido',mxn(t.recibido),'fondeo + comisión + IVA']]));
   const ctl=el('div',{class:'panel'});ctl.append(el('h3',{},'Pendientes de control'));
   const fila=(n,txt,accion,cls)=>el('div',{class:'ctl-fila'},el('span',{class:'badge '+(n?cls:'neutral')},String(n)),el('span',{class:n?'':'muted'},txt),n?el('button',{class:'btn ghost sm',onclick:accion},'Ver'):'');
-  ctl.append(fila(p.por_asignar,'con CEP, por asignar saldo',()=>cardsIrALista('bandeja',{estatus:'POR_ASIGNAR'}),'warn'),
-    fila(p.esperando_cep,'solicitudes esperando el CEP',()=>cardsIrALista('todos',{estatus:'SOLICITADO'}),'info'),
+  ctl.append(fila(p.por_asignar,'por asignar saldo',()=>cardsIrALista('bandeja',{estatus:'POR_ASIGNAR'}),'warn'),
     fila(p.rechazadas,'rechazadas, pendientes de corregir',()=>cardsIrALista('todos',{estatus:'RECHAZADO'}),'danger'),
     fila(p.difieren,'distintos de lo que se solicitó',()=>cardsIrALista('todos',{}),'orange'));
   const emp=el('div',{class:'panel'});emp.append(el('h3',{},'Asignado por empresa'));
@@ -5583,7 +5582,7 @@ async function formularioFondeo(ex){
   body.append(el('div',{class:'form-grid'},fld('Quién fondea',sel),fld('Fecha en que se recibió',fecha)),info,
     el('div',{class:'form-grid'},fld('Monto recibido',monto),fld('Fondeo que la empresa dijo que mandaría (opcional)',sol)),prev,
     el('div',{class:'form-grid'},fld('Clave de rastreo',rastreo),fld('Banco ordenante',banco)),el('div',{class:'form-grid'},fld('Ordenante (quién envió)',ordNom),fld('RFC del ordenante',ordRfc)),fld('Notas',notas));
-  if(!ex)body.append(el('div',{class:'req-note'},'Si aún no tienes el CEP, guarda el fondeo y súbelo después; no se puede asignar sin CEP.'));
+  if(!ex)body.append(el('div',{class:'req-note'},'El CEP es opcional: puedes guardar el fondeo sin él y subirlo después.'));
   const foot=el('div',{});
   const guardar=el('button',{class:'btn',type:'button'},ex?'Guardar cambios':'Guardar fondeo');
   foot.append(el('button',{class:'btn secondary',type:'button',onclick:()=>{closeModal();if(ex)abrirFondeo(ex.id);}},'Cancelar'),guardar);
@@ -5624,7 +5623,7 @@ async function abrirFondeo(id,pasoIni){
     dato('Beneficiario',f.beneficiario_destino?esc(f.beneficiario_destino):sin('sin definir'),'s2'),
     dato('Banco · CLABE',`${f.banco_destino?esc(f.banco_destino):sin('sin banco')} · <span class="mono">${esc(clabeFmt(f.clabe_destino))}</span>`,'s2'),
     dato('Fondeo neto',mxn(f.fondeo)),dato('Comisión + IVA',mxn(f.comision)+' + '+mxn(f.iva)),
-    dato('Total a depositar',f.monto_esperado!=null?mxn(f.monto_esperado):sin('—')),dato('Monto recibido',f.monto_recibido!=null?mxn(f.monto_recibido):sin('se toma del CEP')),
+    dato('Total a depositar',f.monto_esperado!=null?mxn(f.monto_esperado):sin('—')),dato('Monto recibido',f.monto_recibido!=null?mxn(f.monto_recibido):sin('sin CEP: el cotizado')),
     ...(f.notas?[dato('Notas',esc(f.notas),'s2')]:[]));
   const quitarCep=c=>async()=>{if(!await confirmar('¿Quitar el archivo '+c.filename+'?'+(f.ceps.length===1?'\nLa solicitud volverá a esperar el CEP.':'')))return;try{await api('DELETE','/api/cards/ceps/'+c.id);toast('Archivo quitado','ok');recargar();}catch(e){toast(errMsg(e),'err');}};
   const quitarComp=c=>async()=>{if(!await confirmar('¿Quitar el comprobante '+c.filename+'?'))return;try{await api('DELETE','/api/cards/comprobantes/'+c.id);toast('Comprobante quitado','ok');recargar();}catch(e){toast(errMsg(e),'err');}};
@@ -5697,7 +5696,7 @@ async function abrirFondeo(id,pasoIni){
   if(tesoreria&&f.estatus==='POR_ASIGNAR'){
     // La barra arranca donde va el flujo: con CEP ya subido (lo hizo el comercial) tesorería empieza en CEP; con comprobante ya cargado, en Confirmar.
     let paso=pasoIni||((f.comprobantes||[]).length?4:f.ceps.length?2:1),subiendoNota='';
-    const NOMBRES=['Solicitud','CEP','Comprobante','Confirmar'];
+    const NOMBRES=['Solicitud','CEP (opcional)','Comprobante','Confirmar'];
     const cuerpo=el('div',{class:'pasos-cuerpo'}),pie=el('div',{style:'display:flex;align-items:center;gap:var(--sp-2);width:100%;flex-wrap:wrap'});
     const barra=()=>el('div',{class:'pasos'},...NOMBRES.map((n,i)=>el('div',{class:'paso'+(i+1<paso?' hecho':i+1===paso?' actual':''),...(i+1===paso?{'aria-current':'step'}:{})},(i+1<paso?'✓ ':(i+1)+'. ')+n)));
     const asignar=async nota=>{
@@ -5713,8 +5712,8 @@ async function abrirFondeo(id,pasoIni){
         cuerpo.append(el('h4',{class:'paso-t'},'Solicitud'),datosSolicitud());
       }
       if(paso===2){
-        cuerpo.append(el('h4',{class:'paso-t'},'CEP y validación'));
-        if(!f.ceps.length)cuerpo.append(el('div',{class:'muted'},'Sin CEP.'));
+        cuerpo.append(el('h4',{class:'paso-t'},'CEP y validación ',el('small',{class:'muted'},'opcional')));
+        if(!f.ceps.length)cuerpo.append(el('div',{class:'muted'},'No se ha cargado un CEP. Es opcional: no impide asignar el saldo.'));
         f.ceps.forEach(c=>cuerpo.append(el('div',{class:'cep-bloque'},filaArchivo(c,'/api/cards/ceps/',pu.quitar_cep?quitarCep:null),insignias(c),tarjetas(c))));
         if(ultimoCep&&(f.ordenante_nombre||f.banco_ordenante))cuerpo.append(el('div',{class:'dt-grid',style:'margin-top:8px'},...(f.ordenante_nombre?[dato('Ordenante',esc(f.ordenante_nombre)+(f.ordenante_rfc?` <small class="mono">${esc(f.ordenante_rfc)}</small>`:''),'s2')]:[]),...(f.banco_ordenante?[dato('Banco ordenante',esc(f.banco_ordenante))]:[])));
         cuerpo.append(alertas(true));
@@ -5728,7 +5727,7 @@ async function abrirFondeo(id,pasoIni){
         const ck=(ok,t)=>el('div',{class:'ck-l'},el('i',{class:ok?'si':'no','aria-hidden':'true'},ok?'✓':'○'),el('span',{},t));
         cuerpo.append(el('h4',{class:'paso-t'},'Confirmar asignación'),
           ck(true,(sol?'Solicitud':'Registro')+' · '+mxn(f.fondeo)+' netos a '+f.ruta),
-          ck(f.ceps.some(c=>c.validado)&&!hayDif,ultimoCep?'CEP '+(ultimoCep.validado?'validado por el sistema':'sin validar')+(hayDif?' · con diferencias por revisar':' · todos los datos coinciden'):'Sin CEP'),
+          ck(!ultimoCep||(ultimoCep.validado&&!hayDif),ultimoCep?'CEP '+(ultimoCep.validado?'validado por el sistema':'sin validar')+(hayDif?' · con diferencias por revisar':' · todos los datos coinciden'):'Sin CEP · es opcional'),
           ck(nComp>0&&(f.comprobantes||[]).every(c=>c.validado&&c.coincide_actual!==false),nComp?'Comprobante del saldo · '+nComp+' archivo'+(nComp>1?'s':'')+' · monto '+((f.comprobantes||[]).every(c=>c.validado&&c.coincide_actual!==false)?'validado = '+mxn(f.fondeo):'sin validar o que no coincide'):'Comprobante del saldo · falta subirlo (obligatorio para asignar)'),
           alertas());
         if(f.requiere_nota){const nt=el('textarea',{id:'asNota',rows:'2',maxlength:'300',placeholder:'Motivo para asignar con las diferencias de arriba'});nt.value=subiendoNota;nt.addEventListener('input',()=>{subiendoNota=nt.value;});cuerpo.append(fld('Nota de tesorería (obligatoria)',nt));}
@@ -5802,43 +5801,17 @@ async function abrirFondeo(id,pasoIni){
   }
   body.append(historial());
   const foot=el('div',{});
-  const bloqueado=tesoreria&&!cand.abierto&&['SOLICITADO','RECHAZADO'].includes(f.estatus);
+  const bloqueado=tesoreria&&!cand.abierto&&['SOLICITADO','RECHAZADO'].includes(f.estatus);   // (SOLICITADO ya no se produce: las que esperaban CEP pasaron a Por asignar)
   if(bloqueado){
     const paso=(ok,t)=>el('span',{},el('span',{class:ok?'ck-ok':'ck-no','aria-hidden':'true'},ok?'✓':'○'),' '+t,el('span',{class:'sr-only'},ok?' (listo)':' (pendiente)'));
-    foot.append(el('div',{class:'ck-req',id:'candadoMotivo',title:cand.motivo},paso(true,sol?'Solicitud creada':'Fondeo registrado'),paso(f.ceps.length>0,'CEP cargado'),paso(f.ceps.some(c=>c.validado),'CEP validado'),paso(compOk,'Comprobante validado')));
+    foot.append(el('div',{class:'ck-req',id:'candadoMotivo',title:cand.motivo},paso(true,sol?'Solicitud creada':'Fondeo registrado'),paso(compOk,'Comprobante validado')));
   }
   if(pu.cancelar)foot.append(botonCancelar());
   if(pu.editar&&f.origen==='MANUAL')foot.append(el('button',{class:'btn secondary',type:'button',onclick:()=>formularioFondeo(f)},'Editar'));
-  if(pu.asignar_sin_cep)foot.append(el('button',{class:'btn secondary',type:'button',title:'Solo tesorería puede asignar un saldo sin CEP, dejando el motivo',onclick:()=>formularioSinCep(f)},'Asignar sin CEP'));
+  if(pu.reenviar)foot.append(el('button',{class:'btn',type:'button',title:'Corregido: vuelve a quedar con tesorería (puedes subir un CEP antes)',onclick:async()=>{try{await api('POST',`/api/cards/fondeos/${f.id}/reenviar`,{});closeModal();toast('Enviado de nuevo a tesorería','ok');render();}catch(e){toast(errMsg(e),'err');}}},'Volver a enviar a tesorería'));
   if(bloqueado){const b=el('button',{class:'btn ok',type:'button',disabled:true,title:'Bloqueado: '+cand.motivo,'aria-describedby':'candadoMotivo'},'Confirmar saldo asignado');foot.append(b);}
   foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cerrar'));
   modal(f.folio,body,foot);
-}
-
-/* Asignar un saldo SIN CEP: única excepción al candado, solo tesorería. Captura lo que normalmente viene del CEP y el motivo. */
-function formularioSinCep(f){
-  const fecha=el('input',{id:'scFecha',type:'date',value:hoyMX(),max:hoyMX()});
-  const monto=el('input',{id:'scMonto',type:'number',step:'0.01',min:'0',value:f.monto_esperado!=null?String(f.monto_esperado):''});
-  const rastreo=el('input',{id:'scRastreo',maxlength:'40',autocomplete:'off',placeholder:'Opcional'});
-  const motivo=el('textarea',{id:'scMotivo',rows:'3',maxlength:'300',placeholder:'Por qué se asigna sin CEP (queda en el historial y en el correo)'});
-  const compOk=(f.comprobantes||[]).some(c=>c.validado&&c.coincide_actual!==false);
-  const body=el('div',{},
-    ...(compOk?[]:[el('div',{class:'banner err'},el('b',{},'Primero sube el comprobante del saldo. '),'Su monto debe coincidir con el fondeo calculado ('+mxn(f.fondeo)+'). Hazlo en «Archivos» y vuelve aquí.')]),
-    el('div',{class:'banner warn'},el('b',{},'Sin CEP no hay evidencia del depósito. '),'Solo tesorería puede hacerlo: queda marcado «Sin CEP» a tu nombre, en el historial, la bitácora y el correo al comercial.'),
-    el('div',{class:'banner'},el('b',{},f.folio),' · ',esc(f.ruta),' · fondeo neto ',mxn(f.fondeo),' · total a depositar ',f.monto_esperado!=null?mxn(f.monto_esperado):'—'),
-    el('div',{class:'form-grid'},fld('Fecha en que se recibió el depósito',fecha),fld('Monto recibido',monto)),
-    fld('Clave de rastreo',rastreo),fld('Motivo (obligatorio)',motivo));
-  const foot=el('div',{}),ok=el('button',{class:'btn ok',type:'button'},'Asignar sin CEP');
-  if(!compOk){ok.disabled=true;ok.title='Bloqueado: falta el comprobante validado';}
-  foot.append(el('button',{class:'btn secondary',type:'button',onclick:()=>{closeModal();abrirFondeo(f.id);}},'Cancelar'),ok);
-  ok.onclick=async()=>{
-    if(motivo.value.trim().length<10)return toast('Escribe el motivo (mínimo 10 caracteres)','err');
-    if(!await confirmar('¿Asignar el saldo de '+f.folio+' SIN CEP?\nQuedará registrado a tu nombre con el motivo que escribiste.'))return;
-    ok.disabled=true;
-    try{await api('POST',`/api/cards/fondeos/${f.id}/asignar-sin-cep`,{fecha:fecha.value,monto_recibido:monto.value,clave_rastreo:rastreo.value,motivo:motivo.value});closeModal();toast('Saldo asignado sin CEP: se avisó al comercial','ok');render();abrirFondeo(f.id);}
-    catch(er){toast(er.data&&er.data.mensaje?er.data.mensaje:errMsg(er),'err');ok.disabled=false;}
-  };
-  modal('Asignar sin CEP',body,foot);motivo.focus();
 }
 
 /* ---------- Estructura: empresas · unidades de negocio · tarjetas ---------- */

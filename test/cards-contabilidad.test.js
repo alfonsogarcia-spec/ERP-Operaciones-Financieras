@@ -89,3 +89,13 @@ test('correo del corte (BSO Cards): corte al día, depósitos, razón social y R
   const vacio = armarCorteContable({ corte: { fecha_corte: '2026-10-26', totales: {}, resumen: [] } });
   assert.match(vacio.html, /No hay comisiones por facturar en este corte/); assert.match(vacio.subject, /\$0\.00 a facturar/);
 });
+
+test('correo del corte: muestra el nombre comercial junto a la razón social a facturar', () => {
+  const { armarCorteContable } = require('../lib/cards-correo.js');
+  const corte = { fecha_corte: '2026-10-26', totales: { comision: 100, iva: 16, total: 116 }, resumen: [
+    { empresa: 'ACME DEMO SA DE CV', razon_social: 'ACME DEMO SA DE CV', comercial: 'Acme', rfc: 'ADE010101AB1', fondeos: 2, comision: 100, iva: 16, total: 116, falta: [] },
+    { empresa: 'OTRA SA', razon_social: 'OTRA SA', rfc: 'OTR010101AB1', fondeos: 1, comision: 0, iva: 0, total: 0, falta: [] }] };
+  const m = armarCorteContable({ corte });
+  assert.match(m.html, /ACME DEMO SA DE CV/); assert.match(m.html, /Nombre comercial: Acme/); assert.match(m.text, /ACME DEMO SA DE CV \(Acme\)/);
+  assert.equal((m.html.match(/Nombre comercial:/g) || []).length, 1);   // solo la que lo tiene
+});

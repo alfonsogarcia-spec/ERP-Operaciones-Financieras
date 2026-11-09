@@ -292,3 +292,24 @@ alter table cards.fondeo_comprobantes add column if not exists datos          js
 alter table cards.entidades alter column clabe drop not null;
 alter table cards.entidades add column if not exists correo_usuario text;
 create unique index if not exists uq_cards_tarjeta_correo on cards.entidades(empresa_id, lower(correo_usuario)) where nivel = 'TARJETA' and correo_usuario is not null and activo;
+
+-- ===== EL CEP YA ES OPCIONAL =====
+-- Antes el CEP era un candado: sin CEP validado no se podía asignar el saldo (salvo la excepción «sin CEP» de tesorería). Ahora subirlo es opcional;
+-- el candado de la asignación es el comprobante del saldo con su monto validado (lo aplican las rutas y la pantalla). La base solo exige que el
+-- fondeo asignado tenga monto y fecha (la ruta los completa con la cotización y el día de la asignación cuando no hay CEP).
+create or replace function cards.candado_asignacion() returns trigger language plpgsql as $$
+begin
+  if tg_op = 'UPDATE' and old.estatus = 'ASIGNADO' and new.asignado_sin_cep is distinct from old.asignado_sin_cep then
+    raise exception 'El fondeo % ya está asignado: no se cambia si se asignó sin CEP.', new.folio using errcode = '23514';
+  end if;
+  if new.estatus = 'ASIGNADO' and (tg_op = 'INSERT' or old.estatus is distinct from 'ASIGNADO') then
+    if new.monto_recibido is null or new.monto_recibido <= 0 or new.fecha is null then
+      raise exception 'Candado de tesorería: el fondeo % no se puede asignar sin monto y fecha.', new.folio using errcode = '23514';
+    end if;
+  end if;
+  return new;
+end $$;
+-- Las solicitudes que esperaban CEP pasan a tesorería (ya no hay estado «Esperando CEP»).
+with m as (update cards.fondeos set estatus = 'POR_ASIGNAR' where estatus = 'SOLICITADO' returning id)
+insert into cards.fondeo_eventos(fondeo_id, actor, tipo, detalle)
+  select id, 'sistema', 'por_asignar', 'El CEP ya es opcional: pasa a tesorería para asignar el saldo' from m;

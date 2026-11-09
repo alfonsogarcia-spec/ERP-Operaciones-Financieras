@@ -1,4 +1,5 @@
-// Candado de asignación (a nivel de base de datos): sin CEP validado no hay "saldo asignado", y un CEP asignado no se toca.
+// Candado a nivel de base de datos: el CEP es OPCIONAL (el candado de negocio es el comprobante, en las rutas); un fondeo asignado necesita monto y fecha,
+// y su CEP no se toca una vez asignado.
 // Usa Postgres en memoria (pglite) con el mismo esquema que producción.
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('fs'), path = require('path');
@@ -22,25 +23,24 @@ const completar = f => db.query(`update cards.fondeos set monto_recibido=1005.8,
 const asignar = f => db.query(`update cards.fondeos set estatus='ASIGNADO' where id=$1`, [f]);
 const rechaza = async (p, texto) => assert.rejects(p, e => { assert.match(e.message, texto); return true; });
 
-test('sin ningún CEP no se puede asignar', async () => {
-  const f = await fondeo(); await completar(f);
-  await rechaza(asignar(f), /Candado de tesorería.*sin un CEP validado/);
-  assert.equal((await db.query('select estatus from cards.fondeos where id=$1', [f])).rows[0].estatus, 'POR_ASIGNAR');
-});
-test('con un CEP que el sistema NO validó tampoco', async () => {
-  const f = await fondeo(); await completar(f); await cep(f, false);
-  await rechaza(asignar(f), /Candado de tesorería/);
-});
-test('con CEP validado pero sin monto, fecha o clave de rastreo tampoco', async () => {
-  const f = await fondeo(); await cep(f, true);
-  await rechaza(asignar(f), /Candado de tesorería/);
-});
-test('con un CEP validado y los datos completos sí se asigna', async () => {
-  const f = await fondeo(); await completar(f); await cep(f, true);
+test('el CEP es opcional: sin CEP se puede asignar si hay monto y fecha', async () => {
+  const f = await fondeo(); await db.query(`update cards.fondeos set monto_recibido=1005.8, fecha=current_date, asignado_sin_cep=true where id=$1`, [f]);
   await asignar(f);
+  const r = (await db.query('select estatus, asignado_sin_cep from cards.fondeos where id=$1', [f])).rows[0];
+  assert.equal(r.estatus, 'ASIGNADO'); assert.equal(r.asignado_sin_cep, true);
+});
+test('con CEP (validado o no) también se asigna; el CEP no es requisito', async () => {
+  const f = await fondeo(); await completar(f); await cep(f, false); await asignar(f);
   assert.equal((await db.query('select estatus from cards.fondeos where id=$1', [f])).rows[0].estatus, 'ASIGNADO');
 });
-test('no se puede crear un fondeo directamente como asignado', async () => {
+test('lo único que exige la base: monto y fecha del fondeo asignado', async () => {
+  const f = await fondeo();
+  await rechaza(asignar(f), /no se puede asignar sin monto y fecha/);
+  await db.query(`update cards.fondeos set monto_recibido=1005.8 where id=$1`, [f]);
+  await rechaza(asignar(f), /no se puede asignar sin monto y fecha/);
+  assert.equal((await db.query('select estatus from cards.fondeos where id=$1', [f])).rows[0].estatus, 'POR_ASIGNAR');
+});
+test('no se puede crear un fondeo directamente como asignado sin monto y fecha', async () => {
   await rechaza(fondeo({ estatus: 'ASIGNADO' }), /Candado de tesorería/);
 });
 test('otros cambios de estatus no se ven afectados (rechazar, cancelar)', async () => {
@@ -57,30 +57,16 @@ test('antes de asignar, el CEP sí se puede quitar (el comercial corrige)', asyn
   const f = await fondeo(); const c = (await cep(f, true)).rows[0].id;
   await db.query('delete from cards.fondeo_ceps where id=$1', [c]);
 });
-test('el esquema se puede volver a aplicar (migración idempotente) y el candado sigue activo', async () => {
+test('una vez asignado, no se cambia la marca «sin CEP»', async () => {
+  const f = await fondeo(); await completar(f); await asignar(f);
+  await rechaza(db.query(`update cards.fondeos set asignado_sin_cep=true where id=$1`, [f]), /ya está asignado/);
+});
+test('migración: las solicitudes que esperaban CEP pasan a por asignar, con su evento, y se puede reaplicar sin duplicar', async () => {
+  const f = await fondeo({ estatus: 'SOLICITADO' });
   await db.exec(SQL);
-  const f = await fondeo(); await completar(f);
-  await rechaza(asignar(f), /Candado de tesorería/);
-});
-
-// Única excepción: tesorería asigna SIN CEP (la ruta solo la deja a ese rol); la base exige monto, fecha y un motivo.
-const sinCep = (f, motivo = 'El cliente depositó y el CEP no se pudo descargar del banco') =>
-  db.query(`update cards.fondeos set estatus='ASIGNADO', asignado_sin_cep=true, sin_cep_motivo=$2, monto_recibido=1005.8, fecha=current_date where id=$1`, [f, motivo]);
-test('asignar sin CEP: con monto, fecha y motivo sí pasa (sin CEP y sin clave de rastreo)', async () => {
-  const f = await fondeo(); await sinCep(f);
-  const r = (await db.query('select estatus, asignado_sin_cep, sin_cep_motivo from cards.fondeos where id=$1', [f])).rows[0];
-  assert.equal(r.estatus, 'ASIGNADO'); assert.equal(r.asignado_sin_cep, true); assert.match(r.sin_cep_motivo, /CEP no se pudo/);
-});
-test('asignar sin CEP exige un motivo de al menos 10 caracteres, monto y fecha', async () => {
-  const f = await fondeo();
-  await rechaza(sinCep(f, ''), /exige monto, fecha y el motivo/);
-  await rechaza(sinCep(f, 'corto'), /exige monto, fecha y el motivo/);
-  await rechaza(db.query(`update cards.fondeos set estatus='ASIGNADO', asignado_sin_cep=true, sin_cep_motivo='motivo suficientemente largo' where id=$1`, [f]), /exige monto, fecha y el motivo/);
   assert.equal((await db.query('select estatus from cards.fondeos where id=$1', [f])).rows[0].estatus, 'POR_ASIGNAR');
-});
-test('una vez asignado no se puede cambiar si fue sin CEP (ni disfrazar uno normal como sin CEP)', async () => {
-  const f = await fondeo(); await sinCep(f);
-  await rechaza(db.query('update cards.fondeos set asignado_sin_cep=false where id=$1', [f]), /no se cambia si se asignó sin CEP/);
-  const g = await fondeo(); await completar(g); await cep(g, true); await asignar(g);
-  await rechaza(db.query('update cards.fondeos set asignado_sin_cep=true where id=$1', [g]), /no se cambia si se asignó sin CEP/);
+  const ev = (await db.query(`select detalle from cards.fondeo_eventos where fondeo_id=$1 and tipo='por_asignar'`, [f])).rows;
+  assert.equal(ev.length, 1); assert.match(ev[0].detalle, /CEP ya es opcional/);
+  await db.exec(SQL);
+  assert.equal((await db.query(`select count(*)::int n from cards.fondeo_eventos where fondeo_id=$1 and tipo='por_asignar'`, [f])).rows[0].n, 1);
 });
