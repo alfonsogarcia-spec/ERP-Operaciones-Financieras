@@ -313,3 +313,10 @@ end $$;
 with m as (update cards.fondeos set estatus = 'POR_ASIGNAR' where estatus = 'SOLICITADO' returning id)
 insert into cards.fondeo_eventos(fondeo_id, actor, tipo, detalle)
   select id, 'sistema', 'por_asignar', 'El CEP ya es opcional: pasa a tesorería para asignar el saldo' from m;
+
+-- ===== BENEFICIARIO FIJO DE LA CUENTA DE FONDEO =====
+-- Toda cuenta de fondeo (empresa, unidad de negocio o tarjeta, con la CLABE que tenga) tiene siempre el mismo beneficiario: BECM Servicios de Occidente.
+-- Se corrigen las cuentas ya registradas y los fondeos que aún no se asignan (los asignados conservan lo que tenían).
+update cards.entidades set beneficiario = 'BECM Servicios de Occidente' where clabe is not null and beneficiario is distinct from 'BECM Servicios de Occidente';
+update cards.fondeos set beneficiario_destino = 'BECM Servicios de Occidente'
+  where estatus in ('SOLICITADO', 'POR_ASIGNAR', 'RECHAZADO') and beneficiario_destino is not null and beneficiario_destino is distinct from 'BECM Servicios de Occidente';

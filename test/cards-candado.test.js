@@ -70,3 +70,19 @@ test('migración: las solicitudes que esperaban CEP pasan a por asignar, con su 
   await db.exec(SQL);
   assert.equal((await db.query(`select count(*)::int n from cards.fondeo_eventos where fondeo_id=$1 and tipo='por_asignar'`, [f])).rows[0].n, 1);
 });
+
+test('migración: el beneficiario de toda cuenta de fondeo pasa a BECM Servicios de Occidente (los fondeos ya asignados no cambian)', async () => {
+  const BEN = 'BECM Servicios de Occidente';
+  const e = (await db.query(`insert into cards.entidades(nivel,nombre,clabe,beneficiario) values('EMPRESA','Otra ' || $1::text,$2,'ACME SA DE CV') returning id`, [++n, clabeN(900 + n)])).rows[0].id;
+  await db.query('update cards.entidades set empresa_id=id where id=$1', [e]);
+  const sinCuenta = (await db.query(`insert into cards.entidades(nivel,parent_id,empresa_id,nombre) values('UN',$1,$1,'UN sin cuenta propia') returning id`, [e])).rows[0].id;
+  const mk = async (estatus, extra) => (await db.query(
+    `insert into cards.fondeos(folio,entidad_id,empresa_id,fondeo,comision,iva,comision_pct,iva_pct,clabe_destino,estatus,beneficiario_destino,monto_recibido,fecha) values($1,$2,$2,1000,5,0.8,0.5,16,$3,$4,'ACME SA DE CV',1005.8,current_date) returning id`,
+    ['FND-B-' + (++n) + estatus, e, clabeN(900 + n), estatus])).rows[0].id;
+  const pend = await mk('POR_ASIGNAR'), asig = await mk('POR_ASIGNAR'); await db.query(`update cards.fondeos set estatus='ASIGNADO' where id=$1`, [asig]);
+  await db.exec(SQL);
+  assert.equal((await db.query('select beneficiario from cards.entidades where id=$1', [e])).rows[0].beneficiario, BEN);
+  assert.equal((await db.query('select beneficiario from cards.entidades where id=$1', [sinCuenta])).rows[0].beneficiario, null);   // la que hereda no lleva el suyo
+  assert.equal((await db.query('select beneficiario_destino b from cards.fondeos where id=$1', [pend])).rows[0].b, BEN);          // pendiente: se corrige
+  assert.equal((await db.query('select beneficiario_destino b from cards.fondeos where id=$1', [asig])).rows[0].b, 'ACME SA DE CV'); // asignado: se conserva
+});

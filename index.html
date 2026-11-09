@@ -5387,6 +5387,7 @@ async function abrirTarea(id){
    ========================================================================= */
 const CARDS_ESTATUS={SOLICITADO:['info','Esperando CEP'],POR_ASIGNAR:['warn','Por asignar'],ASIGNADO:['ok','Asignado'],RECHAZADO:['danger','Rechazado'],CANCELADO:['neutral','Cancelado']};
 const CARDS_NIVEL={EMPRESA:'Empresa',UN:'Unidad de negocio',TARJETA:'Tarjeta'};
+const BENEF_FONDEO='BECM Servicios de Occidente';   // beneficiario de toda cuenta de fondeo (el servidor lo impone; no se captura)
 const CEP_FORMATO={cep_banxico:'CEP de Banxico',dispersion_polipay:'Comprobante de dispersión Polipay',xml:'XML del CEP',pdf_generico:'PDF (formato no reconocido)',consulta_estado_banxico:'Consulta de estado de Banxico',imagen:'Imagen',pdf_sin_texto:'PDF sin texto',error:'No legible',desconocido:'Sin lectura'};
 const CEP_CONF={alta:['ok','Lectura confiable'],media:['warn','Revisa los datos'],baja:['danger','Lectura incierta']};
 const EVT_TXT={solicitado:'Solicitado',registrado:'Registrado',edicion:'Editado',cep_alta:'CEP cargado',cep_baja:'CEP quitado',cep_rechazado:'CEP no aceptado',comprobante_alta:'Comprobante del saldo cargado y validado',comprobante_baja:'Comprobante del saldo quitado',comprobante_rechazado:'Comprobante no aceptado',por_asignar:'Pasó a tesorería',esperando_cep:'Esperando CEP',asignado:'Saldo asignado',asignado_sin_cep:'Saldo asignado SIN CEP',rechazado:'Rechazado',cancelado:'Cancelado',notificado:'Aviso por correo'};
@@ -5819,7 +5820,7 @@ async function vCardsEstructura(v){
   const ents=await cardsEntidades();
   v.innerHTML='';
   cardsAcciones(can('cards_estructura')&&el('button',{class:'btn secondary',onclick:()=>importarEmpresas()},'Importar empresas'),can('cards_estructura')&&el('button',{class:'btn',onclick:()=>editEntidad(null,{nivel:'EMPRESA'},ents)},'+ Empresa'));
-  v.append(el('div',{class:'banner'},'La empresa lleva todos los datos: razón social, RFC, cuenta de fondeo (CLABE, banco y beneficiario que debe traer el CEP), comisión e IVA. Sus unidades de negocio y tarjetas los heredan: solo se agrega el nombre de la unidad o el correo del usuario de la tarjeta. Si alguna necesita una cuenta o tasas distintas, se define dentro de ella. El solicitante de cada fondeo es quien tenga la sesión abierta al registrarlo.'));
+  v.append(el('div',{class:'banner'},'La empresa lleva todos los datos: razón social, RFC, cuenta de fondeo (CLABE y banco; el beneficiario que debe traer el CEP es siempre BECM Servicios de Occidente), comisión e IVA. Sus unidades de negocio y tarjetas los heredan: solo se agrega el nombre de la unidad o el correo del usuario de la tarjeta. Si una unidad de negocio o tarjeta tiene su propia CLABE de fondeo (o tasas distintas), se define dentro de ella. El solicitante de cada fondeo es quien tenga la sesión abierta al registrarlo.'));
   const filas=ents.map(e=>{
     const hij=[];
     if(can('cards_estr_un')&&e.activo){
@@ -5877,7 +5878,7 @@ function importarEmpresas(){
     catch(er){toast(errMsg(er),'err');confirmarBtn.disabled=false;}};
   const plantilla=el('button',{class:'btn ghost sm',type:'button',onclick:async()=>{try{await descargar('/api/cards/entidades/plantilla.xlsx','plantilla-empresas-cards.xlsx');}catch(er){toast(errMsg(er),'err');}}},'Descargar plantilla');
   const body=el('div',{},
-    el('div',{class:'banner'},'Carga varias empresas de una vez, ya con todos sus datos (razón social, RFC, CLABE, beneficiario, comisión e IVA). Después, Operaciones agrega sus unidades de negocio y tarjetas, que heredan estos datos. ',plantilla),
+    el('div',{class:'banner'},'Carga varias empresas de una vez, ya con todos sus datos (razón social, RFC, CLABE, comisión e IVA; el beneficiario siempre es '+BENEF_FONDEO+'). Después, Operaciones agrega sus unidades de negocio y tarjetas, que heredan estos datos. ',plantilla),
     zona,salida);
   foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cerrar'),confirmarBtn);
   modal('Importar empresas',body,foot);
@@ -5901,7 +5902,7 @@ async function editEntidad(e,nuevo,ents){
     else{aviso.textContent=c.length<18?`Faltan ${18-c.length} dígitos`:'El dígito verificador no coincide: revisa la CLABE';aviso.style.color='var(--danger-ink)';clabe.setAttribute('aria-invalid','true');}};
   clabe.addEventListener('input',valClabe);if(e&&e.clabe)valClabe();
   const bancos=await api('GET','/api/cards/bancos').catch(()=>[]);
-  const benef=el('input',{id:'enBenef',maxlength:'120',autocomplete:'off',placeholder:'Titular de la cuenta, como aparece en el banco',value:e&&e.beneficiario?e.beneficiario:''});
+  const benef=el('div',{id:'enBenef',class:'banco-det'},el('b',{},BENEF_FONDEO),el('small',{class:'muted'},' · siempre el mismo'));
   const bancoTxt=el('span',{});
   const bancoSel=el('select',{id:'enBanco','aria-label':'Banco beneficiario',style:'display:none'},el('option',{value:''},'— Elige el banco —'),...bancos.filter(b=>b.activo&&b.prefijo).map(b=>el('option',{value:String(b.codigo_spei)},b.nombre+' ('+b.codigo_spei+')')));
   const bancoBox=el('div',{class:'banco-det vacio','aria-live':'polite'},bancoTxt,bancoSel);
@@ -5945,14 +5946,15 @@ async function editEntidad(e,nuevo,ents){
     // Excepción: cuenta de fondeo o tasas propias (casi nunca se usa).
     const propia=el('input',{id:'enPropia',type:'checkbox'});propia.checked=!!(e&&e.clabe);
     const caja=el('div',{class:'form-grid'},el('div',{style:'grid-column:1/-1'},fld('CLABE de fondeo propia',clabe),aviso),fld('Beneficiario',benef),fld('Banco beneficiario',bancoBox));
+    const soloOps=SES.rol_cards==='cards_operaciones';   // Operaciones pone la CLABE de la unidad/tarjeta, pero no cambia las tasas
     caja.style.display=propia.checked?'':'none';
     propia.addEventListener('change',()=>{caja.style.display=propia.checked?'':'none';});
     const abierta=!!(e&&(e.clabe||e.comision_pct!=null||e.iva_pct!=null));
-    const det=el('details',{class:'propia'},el('summary',{},'Cuenta o tasas distintas a las de '+(padre?padre.nombre:'la empresa')+' (opcional)'),
-      el('div',{},el('label',{class:'chk'},propia,' Tiene su propia cuenta de fondeo (si no, usa la de '+(padre?padre.nombre:'la empresa')+')'),caja,
-        el('div',{class:'form-grid'},fld('Comisión % (vacío = hereda)',com),fld('IVA % (vacío = hereda)',iva))));
-    if(abierta)det.open=true;
-    if(SES.rol_cards!=='cards_operaciones')body.append(det);   // Operaciones no cambia cuenta ni tasas: siempre heredan de la empresa
+    const det=el('details',{class:'propia'},el('summary',{},(soloOps?'CLABE de fondeo propia':'CLABE de fondeo o tasas distintas a las de '+(padre?padre.nombre:'la empresa'))+' (opcional)'),
+      el('div',{},el('label',{class:'chk'},propia,' Tiene su propia CLABE de fondeo (si no, usa la de '+(padre?padre.nombre:'la empresa')+'). El beneficiario siempre es '+BENEF_FONDEO+'.'),caja,
+        ...(soloOps?[]:[el('div',{class:'form-grid'},fld('Comisión % (vacío = hereda)',com),fld('IVA % (vacío = hereda)',iva))])));
+    if(abierta||nivel==='UN')det.open=true;   // la unidad de negocio suele traer su propia CLABE: se deja a la vista
+    body.append(det);
     body._propia=propia;
   }
   body.append(fld('Notas',notas));
@@ -5963,8 +5965,8 @@ async function editEntidad(e,nuevo,ents){
   const guardar=el('button',{class:'btn',type:'button'},'Guardar');
   foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),guardar);
   guardar.onclick=async()=>{guardar.disabled=true;try{
-    const propiaOn=!hereda||(body._propia.checked&&SES.rol_cards!=='cards_operaciones');
-    const b={nombre:nombre.value,nombre_comercial:comercial.value,referencia:ref.value,clabe:propiaOn?clabe.value:'',beneficiario:propiaOn?benef.value:'',banco_codigo:propiaOn?bancoCod:null,comision_pct:com.value,iva_pct:iva.value,notas:notas.value};
+    const propiaOn=!hereda||body._propia.checked;
+    const b={nombre:nombre.value,nombre_comercial:comercial.value,referencia:ref.value,clabe:propiaOn?clabe.value:'',banco_codigo:propiaOn?bancoCod:null,comision_pct:com.value,iva_pct:iva.value,notas:notas.value};
     if(nivel==='TARJETA')b.correo_usuario=correo.value;
     if(esNueva){b.nivel=nivel;if(nuevo.parent_id)b.parent_id=nuevo.parent_id;await api('POST','/api/cards/entidades',b);}
     else{b.activo=activo.checked;await api('PUT','/api/cards/entidades/'+e.id,b);}
