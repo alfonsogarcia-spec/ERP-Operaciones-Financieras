@@ -2327,8 +2327,11 @@ function editGrupo(ag,af,co){const isNew=!ag;ag=ag||{};af=af||{};co=co||{};const
   const idg=el('input',{type:'number',value:ag.id_grupo||''}),nom=I(ag._nombre||(af&&af._n)||'');
   // nombre del grupo: lo tomamos de la fila; si no viene, vacío
   const nomInput=I(ag.nombre_cliente||''); const afil=I(ag.numero_afiliacion||''),razon=I(af.razon_social||'');
-  const t_tdd=NN(ag.tasa_pac_tdd||''),t_tdc=NN(ag.tasa_pac_tdc||''),t_amex=NN(ag.tasa_pac_amex||''),t_int=NN(ag.tasa_pac_int||''),cxt=NN(ag.costo_x_trx||'','0.01'),banca=NN(ag.pct_banca||'');
-  const i_tdd=NN(co.int_tdd||''),i_tdc=NN(co.int_tdc||''),i_amex=NN(co.int_amex!=null&&co.int_amex!==''?co.int_amex:0.0247),i_int=NN(co.int_int!=null&&co.int_int!==''?co.int_int:0.0302),fee=NN(co.fee_broxel!=null&&co.fee_broxel!==''?co.fee_broxel:0.0028);
+  // Las tasas se capturan y se muestran en PORCENTAJE (2.5 = 2.5%); al guardar se convierten a fracción (0.025), que es como viven en la base.
+  const aP=v=>(v===''||v==null||isNaN(+v))?'':String(Math.round(+v*1e8)/1e6), dePct=v=>{v=String(v).trim().replace('%','');return v===''?'':String(Math.round(+v*1e6)/1e8)};
+  const NP=v=>NN(aP(v),'0.01');
+  const t_tdd=NP(ag.tasa_pac_tdd),t_tdc=NP(ag.tasa_pac_tdc),t_amex=NP(ag.tasa_pac_amex),t_int=NP(ag.tasa_pac_int),cxt=NN(ag.costo_x_trx||'','0.01'),banca=NP(ag.pct_banca);
+  const i_tdd=NP(co.int_tdd),i_tdc=NP(co.int_tdc),i_amex=NP(co.int_amex!=null&&co.int_amex!==''?co.int_amex:0.0247),i_int=NP(co.int_int!=null&&co.int_int!==''?co.int_int:0.0302),fee=NP(co.fee_broxel!=null&&co.fee_broxel!==''?co.fee_broxel:0.0028);
   const sec=t=>el('h3',{style:'font-size:14px;margin:6px 0 10px;color:var(--accent)'},t);
   // MCC de la afiliación: se ELIGE de la lista preestablecida y la descripción se llena sola.
   const mccSel=el('select'); mccSel.append(el('option',{value:''},'— Sin MCC —'));
@@ -2342,12 +2345,12 @@ function editGrupo(ag,af,co){const isNew=!ag;ag=ag||{};af=af||{};co=co||{};const
   api('GET','/api/catalogo/mcc').then(c=>{cat=c;pintar();}).catch(()=>{pintar();});
   body.append(sec('Grupo y afiliación'));const g1=el('div',{class:'form-grid'});g1.append(fld('Id de grupo',idg),fld('Nombre del cliente',nomInput),fld('Número de afiliación',afil),fld('Razón social',razon));body.append(g1);
   body.append(sec('Giro de la afiliación'));const gm=el('div',{class:'form-grid'});gm.append(fld('MCC',mccSel),fld('Descripción de la afiliación (automática)',giro));body.append(gm);
-  body.append(sec('Tasas pactadas (fracción, 0.025 = 2.5%)'));const g2=el('div',{class:'form-grid c3'});g2.append(fld('Pactada TDD',t_tdd),fld('Pactada TDC',t_tdc),fld('Pactada AMEX',t_amex),fld('Pactada INT',t_int),fld('Costo x trx (MXN)',cxt),fld('% Banca',banca));body.append(g2);
-  body.append(sec('Estructura de costos del adquirente'));const g3=el('div',{class:'form-grid c3'});g3.append(fld('Interc. TDD',i_tdd),fld('Interc. TDC',i_tdc),fld('Interc. AMEX',i_amex),fld('Interc. INT',i_int),fld('Fee Broxel',fee));body.append(g3);
+  body.append(sec('Tasas pactadas (en %, ej. 2.5 = 2.5%)'));const g2=el('div',{class:'form-grid c3'});g2.append(fld('Pactada TDD (%)',t_tdd),fld('Pactada TDC (%)',t_tdc),fld('Pactada AMEX (%)',t_amex),fld('Pactada INT (%)',t_int),fld('Costo x trx (MXN)',cxt),fld('% Banca',banca));body.append(g2);
+  body.append(sec('Estructura de costos del adquirente (en %)'));const g3=el('div',{class:'form-grid c3'});g3.append(fld('Interc. TDD (%)',i_tdd),fld('Interc. TDC (%)',i_tdc),fld('Interc. AMEX (%)',i_amex),fld('Interc. INT (%)',i_int),fld('Fee Broxel (%)',fee));body.append(g3);
   const foot=el('div',{});
   if(!isNew)foot.append(el('button',{class:'btn danger',onclick:async()=>{if(await confirmar('¿Eliminar esta afiliación del grupo?')){await api('DELETE','/api/catalogo/afil-grupo/'+ag.id_grupo+'/'+ag.numero_afiliacion);closeModal();render();}}},'Eliminar'),el('div',{style:'flex:1'}));
   foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
-    const enviar=(extra)=>api('POST','/api/catalogo/grupo-afiliacion',Object.assign({id_grupo:idg.value,nombre_cliente:nomInput.value,numero_afiliacion:afil.value,razon_social:razon.value,mcc:mccSel.value,descripcion_giro:giro.value,tasa_pac_tdd:t_tdd.value,tasa_pac_tdc:t_tdc.value,tasa_pac_amex:t_amex.value,tasa_pac_int:t_int.value,costo_x_trx:cxt.value,pct_banca:banca.value,int_tdd:i_tdd.value,int_tdc:i_tdc.value,int_amex:i_amex.value,int_int:i_int.value,fee_broxel:fee.value},extra||{}));
+    const enviar=(extra)=>api('POST','/api/catalogo/grupo-afiliacion',Object.assign({id_grupo:idg.value,nombre_cliente:nomInput.value,numero_afiliacion:afil.value,razon_social:razon.value,mcc:mccSel.value,descripcion_giro:giro.value,tasa_pac_tdd:dePct(t_tdd.value),tasa_pac_tdc:dePct(t_tdc.value),tasa_pac_amex:dePct(t_amex.value),tasa_pac_int:dePct(t_int.value),costo_x_trx:cxt.value,pct_banca:dePct(banca.value),int_tdd:dePct(i_tdd.value),int_tdc:dePct(i_tdc.value),int_amex:dePct(i_amex.value),int_int:dePct(i_int.value),fee_broxel:dePct(fee.value)},extra||{}));
     try{
       try{await enviar();}
       catch(e){
