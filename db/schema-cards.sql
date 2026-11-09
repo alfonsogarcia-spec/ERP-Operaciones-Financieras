@@ -276,3 +276,19 @@ insert into cards.avisos(evento, a_solicitante, a_tesoreria) values ('corte', fa
 
 -- Correo de quien asignó el saldo (el usuario que "realiza el fondeo"): sale en el correo de saldo asignado.
 alter table cards.fondeos add column if not exists validado_por_email text;
+
+-- ===== COMPROBANTE DEL SALDO ASIGNADO: validación del monto =====
+-- Al subirlo se lee (PDF/Excel) o tesorería captura el monto que ve (captura de pantalla), y debe ser igual al fondeo neto calculado.
+-- Los comprobantes anteriores quedan con validado=false ("sin validar").
+alter table cards.fondeo_comprobantes add column if not exists monto_leido    numeric;
+alter table cards.fondeo_comprobantes add column if not exists monto_esperado numeric;                 -- el calculado al momento de validar
+alter table cards.fondeo_comprobantes add column if not exists origen_monto   text;                    -- lectura (del archivo) | captura (la escribió tesorería)
+alter table cards.fondeo_comprobantes add column if not exists validado       boolean not null default false;
+alter table cards.fondeo_comprobantes add column if not exists datos          jsonb;
+
+-- ===== ESTRUCTURA HEREDADA: empresa → unidad de negocio → tarjeta =====
+-- La empresa lleva todos los datos (razón social, RFC, cuenta de fondeo, comisión, IVA, tipo de operación). Sus UN y tarjetas los heredan:
+-- una CLABE vacía = usa la cuenta de fondeo de su padre. La tarjeta se identifica por el correo de su usuario (no por el número de tarjeta).
+alter table cards.entidades alter column clabe drop not null;
+alter table cards.entidades add column if not exists correo_usuario text;
+create unique index if not exists uq_cards_tarjeta_correo on cards.entidades(empresa_id, lower(correo_usuario)) where nivel = 'TARJETA' and correo_usuario is not null and activo;

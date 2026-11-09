@@ -91,8 +91,8 @@ test('correos de asignado, rechazado y cancelado llevan la nota o el motivo', ()
   assert.throws(() => armarCorreoFondeo({ tipo: 'otro', fondeo: f }));
 });
 
-test('candado de asignación: solo abre con un CEP validado y los datos completos', () => {
-  const ok = { estatus: 'POR_ASIGNAR', monto_recibido: 100, fecha: '2026-10-22', clave_rastreo: 'R1', ceps: [{ validado: true }] };
+test('candado de asignación: solo abre con un CEP validado, los datos completos y el comprobante validado', () => {
+  const ok = { estatus: 'POR_ASIGNAR', fondeo: 100, monto_recibido: 100, fecha: '2026-10-22', clave_rastreo: 'R1', ceps: [{ validado: true }], comprobantes: [{ validado: true, coincide_actual: true }] };
   assert.deepEqual(FL.candadoAsignacion(ok), { abierto: true, motivo: null });
   assert.match(FL.candadoAsignacion({ ...ok, estatus: 'SOLICITADO', ceps: [] }).motivo, /Falta el CEP/);
   assert.match(FL.candadoAsignacion({ ...ok, estatus: 'RECHAZADO', ceps: [] }).motivo, /Está rechazado y sin CEP/);
@@ -103,6 +103,16 @@ test('candado de asignación: solo abre con un CEP validado y los datos completo
   assert.equal(FL.candadoAsignacion({ ...ok, estatus: 'ASIGNADO' }).abierto, false);
   assert.equal(FL.candadoAsignacion({ ...ok, estatus: 'CANCELADO' }).abierto, false);
   assert.equal(FL.candadoAsignacion({ estatus: 'POR_ASIGNAR' }).abierto, false);   // sin datos: cerrado
+  // El comprobante del saldo es obligatorio y su monto debe estar validado contra el fondeo calculado.
+  assert.match(FL.candadoAsignacion({ ...ok, comprobantes: [] }).motivo, /Falta el comprobante/);
+  assert.match(FL.candadoAsignacion({ ...ok, comprobantes: undefined }).motivo, /Falta el comprobante/);
+  assert.match(FL.candadoAsignacion({ ...ok, comprobantes: [{ validado: false }] }).motivo, /no tiene su monto validado/);
+  assert.match(FL.candadoAsignacion({ ...ok, comprobantes: [{ validado: true, coincide_actual: false }] }).motivo, /no coinciden con el fondeo calculado/);
+  assert.equal(FL.candadoAsignacion({ ...ok, comprobantes: [{ validado: false }, { validado: true, coincide_actual: true }] }).abierto, true);   // basta uno válido
+  // "sin CEP": se compara contra el neto que resultará de lo capturado
+  assert.equal(FL.comprobanteFalta({ comprobantes: [{ validado: true, monto_leido: 300000 }] }, 300000), null);
+  assert.match(FL.comprobanteFalta({ comprobantes: [{ validado: true, monto_leido: 300000 }] }, 299000), /no coinciden/);
+  assert.match(FL.comprobanteFalta({ comprobantes: [] }, 300000), /\$300,000\.00/);
 });
 
 
@@ -134,14 +144,15 @@ test('correo con CEP: indica si va adjunto, el resultado de la validación y cad
   assert.doesNotMatch(armarCorreoFondeo({ tipo: 'solicitado', fondeo: f }).html, /CEP y validación/);   // aún no hay CEP
 });
 
-test('comprobante del saldo asignado: lo sube tesorería (por asignar o asignado); quitarlo ya asignado, solo un administrador', () => {
+test('comprobante del saldo asignado: lo sube tesorería (esperando CEP, por asignar o asignado); quitarlo ya asignado, solo un administrador', () => {
   const p = (est, rol) => FL.permisos(est, rol, true);
   for (const rol of ['cards_tesoreria', 'admin', 'cards_admin']) {
     assert.equal(p('POR_ASIGNAR', rol).comprobante, true, rol); assert.equal(p('ASIGNADO', rol).comprobante, true, rol);
     assert.equal(p('POR_ASIGNAR', rol).quitar_comprobante, true, rol);
   }
   assert.deepEqual(['admin', 'cards_admin', 'cards_tesoreria'].map(r => p('ASIGNADO', r).quitar_comprobante), [true, true, false]);
-  for (const est of ['SOLICITADO', 'RECHAZADO', 'CANCELADO']) assert.equal(p(est, 'cards_tesoreria').comprobante, false, est);
+  assert.equal(p('SOLICITADO', 'cards_tesoreria').comprobante, true);   // sin CEP: el comprobante va antes de asignar
+  for (const est of ['RECHAZADO', 'CANCELADO']) assert.equal(p(est, 'cards_tesoreria').comprobante, false, est);
   for (const rol of ['comercial', 'cards_consulta', 'tesoreria']) assert.equal(p('ASIGNADO', rol).comprobante, false, rol);
 });
 test('correo de saldo asignado: menciona el comprobante y si va adjunto', () => {

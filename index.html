@@ -614,6 +614,18 @@
     .dz-item{display:flex;align-items:center;gap:var(--sp-2);padding:6px 10px;border:1px solid var(--line);border-radius:var(--radius-xs);font-size:var(--fs-sm);background:var(--glass-1)}
     .dz-item .dz-n{flex:1;min-width:0;overflow-wrap:anywhere;font-weight:var(--fw-semibold)}
     .cep-lect{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 2px}
+    /* Estructura: lo que una unidad de negocio o tarjeta hereda de su empresa */
+    .imp-lista{display:flex;flex-direction:column;gap:var(--sp-2);margin-top:var(--sp-3);max-height:340px;overflow:auto}
+    .imp-fila{padding:var(--sp-2) var(--sp-3);border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--glass-1);min-width:0}
+    .imp-cab{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-2)}.imp-cab b{min-width:0;overflow-wrap:anywhere}
+    .imp-fila small{display:block;overflow-wrap:anywhere}.imp-err{margin-top:4px;font-size:var(--fs-sm);color:var(--danger-ink)}
+    .heredado{margin:var(--sp-3) 0;padding:var(--sp-3) var(--sp-4);border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--glass-1)}
+    .heredado-t{font-size:var(--fs-xs);font-weight:var(--fw-semibold);letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-bottom:var(--sp-2)}
+    .heredado .dt-grid b{font-weight:var(--fw-medium)}
+    details.propia{margin:var(--sp-3) 0;border:1px solid var(--line);border-radius:var(--radius-sm);padding:0 var(--sp-4)}
+    details.propia>summary{cursor:pointer;padding:var(--sp-3) 0;font-weight:var(--fw-semibold);font-size:var(--fs-md)}
+    details.propia[open]>summary{border-bottom:1px solid var(--line);margin-bottom:var(--sp-3)}
+    details.propia>div{padding-bottom:var(--sp-3)}
     /* Validación del CEP: cada dato en su recuadro; solo el que difiere cambia de color. */
     .vt-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--sp-2);margin:var(--sp-2) 0 0}
     .vt{position:relative;min-width:0;padding:var(--sp-2) var(--sp-3);border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--glass-1)}
@@ -861,9 +873,9 @@ async function descargar(path,filename){
 }
 
 /* ---------- roles ---------- */
-const ROLES={admin:'Administrador',operador:'Operador (Operaciones)',tesoreria:'Tesorería (valida)',bancos:'Bancos (dispersa y cierra)',consulta:'Consulta (solo lectura)',inventario:'Inventario (solo esa sección)',comercial:'Comercial (solicita fondeos de Cards)',cards_admin:'Administrador Cards (usuarios y tesorería de Cards)',cards_tesoreria:'Tesorería Cards (asigna saldo y sube comprobante)',cards_consulta:'Consulta Cards (solo lectura)'};
+const ROLES={admin:'Administrador',operador:'Operador (Operaciones)',tesoreria:'Tesorería (valida)',bancos:'Bancos (dispersa y cierra)',consulta:'Consulta (solo lectura)',inventario:'Inventario (solo esa sección)',comercial:'Comercial (solicita fondeos de Cards)',cards_admin:'Administrador Cards (usuarios y tesorería de Cards)',cards_tesoreria:'Tesorería Cards (asigna saldo y sube comprobante)',cards_operaciones:'Operaciones Cards (da de alta unidades de negocio y tarjetas)',cards_consulta:'Consulta Cards (solo lectura)'};
 // Roles que solo entran a Polipay Cards Settlement.
-const ROLES_SOLO_CARDS=['comercial','cards_admin','cards_tesoreria','cards_consulta'];
+const ROLES_SOLO_CARDS=['comercial','cards_admin','cards_tesoreria','cards_operaciones','cards_consulta'];
 const soloCards=()=>!!(SES&&ROLES_SOLO_CARDS.includes(SES.rol));
 function can(cap){if(!SES)return false;const M={
   catalogos:['admin'],ingesta:['admin','operador'],corte:['admin','operador'],
@@ -874,7 +886,7 @@ function can(cap){if(!SES)return false;const M={
   disputas:['admin','operador'],
   disputas_ver:['admin','operador','tesoreria','bancos','consulta'],
   // Cards: se decide por el rol de Cards de la persona (SES.rol_cards), independiente de su rol en POS.
-  cards_ver:['admin','comercial','cards_admin','cards_tesoreria','cards_consulta'],cards_panel:['admin','comercial','cards_admin','cards_tesoreria','cards_consulta'],cards_fondeos:['admin','cards_admin','cards_tesoreria','cards_consulta'],
+  cards_ver:['admin','comercial','cards_admin','cards_tesoreria','cards_operaciones','cards_consulta'],cards_estr_ver:['admin','cards_admin','cards_operaciones'],cards_estr_un:['admin','cards_admin','cards_operaciones'],cards_panel:['admin','comercial','cards_admin','cards_tesoreria','cards_consulta'],cards_fondeos:['admin','cards_admin','cards_tesoreria','cards_consulta'],
   cards_solicitar:['admin','comercial','cards_admin'],cards_manual:['admin','cards_admin'],cards_asignar:['admin','cards_admin','cards_tesoreria'],cards_estructura:['admin','cards_admin'],cards_mis:['comercial'],cards_contabilidad:['admin','cards_admin','cards_consulta'],cards_contabilidad_adm:['admin','cards_admin'],
   ver:['admin','operador','tesoreria','bancos','consulta']
 };return (M[cap]||[]).includes(cap.startsWith('cards_')?SES.rol_cards:SES.rol);}
@@ -1216,7 +1228,7 @@ const WORKSPACES={
 };
 let WORKSPACE = localStorage.getItem('cl_workspace') || 'conciliacion';
 if(!WORKSPACES[WORKSPACE]) WORKSPACE = 'conciliacion';
-const vistaInicial=k=>k==='cards'?(['admin','cards_admin','cards_consulta'].includes(SES.rol_cards)?'cards_panel':can('cards_asignar')?'cards_bandeja':'cards_solicitudes'):WORKSPACES[k].vista;
+const vistaInicial=k=>k==='cards'?(SES.rol_cards==='cards_operaciones'?'cards_estructura':['admin','cards_admin','cards_consulta'].includes(SES.rol_cards)?'cards_panel':can('cards_asignar')?'cards_bandeja':'cards_solicitudes'):WORKSPACES[k].vista;
 function cerrarWsMenu(){ const m=document.getElementById('wsMenu'); if(m) m.classList.remove('open'); const s=document.getElementById('wsSwitch'); if(s) s.setAttribute('aria-expanded','false'); }
 function setWorkspace(k){
   if(!WORKSPACES[k]||!WORKSPACES[k].ok()) return;
@@ -1312,8 +1324,8 @@ const NAV_CARDS=[
   {id:'cards_bandeja',t:'Por asignar',ic:'ic_04',cap:'cards_asignar',n:()=>CARDS_CONT.por_asignar},
   {id:'cards_solicitudes',t:'Mis solicitudes',ic:'ic_04',cap:'cards_mis',n:()=>CARDS_CONT.rechazadas},
   {id:'cards_fondeos',t:'Fondeos',ic:'ic_11',cap:'cards_fondeos'},
-  {sec:'Catálogo',cap:'cards_estructura'},
-  {id:'cards_estructura',t:'Empresas, UN y tarjetas',ic:'ic_09',cap:'cards_estructura'},
+  {sec:'Catálogo',cap:'cards_estr_ver'},
+  {id:'cards_estructura',t:'Empresas, UN y tarjetas',ic:'ic_09',cap:'cards_estr_ver'},
   {id:'cards_bancos',t:'Bancos',ic:'ic_12',cap:'cards_estructura'},
   {sec:'Contabilidad',cap:'cards_contabilidad'},
   {id:'cards_contabilidad',t:'Corte de comisiones',ic:'ic_15',cap:'cards_contabilidad'},
@@ -1360,7 +1372,7 @@ function renderNav(){
     (curBody || nav).append(link);
   }
 }
-const TITLES={cards_bandeja:['Por asignar','Fondeos con CEP aceptado, esperando que tesorería confirme la asignación del saldo'],cards_solicitudes:['Mis solicitudes','Solicita fondeos a tus empresas y sube el CEP del depósito'],cards_panel:['Polipay Cards Settlement · Panel','Fondeos recibidos, comisión e IVA y pendientes de control'],cards_fondeos:['Fondeos','Solicitudes de fondeo y depósitos recibidos de empresas, unidades de negocio y tarjetas, con su CEP'],cards_estructura:['Empresas, unidades de negocio y tarjetas','Estructura de Cards y la cuenta de fondeo (CLABE, beneficiario y banco) de cada una'],cards_bancos:['Bancos','Catálogo de bancos de Cards: identifica el banco de cada CLABE y se compara con el CEP'],cards_contabilidad:['Corte de comisiones','Comisiones cobradas más IVA, con la razón social y el RFC a facturar: lo guardado hasta cada corte'],cards_destinatarios:['Destinatarios','A quién se envía cada correo de Cards: nueva solicitud, por asignar, asignado, rechazado y cancelada'],dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],inventario:['Inventario de terminales','Terminales POS activas por grupo de cliente y afiliación, derivado de las transacciones ya ingestadas'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],retenciones:['Retenciones','Retenciones por financiamiento y revenue share aplicadas al monto a dispersar'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],
+const TITLES={cards_bandeja:['Por asignar','Fondeos con CEP aceptado, esperando que tesorería confirme la asignación del saldo'],cards_solicitudes:['Mis solicitudes','Solicita fondeos a tus empresas y sube el CEP del depósito'],cards_panel:['Polipay Cards Settlement · Panel','Fondeos recibidos, comisión e IVA y pendientes de control'],cards_fondeos:['Fondeos','Solicitudes de fondeo y depósitos recibidos de empresas, unidades de negocio y tarjetas, con su CEP'],cards_estructura:['Empresas, unidades de negocio y tarjetas','Las empresas llevan los datos; sus unidades de negocio y tarjetas (identificadas por el correo del usuario) los heredan'],cards_bancos:['Bancos','Catálogo de bancos de Cards: identifica el banco de cada CLABE y se compara con el CEP'],cards_contabilidad:['Corte de comisiones','Comisiones cobradas más IVA, con la razón social y el RFC a facturar: lo guardado hasta cada corte'],cards_destinatarios:['Destinatarios','A quién se envía cada correo de Cards: nueva solicitud, por asignar, asignado, rechazado y cancelada'],dashboard:['Panel','Resumen del ciclo operativo'],ingesta:['Ingesta de transacciones','Carga del gateway (Excel .xlsx) — el servidor parsea y calcula la fecha de liquidación'],inventario:['Inventario de terminales','Terminales POS activas por grupo de cliente y afiliación, derivado de las transacciones ya ingestadas'],contracargos:['Contracargos','Reporte diario de contracargos a retener'],retenciones:['Retenciones','Retenciones por financiamiento y revenue share aplicadas al monto a dispersar'],cortes:['Cortes y liquidación','Compensación → cuadre → layout SPEI → reporte'],contable:['Registro contable','Ingresos por comisión (tasa pactada + IVA) por producto, por rango de fecha de liquidación'],
 cumplimiento:['PLD y antifraude','KPIs de cumplimiento por grupo de cliente y afiliación — monto procesado, operaciones inusuales, tasa de contracargos, duplicadas y devoluciones sospechosas'],grupos:['Grupos y afiliaciones','Tasas pactadas, costos del adquirente y %banca'],cuentas:['Cuentas de liquidación','CLABE, banco y beneficiario por afiliación'],bancos:['Bancos SPEI','Catálogo nombre → código SPEI'],feriados:['Días feriados','Días inhábiles para el cálculo T+n'],parametros:['Parámetros','IVA, tasas vigentes y desfase/corte por producto'],umbrales:['Parametrización de umbrales','Umbrales de PLD y antifraude que controlan las alertas automáticas y los indicadores de riesgo'],destinatarios:['Destinatarios','Correos que reciben el aviso automático de corte'],adm_usuarios:['Usuarios y accesos','Quién entra a cada sistema (POS Settlement, Tareas Ops y Cards) y con qué rol'],bitacora:['Bitácora','Trazabilidad de acciones'],
 disp_dashboard:['Panel de disputas','KPIs de contracargos, devoluciones y duplicados'],
 disp_chargebacks:['Disputas','Ciclo completo de disputa: 1er contracargo → representación → arbitraje'],
@@ -3181,10 +3193,10 @@ function editDestinatario(d){
 
 /* ---------- USUARIOS (solo admin) ---------- */
 /* ---------- Administración · usuarios y accesos de todos los sistemas ---------- */
-const ROL_BADGE={admin:'violet',operador:'info',tesoreria:'ok',bancos:'danger',consulta:'neutral',inventario:'orange',comercial:'info',cards_admin:'violet',cards_tesoreria:'ok',cards_consulta:'neutral'};
+const ROL_BADGE={admin:'violet',operador:'info',tesoreria:'ok',bancos:'danger',consulta:'neutral',inventario:'orange',comercial:'info',cards_admin:'violet',cards_tesoreria:'ok',cards_operaciones:'info',cards_consulta:'neutral'};
 const nombreCorto=r=>(ROLES[r]||r).replace(/ \(.*\)$/,'');
 const insigniaRol=r=>r?`<span class="badge ${ROL_BADGE[r]||'neutral'}">${esc(nombreCorto(r))}</span>`:'<span class="muted">Sin acceso</span>';
-const DESC_ROL_CARDS={cards_admin:'Todo en Cards: usuarios, empresas, bancos, destinatarios, solicitar, asignar y cancelar.',cards_tesoreria:'Solo ve lo por asignar: revisa el CEP, confirma o rechaza el saldo y sube el comprobante del sistema.',comercial:'Solicita fondeos y sube el CEP; ve únicamente sus solicitudes.',cards_consulta:'Solo lectura de Cards.'};
+const DESC_ROL_CARDS={cards_admin:'Todo en Cards: usuarios, empresas, bancos, destinatarios, solicitar, asignar y cancelar.',cards_tesoreria:'Solo ve lo por asignar: revisa el CEP, confirma o rechaza el saldo y sube el comprobante del sistema.',cards_operaciones:'Da de alta y edita unidades de negocio y tarjetas (heredan cuenta y tasas de la empresa). No toca empresas, bancos ni saldos.',comercial:'Solicita fondeos y sube el CEP; ve únicamente sus solicitudes.',cards_consulta:'Solo lectura de Cards.'};
 async function vAdmUsuarios(v){
   if(!can('admin_panel')){v.innerHTML='';v.append(el('div',{class:'banner err'},'Solo un administrador puede gestionar usuarios.'));return;}
   const [list,meta]=await Promise.all([api('GET','/api/usuarios'),api('GET','/api/admin/roles')]);
@@ -5377,7 +5389,7 @@ const CARDS_ESTATUS={SOLICITADO:['info','Esperando CEP'],POR_ASIGNAR:['warn','Po
 const CARDS_NIVEL={EMPRESA:'Empresa',UN:'Unidad de negocio',TARJETA:'Tarjeta'};
 const CEP_FORMATO={cep_banxico:'CEP de Banxico',dispersion_polipay:'Comprobante de dispersión Polipay',xml:'XML del CEP',pdf_generico:'PDF (formato no reconocido)',consulta_estado_banxico:'Consulta de estado de Banxico',imagen:'Imagen',pdf_sin_texto:'PDF sin texto',error:'No legible',desconocido:'Sin lectura'};
 const CEP_CONF={alta:['ok','Lectura confiable'],media:['warn','Revisa los datos'],baja:['danger','Lectura incierta']};
-const EVT_TXT={solicitado:'Solicitado',registrado:'Registrado',edicion:'Editado',cep_alta:'CEP cargado',cep_baja:'CEP quitado',cep_rechazado:'CEP no aceptado',comprobante_alta:'Comprobante del saldo cargado',comprobante_baja:'Comprobante del saldo quitado',comprobante_rechazado:'Comprobante no aceptado',por_asignar:'Pasó a tesorería',esperando_cep:'Esperando CEP',asignado:'Saldo asignado',asignado_sin_cep:'Saldo asignado SIN CEP',rechazado:'Rechazado',cancelado:'Cancelado',notificado:'Aviso por correo'};
+const EVT_TXT={solicitado:'Solicitado',registrado:'Registrado',edicion:'Editado',cep_alta:'CEP cargado',cep_baja:'CEP quitado',cep_rechazado:'CEP no aceptado',comprobante_alta:'Comprobante del saldo cargado y validado',comprobante_baja:'Comprobante del saldo quitado',comprobante_rechazado:'Comprobante no aceptado',por_asignar:'Pasó a tesorería',esperando_cep:'Esperando CEP',asignado:'Saldo asignado',asignado_sin_cep:'Saldo asignado SIN CEP',rechazado:'Rechazado',cancelado:'Cancelado',notificado:'Aviso por correo'};
 const badgeFondeo=e=>{const [c,l]=CARDS_ESTATUS[e]||['neutral',esc(e)];return `<span class="badge ${c}">${l}</span>`;};
 const hoyMX=()=>new Date().toLocaleDateString('en-CA',{timeZone:'America/Mexico_City'});
 const pctTxt=n=>Number(n).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:4})+'%';
@@ -5602,6 +5614,7 @@ async function abrirFondeo(id,pasoIni){
   const dif=f.fondeo_solicitado!=null&&f.monto_recibido!=null?f.fondeo-f.fondeo_solicitado:null;
   const instr=textoInstrucciones({total:f.monto_esperado||f.monto_recibido,fondeo:f.fondeo,comision:f.comision,iva:f.iva,entidad:f.ruta,beneficiario:f.beneficiario_destino,banco:f.banco_destino,clabe:f.clabe_destino});
   const ultimoCep=f.ceps[f.ceps.length-1];
+  const compOk=(f.comprobantes||[]).some(c=>c.validado&&c.coincide_actual!==false);   // hay comprobante con el monto validado (candado para asignar)
 
   /* ----- piezas ----- */
   const dato=(k,v,cls)=>el('div',{class:cls||''},el('small',{},k),el('b',{html:v}));
@@ -5615,8 +5628,14 @@ async function abrirFondeo(id,pasoIni){
     ...(f.notas?[dato('Notas',esc(f.notas),'s2')]:[]));
   const quitarCep=c=>async()=>{if(!await confirmar('¿Quitar el archivo '+c.filename+'?'+(f.ceps.length===1?'\nLa solicitud volverá a esperar el CEP.':'')))return;try{await api('DELETE','/api/cards/ceps/'+c.id);toast('Archivo quitado','ok');recargar();}catch(e){toast(errMsg(e),'err');}};
   const quitarComp=c=>async()=>{if(!await confirmar('¿Quitar el comprobante '+c.filename+'?'))return;try{await api('DELETE','/api/cards/comprobantes/'+c.id);toast('Comprobante quitado','ok');recargar();}catch(e){toast(errMsg(e),'err');}};
+  // Validación del monto del comprobante contra el fondeo calculado (como la del CEP).
+  const insigniaComp=c=>{
+    if(!c.validado)return el('div',{class:'cep-lect'},el('span',{class:'badge neutral'},'Sin validar'),el('small',{class:'muted'},'Se cargó antes de la validación del monto'));
+    const ok=c.coincide_actual!==false;
+    return el('div',{class:'cep-lect'},el('span',{class:'badge '+(ok?'ok':'danger')},ok?'✓ Monto validado '+mxn(c.monto_leido)+' = calculado':'Ya no coincide: trae '+mxn(c.monto_leido)+' y el calculado es '+mxn(f.fondeo)),el('span',{class:'badge soft'},c.origen_monto==='captura'?'Capturado por tesorería':'Leído del archivo'));
+  };
   const filaArchivo=(a,ruta,quitar)=>el('div',{class:'cep-item'},
-    el('div',{},el('b',{},a.filename),el('small',{class:'muted'},tamArchivo(a.bytes_size)+' · '+a.subido_por+(a.subido_at?' · '+new Date(a.subido_at).toLocaleString('es-MX'):''))),
+    el('div',{},el('b',{},a.filename),el('small',{class:'muted'},tamArchivo(a.bytes_size)+' · '+a.subido_por+(a.subido_at?' · '+new Date(a.subido_at).toLocaleString('es-MX'):'')),ruta.includes('comprobantes')?insigniaComp(a):''),
     el('button',{class:'btn ghost sm',type:'button',onclick:async()=>{try{await descargar(ruta+a.id+'/download',a.filename);}catch(e){toast(errMsg(e),'err');}}},'Descargar'),
     quitar?el('button',{class:'btn danger sm',type:'button','aria-label':'Quitar '+a.filename,onclick:quitar(a)},'Quitar'):'');
   // Tarjetas de validación del CEP: cada dato en su recuadro; solo el que difiere cambia de color.
@@ -5641,11 +5660,23 @@ async function abrirFondeo(id,pasoIni){
       catch(e){err.append(el('div',{class:'banner err'},el('b',{},'No se aceptó el archivo. '),errMsg(e)));z.limpiar();}
     }}),err);};
   const zonaComprobante=()=>{const err=el('div',{'aria-live':'polite'});
-    return el('div',{},zonaArchivos({compacta:true,accept:'.pdf,.png,.jpg,.jpeg,.xlsx',titulo:'Arrastra aquí el comprobante o haz clic',ayuda:'Captura, PDF o Excel del sistema donde se ve el saldo asignado',sinLista:true,onFiles:async(fs,z)=>{
+    // El monto del comprobante debe ser el fondeo calculado: PDF y Excel se leen solos; en una captura lo escribe tesorería.
+    const subir=async(archivo,monto,z)=>{
       err.innerHTML='';
-      try{const fd=new FormData();fd.append('archivo',fs[0]);await api('POST',`/api/cards/fondeos/${id}/comprobantes`,fd);toast('Comprobante cargado','ok');recargar();}
-      catch(e){err.append(el('div',{class:'banner err'},errMsg(e)));z.limpiar();}
-    }}),err);};
+      try{const fd=new FormData();fd.append('archivo',archivo);if(monto!=null)fd.append('monto',monto);const r=await api('POST',`/api/cards/fondeos/${id}/comprobantes`,fd);toast('Comprobante validado: '+mxn(r.monto)+' = fondeo calculado','ok');recargar();}
+      catch(e){
+        const d=e.data||{};
+        if(d.codigo==='monto_requerido'||(monto!=null&&d.codigo==='monto_invalido')){
+          const inp=el('input',{id:'cmpMonto',inputmode:'decimal',autocomplete:'off',placeholder:'0.00',value:monto!=null?String(monto):''});
+          const ok=el('button',{class:'btn sm',type:'button'},'Validar y subir');
+          const enviar=()=>{if(!String(inp.value).trim()){inp.focus();return;}ok.disabled=true;subir(archivo,inp.value,z);};
+          ok.onclick=enviar;inp.addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preventDefault();enviar();}});
+          err.append(el('div',{class:'banner warn'},el('b',{},'Escribe el monto que muestra el comprobante. '),d.mensaje||errMsg(e),el('div',{style:'display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:8px'},fld('Saldo asignado que se ve en el comprobante (MXN)',inp),ok)));
+          setTimeout(()=>inp.focus(),30);
+        }else{err.append(el('div',{class:'banner err'},el('b',{},'No se aceptó el comprobante. '),errMsg(e)));z.limpiar();}
+      }
+    };
+    return el('div',{},zonaArchivos({compacta:true,accept:'.pdf,.png,.jpg,.jpeg,.xlsx',titulo:'Arrastra aquí el comprobante o haz clic',ayuda:'PDF, Excel o captura del sistema · se valida que el monto sea el fondeo calculado ('+mxn(f.fondeo)+')',sinLista:true,onFiles:(fs,z)=>subir(fs[0],null,z)}),err);};
   const historial=()=>{
     const u=f.eventos[f.eventos.length-1];
     return el('details',{class:'ac-hist'},
@@ -5689,7 +5720,7 @@ async function abrirFondeo(id,pasoIni){
         cuerpo.append(alertas(true));
       }
       if(paso===3){
-        cuerpo.append(el('h4',{class:'paso-t'},'Comprobante del saldo asignado ',el('small',{class:'muted'},'opcional')),zonaComprobante());
+        cuerpo.append(el('h4',{class:'paso-t'},'Comprobante del saldo asignado ',el('small',{class:'muted'},'obligatorio · su monto se valida')),zonaComprobante());
         (f.comprobantes||[]).forEach(c=>cuerpo.append(filaArchivo(c,'/api/cards/comprobantes/',pu.quitar_comprobante?quitarComp:null)));
       }
       if(paso===4){
@@ -5698,7 +5729,7 @@ async function abrirFondeo(id,pasoIni){
         cuerpo.append(el('h4',{class:'paso-t'},'Confirmar asignación'),
           ck(true,(sol?'Solicitud':'Registro')+' · '+mxn(f.fondeo)+' netos a '+f.ruta),
           ck(f.ceps.some(c=>c.validado)&&!hayDif,ultimoCep?'CEP '+(ultimoCep.validado?'validado por el sistema':'sin validar')+(hayDif?' · con diferencias por revisar':' · todos los datos coinciden'):'Sin CEP'),
-          ck(nComp>0,nComp?'Comprobante del saldo · '+nComp+' archivo'+(nComp>1?'s':''):'Comprobante del saldo · sin archivos (opcional)'),
+          ck(nComp>0&&(f.comprobantes||[]).every(c=>c.validado&&c.coincide_actual!==false),nComp?'Comprobante del saldo · '+nComp+' archivo'+(nComp>1?'s':'')+' · monto '+((f.comprobantes||[]).every(c=>c.validado&&c.coincide_actual!==false)?'validado = '+mxn(f.fondeo):'sin validar o que no coincide'):'Comprobante del saldo · falta subirlo (obligatorio para asignar)'),
           alertas());
         if(f.requiere_nota){const nt=el('textarea',{id:'asNota',rows:'2',maxlength:'300',placeholder:'Motivo para asignar con las diferencias de arriba'});nt.value=subiendoNota;nt.addEventListener('input',()=>{subiendoNota=nt.value;});cuerpo.append(fld('Nota de tesorería (obligatoria)',nt));}
         cuerpo.append(el('div',{class:'req-note'},'Al confirmar se avisa por correo al comercial, con el CEP y el comprobante.'));
@@ -5748,7 +5779,7 @@ async function abrirFondeo(id,pasoIni){
       ...(f.estatus==='ASIGNADO'&&f.nota_validacion?[r('Nota',esc(f.nota_validacion))]:[]),
       ...(f.estatus==='RECHAZADO'&&f.motivo_rechazo?[r('Motivo',esc(f.motivo_rechazo))]:[]),
       ...(f.estatus==='CANCELADO'&&f.motivo_cancelacion?[r('Motivo',esc(f.motivo_cancelacion))]:[]),
-      r('Comprobantes del saldo',nComp?nComp+(nComp>1?' archivos':' archivo'):sin('—'))));
+      r('Comprobantes del saldo',nComp?nComp+(nComp>1?' archivos':' archivo')+((f.comprobantes||[]).every(c=>c.validado&&c.coincide_actual!==false)?' · monto validado ✓':' · revisar monto'):sin('—'))));
   body.append(cabecera());
   body.append(tk);
   // Qué sigue, según el estatus
@@ -5761,7 +5792,7 @@ async function abrirFondeo(id,pasoIni){
   // Archivos: CEP y comprobante, compactos
   if(f.ceps.length||pu.subir_cep||nComp||pu.comprobante){
     // Plegado como el historial; abierto cuando hay que subir el CEP (esperando CEP o rechazado).
-    const ar=el('details',{class:'ac-hist ac-arch'},el('summary',{},el('span',{},'Archivos'),el('small',{class:'muted'},' · '+f.ceps.length+' CEP · '+nComp+' comprobante'+(nComp===1?'':'s'))));
+    const ar=el('details',{class:'ac-hist ac-arch',...(tesoreria&&pu.comprobante&&!compOk&&f.estatus!=='ASIGNADO'?{open:true}:{})},el('summary',{},el('span',{},'Archivos'),el('small',{class:'muted'},' · '+f.ceps.length+' CEP · '+nComp+' comprobante'+(nComp===1?'':'s'))));
     if(['SOLICITADO','RECHAZADO'].includes(f.estatus))ar.open=true;
     f.ceps.forEach(c=>ar.append(el('div',{class:'cep-bloque'},filaArchivo(c,'/api/cards/ceps/',pu.quitar_cep?quitarCep:null),insignias(c))));
     if(pu.subir_cep)ar.append(zonaCep());
@@ -5774,7 +5805,7 @@ async function abrirFondeo(id,pasoIni){
   const bloqueado=tesoreria&&!cand.abierto&&['SOLICITADO','RECHAZADO'].includes(f.estatus);
   if(bloqueado){
     const paso=(ok,t)=>el('span',{},el('span',{class:ok?'ck-ok':'ck-no','aria-hidden':'true'},ok?'✓':'○'),' '+t,el('span',{class:'sr-only'},ok?' (listo)':' (pendiente)'));
-    foot.append(el('div',{class:'ck-req',id:'candadoMotivo',title:cand.motivo},paso(true,sol?'Solicitud creada':'Fondeo registrado'),paso(f.ceps.length>0,'CEP cargado'),paso(f.ceps.some(c=>c.validado),'CEP validado')));
+    foot.append(el('div',{class:'ck-req',id:'candadoMotivo',title:cand.motivo},paso(true,sol?'Solicitud creada':'Fondeo registrado'),paso(f.ceps.length>0,'CEP cargado'),paso(f.ceps.some(c=>c.validado),'CEP validado'),paso(compOk,'Comprobante validado')));
   }
   if(pu.cancelar)foot.append(botonCancelar());
   if(pu.editar&&f.origen==='MANUAL')foot.append(el('button',{class:'btn secondary',type:'button',onclick:()=>formularioFondeo(f)},'Editar'));
@@ -5790,12 +5821,15 @@ function formularioSinCep(f){
   const monto=el('input',{id:'scMonto',type:'number',step:'0.01',min:'0',value:f.monto_esperado!=null?String(f.monto_esperado):''});
   const rastreo=el('input',{id:'scRastreo',maxlength:'40',autocomplete:'off',placeholder:'Opcional'});
   const motivo=el('textarea',{id:'scMotivo',rows:'3',maxlength:'300',placeholder:'Por qué se asigna sin CEP (queda en el historial y en el correo)'});
+  const compOk=(f.comprobantes||[]).some(c=>c.validado&&c.coincide_actual!==false);
   const body=el('div',{},
+    ...(compOk?[]:[el('div',{class:'banner err'},el('b',{},'Primero sube el comprobante del saldo. '),'Su monto debe coincidir con el fondeo calculado ('+mxn(f.fondeo)+'). Hazlo en «Archivos» y vuelve aquí.')]),
     el('div',{class:'banner warn'},el('b',{},'Sin CEP no hay evidencia del depósito. '),'Solo tesorería puede hacerlo: queda marcado «Sin CEP» a tu nombre, en el historial, la bitácora y el correo al comercial.'),
     el('div',{class:'banner'},el('b',{},f.folio),' · ',esc(f.ruta),' · fondeo neto ',mxn(f.fondeo),' · total a depositar ',f.monto_esperado!=null?mxn(f.monto_esperado):'—'),
     el('div',{class:'form-grid'},fld('Fecha en que se recibió el depósito',fecha),fld('Monto recibido',monto)),
     fld('Clave de rastreo',rastreo),fld('Motivo (obligatorio)',motivo));
   const foot=el('div',{}),ok=el('button',{class:'btn ok',type:'button'},'Asignar sin CEP');
+  if(!compOk){ok.disabled=true;ok.title='Bloqueado: falta el comprobante validado';}
   foot.append(el('button',{class:'btn secondary',type:'button',onclick:()=>{closeModal();abrirFondeo(f.id);}},'Cancelar'),ok);
   ok.onclick=async()=>{
     if(motivo.value.trim().length<10)return toast('Escribe el motivo (mínimo 10 caracteres)','err');
@@ -5811,42 +5845,88 @@ function formularioSinCep(f){
 async function vCardsEstructura(v){
   const ents=await cardsEntidades();
   v.innerHTML='';
-  cardsAcciones(can('cards_estructura')&&el('button',{class:'btn',onclick:()=>editEntidad(null,{nivel:'EMPRESA'},ents)},'+ Empresa'));
-  v.append(el('div',{class:'banner'},'Cada empresa, unidad de negocio o tarjeta tiene su propia cuenta de fondeo: la CLABE identifica quién fondea, y el beneficiario y el banco son los que debe traer el CEP. La comisión y el IVA se heredan de la empresa salvo que se definan en el nivel inferior. El solicitante de cada fondeo es quien tenga la sesión abierta al registrarlo.'));
+  cardsAcciones(can('cards_estructura')&&el('button',{class:'btn secondary',onclick:()=>importarEmpresas()},'Importar empresas'),can('cards_estructura')&&el('button',{class:'btn',onclick:()=>editEntidad(null,{nivel:'EMPRESA'},ents)},'+ Empresa'));
+  v.append(el('div',{class:'banner'},'La empresa lleva todos los datos: razón social, RFC, cuenta de fondeo (CLABE, banco y beneficiario que debe traer el CEP), comisión e IVA. Sus unidades de negocio y tarjetas los heredan: solo se agrega el nombre de la unidad o el correo del usuario de la tarjeta. Si alguna necesita una cuenta o tasas distintas, se define dentro de ella. El solicitante de cada fondeo es quien tenga la sesión abierta al registrarlo.'));
   const filas=ents.map(e=>{
     const hij=[];
-    if(can('cards_estructura')&&e.activo){
-      if(e.nivel==='EMPRESA')hij.push(el('button',{class:'btn ghost sm',type:'button',onclick:ev=>{ev.stopPropagation();editEntidad(null,{nivel:'UN',parent_id:e.id},ents);}},'+ Unidad'));
+    if(can('cards_estr_un')&&e.activo){
+      if(e.nivel==='EMPRESA')hij.push(el('button',{class:'btn ghost sm',type:'button',onclick:ev=>{ev.stopPropagation();editEntidad(null,{nivel:'UN',parent_id:e.id},ents);}},'+ Unidad de negocio'));
       if(e.nivel!=='TARJETA')hij.push(el('button',{class:'btn ghost sm',type:'button',onclick:ev=>{ev.stopPropagation();editEntidad(null,{nivel:'TARJETA',parent_id:e.id},ents);}},'+ Tarjeta'));
     }
     const nombre=el('div',{class:'tt arbol','data-prof':String(e.profundidad),style:'padding-left:'+(e.profundidad*22)+'px'},
-      el('span',{html:(e.profundidad?'<span class="rama" aria-hidden="true">└</span> ':'')+esc(e.nombre)}),
-      el('small',{},CARDS_NIVEL[e.nivel]+(e.referencia?' · '+e.referencia:'')),
+      el('span',{html:(e.profundidad?'<span class="rama" aria-hidden="true">└</span> ':'')+esc(e.nivel==='TARJETA'&&e.correo_usuario?e.correo_usuario:e.nombre)+(e.nivel==='TARJETA'&&!e.correo_usuario?' <span class="badge warn" title="Escribe el correo del usuario para identificarla">Sin correo de usuario</span>':'')}),
+      el('small',{},CARDS_NIVEL[e.nivel]+(e.nivel==='TARJETA'?(e.correo_usuario&&e.nombre&&e.nombre!==e.correo_usuario?' · '+e.nombre:''):(e.referencia?' · '+e.referencia:''))),
       e.nombre_comercial?el('small',{class:'muted'},'Comercial: '+e.nombre_comercial):'');
-    const cuenta=el('div',{},chipClabe(e.clabe),el('small',{class:'muted',style:'display:block;margin-top:4px'},[e.beneficiario,e.banco_nombre].filter(Boolean).join(' · '),e.beneficiario?'':el('span',{class:'badge warn',title:'Complétalo para poder compararlo con el CEP'},'Sin beneficiario')));
+    const cuenta=e.clabe_ef
+      ?el('div',{},chipClabe(e.clabe_ef),el('small',{class:'muted',style:'display:block;margin-top:4px'},[e.beneficiario_ef,e.banco_nombre_ef].filter(Boolean).join(' · '),e.beneficiario_ef?'':el('span',{class:'badge warn',title:'Complétalo para poder compararlo con el CEP'},'Sin beneficiario')),
+        e.cuenta_de?el('small',{class:'muted',style:'display:block'},'↳ Hereda la cuenta de '+e.cuenta_de_nombre):'')
+      :el('div',{},el('span',{class:'badge warn'},'Sin cuenta de fondeo'));
     const x=[nombre,cuenta,{num:pctTxt(e.comision_efectiva)+(e.hereda_comision&&e.nivel!=='EMPRESA'?' <small class="muted">hereda</small>':'')},{num:pctTxt(e.iva_efectivo)},{num:e.n_fondeos},
       e.activo?'<span class="badge ok">Activa</span>':'<span class="badge neutral">Inactiva</span>',el('div',{class:'acciones'},...hij)];
-    if(can('cards_estructura'))x._onclick=()=>editEntidad(e,null,ents);
+    if(can(e.nivel==='EMPRESA'?'cards_estructura':'cards_estr_un'))x._onclick=()=>editEntidad(e,null,ents);
     return x;});
   const p=el('div',{class:'panel'});
   p.append(tableWrap(['Nombre','Cuenta de fondeo',{t:'Comisión'},{t:'IVA'},{t:'Fondeos'},'Estado',''],filas,{empty:'Aún no hay empresas. Crea la primera con “+ Empresa”.'}));
   v.append(p);
 }
 
+/* Importar empresas desde Excel/CSV: primero se revisa (sin guardar nada) y luego se confirma. */
+function importarEmpresas(){
+  let archivo=null;
+  const salida=el('div',{'aria-live':'polite'});
+  const foot=el('div',{});
+  const confirmarBtn=el('button',{class:'btn',type:'button',style:'display:none'},'Importar');
+  const pintar=(r)=>{
+    salida.innerHTML='';
+    const filas=r.filas||[];
+    salida.append(el('div',{class:'banner'+(r.con_error?' warn':'')},el('b',{},r.simulado?'Revisión: ':'Resultado: '),
+      r.simulado?`${r.nuevas} empresa(s) listas para importar`+(r.con_error?` · ${r.con_error} con error (se omitirán)`:'')+'.':`${r.creadas} empresa(s) creadas`+(r.con_error?` · ${r.con_error} omitidas`:'')+'.'));
+    if(filas.length)salida.append(el('div',{class:'imp-lista'},...filas.slice(0,300).map(f=>el('div',{class:'imp-fila '+(f.estado==='error'?'err':f.estado==='creada'?'ok':'')},
+      el('div',{class:'imp-cab'},el('b',{},f.nombre||'(sin razón social)'),
+        el('span',{html:f.estado==='error'?'<span class="badge danger">Error</span>':f.estado==='creada'?'<span class="badge ok">Creada</span>':'<span class="badge info">Se creará</span>'})),
+      el('small',{class:'muted'},'Fila '+f.fila+' · RFC '+(f.rfc||'—')+' · CLABE '+(f.clabe||'—')),
+      f.estado==='error'?el('div',{class:'imp-err'},f.error):''))));
+    confirmarBtn.style.display=r.simulado&&r.nuevas?'':'none';
+    confirmarBtn.textContent='Importar '+r.nuevas+' empresa'+(r.nuevas===1?'':'s');
+    confirmarBtn.disabled=false;
+  };
+  const enviar=async simular=>{
+    const fd=new FormData();fd.append('archivo',archivo);
+    return api('POST','/api/cards/entidades/importar'+(simular?'?simular=1':''),fd);
+  };
+  const zona=zonaArchivos({compacta:true,accept:'.xlsx,.csv',titulo:'Arrastra aquí el Excel o CSV de empresas, o haz clic',ayuda:'Se revisa antes de guardar',sinLista:false,onFiles:async(fs,z)=>{
+    archivo=fs[0];salida.innerHTML='';confirmarBtn.style.display='none';
+    try{pintar(await enviar(true));}
+    catch(er){salida.append(el('div',{class:'banner err'},errMsg(er)));archivo=null;z.limpiar();}
+  }});
+  confirmarBtn.onclick=async()=>{confirmarBtn.disabled=true;
+    try{const r=await enviar(false);pintar(r);toast(r.creadas+' empresa(s) importadas','ok');render();}
+    catch(er){toast(errMsg(er),'err');confirmarBtn.disabled=false;}};
+  const plantilla=el('button',{class:'btn ghost sm',type:'button',onclick:async()=>{try{await descargar('/api/cards/entidades/plantilla.xlsx','plantilla-empresas-cards.xlsx');}catch(er){toast(errMsg(er),'err');}}},'Descargar plantilla');
+  const body=el('div',{},
+    el('div',{class:'banner'},'Carga varias empresas de una vez, ya con todos sus datos (razón social, RFC, CLABE, beneficiario, comisión e IVA). Después, Operaciones agrega sus unidades de negocio y tarjetas, que heredan estos datos. ',plantilla),
+    zona,salida);
+  foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cerrar'),confirmarBtn);
+  modal('Importar empresas',body,foot);
+}
+
 async function editEntidad(e,nuevo,ents){
   const esNueva=!e;
   const nivel=esNueva?nuevo.nivel:e.nivel;
+  const hereda=nivel!=='EMPRESA';          // la unidad de negocio y la tarjeta heredan los datos de su empresa
   const padre=esNueva&&nuevo.parent_id?ents.find(x=>x.id===nuevo.parent_id):(e&&e.parent_id?ents.find(x=>x.id===e.parent_id):null);
-  const refLbl={EMPRESA:'RFC para facturar',UN:'Clave interna',TARJETA:'Últimos 4 dígitos o alias'}[nivel];
-  const nombre=el('input',{id:'enNombre',maxlength:'120',autocomplete:'off',value:e?e.nombre:''});
+  const empresa=padre?ents.find(x=>x.id===(padre.empresa_id||padre.id)):null;
+  const refLbl={EMPRESA:'RFC para facturar',UN:'Clave interna (opcional)'}[nivel];
+  const nombre=el('input',{id:'enNombre',maxlength:'120',autocomplete:'off',value:e?e.nombre:'',placeholder:nivel==='UN'?'Ej. Sucursal Norte, Gastos de viaje…':(nivel==='TARJETA'?'Como se le conoce (opcional)':'')});
+  const correo=el('input',{id:'enCorreo',type:'email',maxlength:'120',autocomplete:'off',placeholder:'usuario@empresa.com',value:e&&e.correo_usuario?e.correo_usuario:''});
   const comercial=el('input',{id:'enComercial',maxlength:'120',autocomplete:'off',placeholder:'Como se le conoce (opcional)',value:e&&e.nombre_comercial?e.nombre_comercial:''});
-  const ref=el('input',{id:'enRef',maxlength:'60',autocomplete:'off',value:e&&e.referencia?e.referencia:''});
-  const clabe=el('input',{id:'enClabe',inputmode:'numeric',maxlength:'22',autocomplete:'off',placeholder:'18 dígitos',value:e?e.clabe:''});
+  const ref=el('input',{id:'enRef',maxlength:'60',autocomplete:'off',value:e&&e.referencia&&nivel!=='TARJETA'?e.referencia:''});
+  const clabe=el('input',{id:'enClabe',inputmode:'numeric',maxlength:'22',autocomplete:'off',placeholder:'18 dígitos',value:e&&e.clabe?e.clabe:''});
   const aviso=el('div',{class:'req-note','aria-live':'polite'});
   const valClabe=()=>{const c=clabe.value.replace(/\D/g,'');if(!c){aviso.textContent='';clabe.removeAttribute('aria-invalid');return;}
     if(clabeOk(c)){aviso.textContent='✓ CLABE válida';aviso.style.color='var(--ok-ink)';clabe.removeAttribute('aria-invalid');}
     else{aviso.textContent=c.length<18?`Faltan ${18-c.length} dígitos`:'El dígito verificador no coincide: revisa la CLABE';aviso.style.color='var(--danger-ink)';clabe.setAttribute('aria-invalid','true');}};
-  clabe.addEventListener('input',valClabe);if(e)valClabe();
+  clabe.addEventListener('input',valClabe);if(e&&e.clabe)valClabe();
   const bancos=await api('GET','/api/cards/bancos').catch(()=>[]);
   const benef=el('input',{id:'enBenef',maxlength:'120',autocomplete:'off',placeholder:'Titular de la cuenta, como aparece en el banco',value:e&&e.beneficiario?e.beneficiario:''});
   const bancoTxt=el('span',{});
@@ -5868,20 +5948,51 @@ async function editEntidad(e,nuevo,ents){
   const activo=el('input',{id:'enActivo',type:'checkbox'});activo.checked=e?e.activo:true;
   const body=el('div',{});
   if(padre)body.append(el('div',{class:'banner'},'Pertenece a: ',el('b',{},padre.ruta)));
-  body.append(fld(nivel==='EMPRESA'?'Razón social (con la que se factura)':'Nombre',nombre));
-  if(nivel==='EMPRESA')body.append(fld('Nombre comercial',comercial));
-  body.append(el('div',{class:'form-grid'},fld(refLbl+(nivel==='EMPRESA'?'':' (opcional)'),ref),fld('CLABE de fondeo',clabe)),aviso,
-    el('div',{class:'form-grid'},fld('Beneficiario',benef),fld('Banco beneficiario',bancoBox)),
-    el('div',{class:'form-grid'},fld('Comisión % sobre el fondeo'+(nivel==='EMPRESA'?'':' (vacío = hereda)'),com),fld('IVA % sobre la comisión'+(nivel==='EMPRESA'?'':' (vacío = hereda)'),iva)));
+
+  if(!hereda){
+    // EMPRESA: lleva todos los datos; sus unidades y tarjetas los heredan.
+    body.append(fld('Razón social (con la que se factura)',nombre),fld('Nombre comercial',comercial),
+      el('div',{class:'form-grid'},fld(refLbl,ref),fld('CLABE de fondeo',clabe)),aviso,
+      el('div',{class:'form-grid'},fld('Beneficiario',benef),fld('Banco beneficiario',bancoBox)),
+      el('div',{class:'form-grid'},fld('Comisión % sobre el fondeo',com),fld('IVA % sobre la comisión',iva)),
+      el('div',{class:'req-note'},'Estos datos los heredan las unidades de negocio y tarjetas de la empresa.'));
+  }else{
+    // UN y TARJETA: solo lo propio; lo demás se muestra heredado de la empresa (o de la unidad de negocio).
+    if(nivel==='UN')body.append(el('div',{class:'form-grid'},fld('Nombre de la unidad de negocio',nombre),fld(refLbl,ref)));
+    else body.append(el('div',{class:'form-grid'},fld('Correo del usuario de la tarjeta',correo),fld('Nombre del usuario (opcional)',nombre)),
+      el('div',{class:'req-note'},'La tarjeta se identifica por el correo de su usuario, no por su número.'));
+    const dato=(k,v,cls)=>el('div',{class:cls||''},el('small',{},k),el('b',{html:v}));
+    const cuentaPadre=padre&&padre.clabe_ef?`<span class="mono">${esc(clabeFmt(padre.clabe_ef))}</span><br><small class="muted">${esc([padre.beneficiario_ef,padre.banco_nombre_ef].filter(Boolean).join(' · '))}</small>`:'<span class="muted">La empresa no tiene cuenta definida</span>';
+    body.append(el('div',{class:'heredado'},el('div',{class:'heredado-t'},'Lo hereda de '+(padre?padre.nombre:'su empresa')),
+      el('div',{class:'dt-grid'},
+        dato('Empresa (razón social)',esc(empresa?empresa.nombre:'—')),dato('RFC',empresa&&empresa.referencia?esc(empresa.referencia):'<span class="muted">—</span>'),
+        dato('Cuenta de fondeo',cuentaPadre,'s2'),
+        dato('Comisión',pctTxt(heredC)+' sobre el fondeo'),dato('IVA',pctTxt(heredI)+' sobre la comisión'),
+        ...(typeof CARDS_OPERACION!=='undefined'&&empresa&&empresa.tipo_operacion?[dato('Tipo de operación',esc(CARDS_OPERACION[empresa.tipo_operacion]||empresa.tipo_operacion))]:[]))));
+    // Excepción: cuenta de fondeo o tasas propias (casi nunca se usa).
+    const propia=el('input',{id:'enPropia',type:'checkbox'});propia.checked=!!(e&&e.clabe);
+    const caja=el('div',{class:'form-grid'},el('div',{style:'grid-column:1/-1'},fld('CLABE de fondeo propia',clabe),aviso),fld('Beneficiario',benef),fld('Banco beneficiario',bancoBox));
+    caja.style.display=propia.checked?'':'none';
+    propia.addEventListener('change',()=>{caja.style.display=propia.checked?'':'none';});
+    const abierta=!!(e&&(e.clabe||e.comision_pct!=null||e.iva_pct!=null));
+    const det=el('details',{class:'propia'},el('summary',{},'Cuenta o tasas distintas a las de '+(padre?padre.nombre:'la empresa')+' (opcional)'),
+      el('div',{},el('label',{class:'chk'},propia,' Tiene su propia cuenta de fondeo (si no, usa la de '+(padre?padre.nombre:'la empresa')+')'),caja,
+        el('div',{class:'form-grid'},fld('Comisión % (vacío = hereda)',com),fld('IVA % (vacío = hereda)',iva))));
+    if(abierta)det.open=true;
+    if(SES.rol_cards!=='cards_operaciones')body.append(det);   // Operaciones no cambia cuenta ni tasas: siempre heredan de la empresa
+    body._propia=propia;
+  }
   body.append(fld('Notas',notas));
   if(!esNueva)body.append(el('label',{class:'chk'},activo,' Activa (si la desactivas ya no recibe fondeos nuevos)'));
   if(!esNueva)body.append(el('div',{class:'req-note'},'Cambiar la comisión, la CLABE, el beneficiario o el banco no modifica fondeos ya registrados: conservan los que tenían.'));
   const foot=el('div',{});
-  if(e&&!e.n_hijos&&!e.n_fondeos)foot.append(el('button',{class:'btn danger',type:'button',style:'margin-right:auto',onclick:async()=>{if(!await confirmar('¿Eliminar '+e.nombre+'?'))return;try{await api('DELETE','/api/cards/entidades/'+e.id);closeModal();toast('Eliminada','ok');render();}catch(er){toast(errMsg(er),'err');}}},'Eliminar'));
+  if(e&&!e.n_hijos&&!e.n_fondeos)foot.append(el('button',{class:'btn danger',type:'button',style:'margin-right:auto',onclick:async()=>{if(!await confirmar('¿Eliminar '+(e.correo_usuario||e.nombre)+'?'))return;try{await api('DELETE','/api/cards/entidades/'+e.id);closeModal();toast('Eliminada','ok');render();}catch(er){toast(errMsg(er),'err');}}},'Eliminar'));
   const guardar=el('button',{class:'btn',type:'button'},'Guardar');
   foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),guardar);
   guardar.onclick=async()=>{guardar.disabled=true;try{
-    const b={nombre:nombre.value,nombre_comercial:comercial.value,referencia:ref.value,clabe:clabe.value,beneficiario:benef.value,banco_codigo:bancoCod,comision_pct:com.value,iva_pct:iva.value,notas:notas.value};
+    const propiaOn=!hereda||(body._propia.checked&&SES.rol_cards!=='cards_operaciones');
+    const b={nombre:nombre.value,nombre_comercial:comercial.value,referencia:ref.value,clabe:propiaOn?clabe.value:'',beneficiario:propiaOn?benef.value:'',banco_codigo:propiaOn?bancoCod:null,comision_pct:com.value,iva_pct:iva.value,notas:notas.value};
+    if(nivel==='TARJETA')b.correo_usuario=correo.value;
     if(esNueva){b.nivel=nivel;if(nuevo.parent_id)b.parent_id=nuevo.parent_id;await api('POST','/api/cards/entidades',b);}
     else{b.activo=activo.checked;await api('PUT','/api/cards/entidades/'+e.id,b);}
     closeModal();toast('Guardado','ok');render();

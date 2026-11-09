@@ -147,12 +147,12 @@ const N = v => (v == null || v === '') ? null : Number(v);
 const nrm = s => String(s == null ? '' : s).trim().toLowerCase();
 // Rol efectivo dentro de Cards: los roles solo-Cards son su propio rol; el administrador de POS tiene acceso total; el resto, el `rol_cards`
 // que se le asignó (o ninguno). Es independiente del rol en POS Settlement.
-const CARDS_ROLES = ['cards_admin', 'cards_tesoreria', 'comercial', 'cards_consulta'];
+const CARDS_ROLES = ['cards_admin', 'cards_tesoreria', 'cards_operaciones', 'comercial', 'cards_consulta'];
 const rolCardsDe = (rol, rolCards) => CARDS_ROLES.includes(rol) ? rol : rol === 'admin' ? 'admin' : (CARDS_ROLES.includes(rolCards) ? rolCards : null);
 const safeUser = u => ({ id: u.id, email: u.email, nombre: u.nombre, rol: u.rol, rol_cards: rolCardsDe(u.rol, u.rol_cards), foto_url: u.foto_url || null });
-const ROLES = { admin: 'Administrador', operador: 'Operador (Operaciones)', tesoreria: 'Tesorería (valida)', bancos: 'Bancos (dispersa y cierra)', consulta: 'Consulta (solo lectura)', inventario: 'Inventario (solo esa sección)', comercial: 'Comercial (solicita fondeos de Cards)', cards_admin: 'Administrador Cards (usuarios y tesorería de Cards)', cards_tesoreria: 'Tesorería Cards (asigna saldo y sube comprobante)', cards_consulta: 'Consulta Cards (solo lectura)' };
+const ROLES = { admin: 'Administrador', operador: 'Operador (Operaciones)', tesoreria: 'Tesorería (valida)', bancos: 'Bancos (dispersa y cierra)', consulta: 'Consulta (solo lectura)', inventario: 'Inventario (solo esa sección)', comercial: 'Comercial (solicita fondeos de Cards)', cards_admin: 'Administrador Cards (usuarios y tesorería de Cards)', cards_tesoreria: 'Tesorería Cards (asigna saldo y sube comprobante)', cards_operaciones: 'Operaciones Cards (da de alta unidades de negocio y tarjetas)', cards_consulta: 'Consulta Cards (solo lectura)' };
 // Roles que solo entran a Polipay Cards Settlement (no ven POS Settlement ni Tareas).
-const ROLES_SOLO_CARDS = ['comercial', 'cards_admin', 'cards_tesoreria', 'cards_consulta'];
+const ROLES_SOLO_CARDS = ['comercial', 'cards_admin', 'cards_tesoreria', 'cards_operaciones', 'cards_consulta'];
 const ROLES_VALIDOS = Object.keys(ROLES);
 
 // jti único por sesión — permite revocarla al cerrar sesión (blacklist en memoria).
@@ -4563,6 +4563,11 @@ function permisosPorRol(rol) {
       'Ver los fondeos por asignar, revisar el CEP y su validación.',
       'Confirmar que el saldo se asignó (o rechazarlo con motivo) y subir el comprobante del sistema.',
       'Recibir el aviso por correo de cada fondeo por asignar.',
+    ],
+    cards_operaciones: [
+      'Dar de alta y editar las unidades de negocio y las tarjetas de cada empresa (la tarjeta se identifica por el correo de su usuario).',
+      'Heredan la cuenta de fondeo, la comisión y el IVA de la empresa: no puedes cambiarlos.',
+      'No das de alta empresas, bancos ni destinatarios, ni asignas saldo. Solo ves Cards.',
     ],
     comercial: [
       'Solicitar fondeos a las empresas: el sistema calcula comisión e IVA y el total a depositar.',
