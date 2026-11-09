@@ -157,6 +157,16 @@ create table if not exists cortes (
   obsoleto      boolean not null default false      -- se marca si se borra un lote de trx que lo alimentaba
 );
 alter table cortes add column if not exists obsoleto boolean not null default false;
+-- Rechazo de corte ("no fue validado"): estado 'Rechazado' + trazabilidad; reemplazado_por = corte nuevo generado.
+alter table cortes add column if not exists motivo_rechazo text;
+alter table cortes add column if not exists rechazado_por text;
+alter table cortes add column if not exists rechazado_at timestamptz;
+alter table cortes add column if not exists estado_previo_rechazo text;
+alter table cortes add column if not exists reemplazado_por integer;
+-- Primer correo de notificación del corte (para que el aviso de rechazo vaya en el mismo hilo).
+alter table cortes add column if not exists notif_message_id text;
+alter table cortes add column if not exists notif_subject text;
+alter table cortes add column if not exists notif_at timestamptz;
 
 create table if not exists calculos (
   id          serial primary key,

@@ -1197,7 +1197,7 @@ function tableWrap(head,rows,opts){const w=el('div',{class:'tablewrap'});const t
   rows.forEach(r=>{const tr=el('tr',{});if(r._onclick){tr.style.cursor='pointer';tr.tabIndex=0;tr.addEventListener('click',r._onclick);}
     r.forEach(cell=>{if(cell&&cell.nodeType)tr.append(el('td',{},cell));else if(cell&&typeof cell==='object'&&'num'in cell)tr.append(el('td',{class:'num',html:cell.num}));else tr.append(el('td',{html:cell==null?'':String(cell)}));});tb.append(tr);});
   t.append(tb);w.append(t);return w;}
-const badgeEstado=e=>{const m={'Borrador':'neutral','Validado':'info','Dispersado':'violet','Cerrado':'ok'};return `<span class="badge ${m[e]||'neutral'}">${esc(e)}</span>`;};
+const badgeEstado=e=>{const m={'Borrador':'neutral','Validado':'info','Dispersado':'violet','Cerrado':'ok','Rechazado':'danger'};return `<span class="badge ${m[e]||'neutral'}">${esc(e)}</span>`;};
 const badgeProd=p=>{const m={'Débito':'info','Crédito':'violet','American Express':'neutral','Internacional':'warn'};return `<span class="badge ${m[p]||'danger'}">${esc(p||'—')}</span>`;};
 function errMsg(e){const d=e&&e.data||{};if(e.status===403)return'No tienes permiso para esta acción ('+SES.rol+')';if(d.error==='no_cuadra_o_bloqueado')return'El corte no cuadra o tiene órdenes sin CLABE';if(d.error==='corte_inmutable')return'El corte ya está '+d.estado+' (inmutable)';if(d.error==='transicion_invalida')return'Transición no válida (estado '+d.estado+')';if(d.error==='ya_aplicado')return'Este contracargo ya fue aplicado a un corte. Elimina el corte para poder borrarlo.';return d.mensaje||d.error||e.message||'Error';}
 
@@ -1938,7 +1938,7 @@ async function vCortes(v){
   // Filtros (se aplican en el navegador; se recuerdan mientras dure la sesión de la pestaña)
   const F=CORTES_FILTRO;
   const clientes=[...new Set(cortes.flatMap(c=>c.grupos||[]))].sort((a,b)=>a.localeCompare(b,'es'));
-  const estados=['Borrador','Validado','Dispersado','Cerrado'];
+  const estados=['Borrador','Validado','Dispersado','Cerrado','Rechazado'];
   const fBuscar=el('input',{type:'search',placeholder:'# corte',value:F.q,style:'width:110px'});
   const fEstado=el('select',{style:'width:150px'},el('option',{value:''},'Todos los estados'),...estados.map(e=>el('option',{value:e},e)));fEstado.value=F.estado;
   const fCliente=el('select',{style:'width:240px'},el('option',{value:''},'Todos los clientes'),...clientes.map(c=>el('option',{value:c},c)));fCliente.value=F.cliente;
@@ -1999,7 +1999,7 @@ function openReporteCliente(cortes,clientes,tipo){
   tabs.append(tH,tC);
   const selCorte=el('select',{},...cortes.map(c=>el('option',{value:c.id_corte},`#${c.id_corte} · ${c.fecha_liq} · ${c.estado} · ${mxn(c.total_disp)}`)));
   const fFechas=filtroFechas({desde:F.desde,hasta:F.hasta,placeholder:'Todo el histórico',titulo:'Fecha de liquidación'});const desde=fFechas.desde,hasta=fFechas.hasta;
-  const estado=el('select',{},el('option',{value:''},'Todos'),...['Borrador','Validado','Dispersado','Cerrado'].map(e=>el('option',{value:e},e)));estado.value=F.estado;
+  const estado=el('select',{},el('option',{value:''},'Todos'),...['Borrador','Validado','Dispersado','Cerrado','Rechazado'].map(e=>el('option',{value:e},e)));estado.value=F.estado;
   const cliente=el('select',{},el('option',{value:''},'Todos los clientes'),...clientes.map(c=>el('option',{value:c},c)));cliente.value=F.cliente;
   const bloqueH=el('div',{class:'form-grid'},el('label',{class:'field'},'Fecha de liquidación',fFechas),el('label',{class:'field'},'Estado del corte',estado));
   const bloqueC=el('div',{style:'display:none'},el('label',{class:'field'},'Corte',selCorte));
@@ -2045,6 +2045,28 @@ async function openNuevoCorte(){
   }},'Generar corte'));
   modal('Nuevo corte',body,foot);
 }
+function openRechazarCorte(c){
+  const body=el('div',{});
+  body.append(el('p',{class:'muted',style:'margin:0 0 12px'},`El corte #${c.id_corte} (liquidación ${c.fecha_liq}) quedará como Rechazado y no se podrá dispersar. Se libera lo que había retenido, se genera automáticamente un corte nuevo para la misma fecha y se avisa por correo a los destinatarios.`));
+  const motivo=el('textarea',{id:'rchMotivo',rows:'4',placeholder:'Ej. Falta una retención de IPRO / la comisión de DEAL no coincide con lo pactado…'});
+  body.append(fld('Motivo del rechazo (obligatorio)',motivo));
+  const foot=el('div',{});
+  const btn=el('button',{class:'btn danger',onclick:async()=>{
+    const m=motivo.value.trim();
+    if(m.length<5){toast('Escribe el motivo del rechazo (mínimo 5 caracteres).','err');motivo.focus();return;}
+    btn.disabled=true;
+    try{
+      const r=await withBusy('Rechazando y generando corte nuevo…',()=>api('POST','/api/cortes/'+c.id_corte+'/rechazar',{motivo:m}));
+      closeModal();
+      const cr=r.correo||{};
+      const nota=cr.enviado?` · correo enviado a ${cr.destinatarios} destinatario(s)${cr.en_hilo?', en el mismo hilo de la notificación del corte':' (ese corte no se había notificado: sale como correo nuevo)'}`:' · correo NO enviado ('+({ses_no_configurado:'SES no configurado',sin_destinatarios:'sin destinatarios activos',error_envio:'error de envío'}[cr.motivo]||cr.motivo||'error')+')';
+      toast(r.id_nuevo?`Corte #${c.id_corte} rechazado · nuevo corte #${r.id_nuevo}${nota}`:`Corte #${c.id_corte} rechazado, pero no se pudo generar el nuevo (${r.error_nuevo||'error'})${nota}`,r.id_nuevo&&cr.enviado?'ok':'err');
+      abrirCorte(r.id_nuevo||c.id_corte);
+    }catch(e){btn.disabled=false;toast(errMsg(e),'err');}
+  }},'Rechazar y generar corte nuevo');
+  foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),btn);
+  modal('Rechazar corte #'+c.id_corte,body,foot);
+}
 async function abrirCorte(id){
   VIEW='cortes';renderNav();$('#viewTitle').textContent='Cortes y liquidación';
   const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
@@ -2056,11 +2078,15 @@ async function abrirCorte(id){
   v.innerHTML='';
   const steps=el('div',{class:'steps'});
   [['Compensación',true],['Cuadre',c.cuadra],['Layout SPEI',c.cuadra&&!c.bloqueos],['Dispersado',c.estado==='Dispersado'||c.estado==='Cerrado']].forEach((s,i)=>steps.append(el('div',{class:'step '+(s[1]?'done':(i===1?'cur':''))},el('span',{class:'n'},s[1]?'✓':(i+1)),s[0])));
-  v.append(steps);
+  if(c.estado!=='Rechazado')v.append(steps);
   v.append(cards([['Grupos',cal.length],['A compensar',mxn(c.total_comp)],['A dispersar',mxn(c.total_disp)],['Cuadre',c.cuadra?'✓ 0.00':'✗',c.cuadra?'diferencia = 0':'revisar']]));
   const pa=el('div',{class:'panel'});pa.append(el('h3',{},'Estado del corte: ',el('span',{html:badgeEstado(c.estado)})));
-  if(c.bloqueos)pa.append(el('div',{class:'banner err'},`⛔ ${c.bloqueos} grupo(s) con importe sin CLABE/banco. Corrige en Cuentas antes del layout.`));
-  if(!c.cuadra)pa.append(el('div',{class:'banner err'},'⛔ El corte no cuadra. No se puede validar/dispersar.'));
+  if(c.estado!=='Rechazado'&&c.bloqueos)pa.append(el('div',{class:'banner err'},`⛔ ${c.bloqueos} grupo(s) con importe sin CLABE/banco. Corrige en Cuentas antes del layout.`));
+  if(c.estado==='Rechazado'){
+    pa.append(el('div',{class:'banner err'},`⛔ Corte rechazado${c.rechazado_por?' por '+c.rechazado_por:''}${c.rechazado_at?' · '+new Date(c.rechazado_at).toLocaleString('es-MX'):''} — Motivo: ${c.motivo_rechazo||'—'}`));
+    pa.append(c.reemplazado_por?el('div',{class:'banner ok'},`Se generó el corte nuevo #${c.reemplazado_por}. `,el('a',{href:'#',onclick:e=>{e.preventDefault();abrirCorte(c.reemplazado_por);}},'Abrir corte nuevo →')):el('div',{class:'banner err'},'No se generó un corte nuevo automáticamente: créalo desde “+ Nuevo corte”.'));
+  }
+  else if(!c.cuadra)pa.append(el('div',{class:'banner err'},'⛔ El corte no cuadra. No se puede validar/dispersar.'));
   else if(c.estado==='Borrador')pa.append(el('div',{class:'banner ok'},'✓ Todos los grupos cuadran (diferencia = 0).'));
   const acc=el('div',{class:'kpi-row'});
   acc.append(el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/cortes/'+id+'/layout.xlsx','layout_corte_'+id+'.xlsx').catch(e=>toast(e.status===409?'Layout bloqueado: hay órdenes sin CLABE/banco':errMsg(e),'err'))},'⬇ Layout SPEI'));
@@ -2076,8 +2102,10 @@ async function abrirCorte(id){
   }
   const trans=async(a,label)=>{try{await api('POST','/api/cortes/'+id+'/'+a);toast(label,'ok');abrirCorte(id);}catch(e){toast(errMsg(e),'err');}};
   if(c.estado==='Borrador'&&can('validar'))acc.append(el('button',{class:'btn ok sm',disabled:(!c.cuadra||c.bloqueos)?true:null,onclick:()=>trans('validar','Corte validado')},'Validar corte'));
+  // "No validado": tesorería rechaza el corte, se genera uno nuevo con la misma fecha y se avisa por correo.
+  if((c.estado==='Borrador'||c.estado==='Validado')&&can('validar'))acc.append(el('button',{class:'btn danger sm',onclick:()=>openRechazarCorte(c)},'Rechazar corte'));
   // Botón Notificar (envía el informe por correo). Disponible a admin/tesorería/bancos en cualquier estado.
-  if(can('notificar')) acc.append(el('button',{class:'btn sm deep',onclick:async()=>{
+  if(can('notificar')&&c.estado!=='Rechazado') acc.append(el('button',{class:'btn sm deep',onclick:async()=>{
     if(!await confirmar('¿Enviar el informe de este corte por correo a los destinatarios activos?')) return;
     try{
       const r=await withBusy('Enviando correo…',()=>api('POST','/api/cortes/'+id+'/notificar'));

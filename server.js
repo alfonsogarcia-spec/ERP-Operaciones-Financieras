@@ -1343,7 +1343,7 @@ async function evaluarAlertasTransaccionalidad(idCorte, calculosActuales, fechaL
       select c.id_corte, c.fecha_liq_iso::text as fecha_liq_iso, cal.calc
         from calculos cal
         join cortes c on c.id_corte = cal.corte_id
-       where cal.id_grupo = $1 and c.id_corte <> $2
+       where cal.id_grupo = $1 and c.id_corte <> $2 and c.estado <> 'Rechazado'
        order by c.fecha_liq_iso desc
     `, [g.id_grupo, idCorte])).rows;
     const porCorte = new Map();
@@ -2097,12 +2097,11 @@ app.get('/api/cortes/fechas', auth, async (req, res) => {
 
 // Gancho con Cards (BSO): al hacerse un corte aquí se hace también el corte de comisiones de Cards (lib/cards-routes.js).
 const cardsHooks = {};
-app.post('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res) => {
-  if (!dbReady(res)) return;
-  const iso = (req.body || {}).fecha_liq; if (!iso) return res.status(400).json({ error: 'fecha_liq' });
+// Genera un corte en Borrador para una fecha de liquidación (cálculo + ledger + alertas). Lo usan "Nuevo corte" y el rechazo de un corte.
+async function crearCorteBorrador(iso, nombreUsuario) {
   const c = await computeCorte(iso);
   const ins = (await db.query('insert into cortes(fecha_liq,fecha_liq_iso,estado,creado_por,total_monto,total_comp,total_disp,n_trx,cuadra,bloqueos) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id_corte',
-    [E.fmtFecha(E.parseFecha(iso)), iso, 'Borrador', req.user.nombre, c.total_monto, c.total_comp, c.total_disp, c.n_trx, c.cuadra, c.bloqueos])).rows[0];
+    [E.fmtFecha(E.parseFecha(iso)), iso, 'Borrador', nombreUsuario, c.total_monto, c.total_comp, c.total_disp, c.n_trx, c.cuadra, c.bloqueos])).rows[0];
   const idCorte = ins.id_corte;
   await insertMany('calculos', ['corte_id', 'cliente', 'afil', 'id_grupo', 'razon', 'concepto', 'clabe', 'codigo_banco', 'banco', 'beneficiario', 'calc', 'faltantes', 'ajustes'],
     c.calculos.map(cc => ({ corte_id: idCorte, cliente: cc.cliente, afil: cc.afil, id_grupo: cc.id_grupo, razon: cc.razon, concepto: cc.concepto, clabe: cc.clabe, codigo_banco: cc.codigo_banco, banco: cc.banco, beneficiario: cc.beneficiario, calc: JSON.stringify(cc.calc), faltantes: JSON.stringify(cc.faltantes), ajustes: JSON.stringify(cc.ajustes) })));
@@ -2117,6 +2116,12 @@ app.post('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res)
   // día) y notifica si algo cayó >30%. Best-effort — nunca debe tumbar la
   // generación del corte.
   const alertasTrans = await evaluarAlertasTransaccionalidad(idCorte, c.calculos, iso).catch(e => { console.error('[alertas_transaccionalidad]', e.message); return []; });
+  return { idCorte, c, aplicadas, montoAplicado, alertasTrans };
+}
+app.post('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const iso = (req.body || {}).fecha_liq; if (!iso) return res.status(400).json({ error: 'fecha_liq' });
+  const { idCorte, c, aplicadas, montoAplicado, alertasTrans } = await crearCorteBorrador(iso, req.user.nombre);
   await bit(req, 'corte_generar', `${E.fmtFecha(E.parseFecha(iso))}, ${c.calculos.length} grupos${aplicadas?`, ledger: ${aplicadas} aplicaciones por ${montoAplicado}`:''}${alertasTrans.length?`, ⚠ ${alertasTrans.length} caída(s) de transaccionalidad`:''}`, { resource_type: 'corte', resource_id: idCorte });
   if (cardsHooks.alCortePOS) cardsHooks.alCortePOS({ idCorte, fecha_liq: iso, quien: req.user.nombre }).catch(() => { /* de mejor esfuerzo */ });
   res.json({ id_corte: idCorte, contracargos_no_aplicados: c.cc_no_aplicados, ledger_aplicaciones: aplicadas, ledger_monto_aplicado: montoAplicado, alertas_transaccionalidad: alertasTrans });
@@ -2141,6 +2146,7 @@ async function cortesYCalculos(q) {
     if (isoOk(q.desde)) { args.push(q.desde); where.push(`fecha_liq_iso>=$${args.length}`); }
     if (isoOk(q.hasta)) { args.push(q.hasta); where.push(`fecha_liq_iso<=$${args.length}`); }
     if (q.estado) { args.push(String(q.estado)); where.push(`estado=$${args.length}`); }
+    else where.push("estado<>'Rechazado'"); // un corte rechazado no cuenta en reportes (su reemplazo sí)
   }
   const cortes = (await db.query(`select *, fecha_liq_iso::text as fli from cortes${where.length ? ' where ' + where.join(' and ') : ''} order by fecha_liq_iso, id_corte`, args)).rows;
   if (!cortes.length) return { error: { status: 404, body: { error: 'sin_datos', mensaje: 'No hay cortes con esos filtros.' } } };
@@ -2319,6 +2325,134 @@ app.post('/api/cortes/:id/retener', auth, requiereRol('admin', 'operador'), asyn
   res.json({ ok: true, folio: g.origen_ref, nueva, retenido: monto, pendiente_restante: restante, a_dispersar_fila: calc.disp_total });
 });
 
+/* ---------- Rechazo de corte ("no fue validado") ----------
+   Tesorería (o admin) rechaza un corte en Borrador/Validado: queda como "Rechazado" con su motivo, se libera todo lo que
+   había aplicado (retenciones/contracargos vuelven a Pendiente, pendientes de dispersión se liberan), se genera
+   AUTOMÁTICAMENTE un corte nuevo para la misma fecha de liquidación y se avisa por correo a los destinatarios. */
+function armarRechazoCorteHTML(d, logoSrc) {
+  const brand = '#051B3B', accent = '#3083F4', muted = '#667085', line = '#e5e7eb', ink = '#1A1A1A', rojo = '#B42318';
+  const logo = logoSrc || 'cid:polipay-logo';
+  const subject = `⛔ Corte #${d.idCorte} rechazado · liquidación ${d.fechaLiq}${d.idNuevo ? ` · nuevo corte #${d.idNuevo}` : ''}`;
+  const campos = [
+    ['Corte rechazado', `#${d.idCorte}`], ['Fecha de liquidación', d.fechaLiq], ['Estado en que estaba', d.estadoAnterior || '—'],
+    ['Rechazado por', d.quien || '—'], ['Cuándo', d.cuando],
+    ['A dispersar (rechazado)', fmtMXN(d.totalRechazado)],
+    ['Corte nuevo', d.idNuevo ? `#${d.idNuevo} (Borrador, pendiente de validar)` : 'No se pudo generar automáticamente — genéralo desde Cortes'],
+  ];
+  if (d.idNuevo) campos.push(['A dispersar (nuevo)', fmtMXN(d.totalNuevo)]);
+  const filas = campos.map(([k, v]) => `<tr><td width="170" style="color:${muted};padding:6px 0">${escapeHtml(k)}</td><td style="padding:6px 0"><b>${escapeHtml(String(v == null ? '—' : v))}</b></td></tr>`).join('');
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(subject)}</title></head>
+<body style="margin:0;padding:0;background:#f4f6fb;font-family:Montserrat,Arial,sans-serif;color:${ink}">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f6fb;padding:24px 0"><tr><td align="center">
+    <table role="presentation" width="640" cellspacing="0" cellpadding="0" style="max-width:640px;background:#fff;border:1px solid ${line};border-radius:12px;overflow:hidden">
+      <tr><td style="background:#ffffff;padding:26px 32px;border-bottom:1px solid ${line}">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+          <td><img src="${logo}" alt="Polipay" height="34" style="display:block;height:34px;border:0"></td>
+          <td align="right" style="font:700 11px/1 Montserrat,Arial,sans-serif;color:${brand};letter-spacing:.12em;text-transform:uppercase">Polipay POS Settlement</td>
+        </tr></table>
+      </td></tr>
+      <tr><td style="height:6px;background:${rojo}"></td></tr>
+      <tr><td style="padding:34px 40px 8px">
+        <div style="font:700 12px/1 Montserrat,Arial,sans-serif;color:${rojo};letter-spacing:.14em;text-transform:uppercase;margin:0 0 10px">⛔ Corte rechazado</div>
+        <div style="font:700 22px/1.25 Montserrat,Arial,sans-serif;color:${brand};margin:0 0 8px">El corte #${escapeHtml(String(d.idCorte))} no fue validado</div>
+        <div style="font:400 14px/1.6 Montserrat,Arial,sans-serif;color:${muted};margin:0 0 22px">Este corte no se debe dispersar. ${d.idNuevo ? `Se generó el corte nuevo #${escapeHtml(String(d.idNuevo))} para la misma fecha de liquidación; queda en Borrador hasta que se valide.` : 'No se pudo generar el corte nuevo de forma automática.'}</div>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #fecdca;background:#fef3f2;border-radius:10px;margin:0 0 20px"><tr><td style="padding:14px 18px">
+          <div style="font:700 11px/1 Montserrat,Arial,sans-serif;color:${rojo};letter-spacing:.12em;text-transform:uppercase;margin:0 0 8px">Motivo del rechazo</div>
+          <div style="font:400 14px/1.6 Montserrat,Arial,sans-serif;color:${ink};white-space:pre-wrap">${escapeHtml(d.motivo || '—')}</div>
+        </td></tr></table>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid ${line};border-radius:10px;overflow:hidden;margin:0 0 24px">
+          <tr><td style="padding:14px 18px;background:#f9fafb;border-bottom:1px solid ${line};font:700 11px/1 Montserrat,Arial,sans-serif;color:${muted};letter-spacing:.12em;text-transform:uppercase">Detalle</td></tr>
+          <tr><td style="padding:14px 18px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font:400 13px/1.7 Montserrat,Arial,sans-serif;color:${ink}">${filas}</table></td></tr>
+        </table>
+        <div style="text-align:center;margin:8px 0 18px"><a href="https://polipay-conciliacion-liquidacion.onrender.com" style="display:inline-block;background:${accent};color:#fff;text-decoration:none;font:700 13px/1 Montserrat,Arial,sans-serif;padding:14px 26px;border-radius:8px;letter-spacing:.04em">Abrir Cortes en Polipay POS Settlement →</a></div>
+        <div style="font:400 12px/1.6 Montserrat,Arial,sans-serif;color:${muted};margin:20px 0 0;padding:14px 16px;background:#f9fafb;border:1px solid ${line};border-radius:8px">Las retenciones y contracargos que se habían aplicado en el corte rechazado se liberaron y se volverán a aplicar en el corte nuevo.</div>
+      </td></tr>
+      <tr><td style="padding:22px 32px 26px;border-top:1px solid ${line};font:400 12px/1.6 Montserrat,Arial,sans-serif;color:${muted}">Aviso automático de Polipay POS Settlement.</td></tr>
+      <tr><td style="background:${brand};padding:14px 32px;font:400 11px/1.4 Montserrat,Arial,sans-serif;color:#cbd5e1">Polipay · Conciliación y liquidación</td></tr>
+    </table>
+  </td></tr></table>
+</body></html>`;
+  const textFallback = `Corte #${d.idCorte} rechazado (liquidación ${d.fechaLiq}) por ${d.quien}. Motivo: ${d.motivo}. ${d.idNuevo ? 'Corte nuevo: #' + d.idNuevo : 'No se generó corte nuevo.'}`;
+  return { subject, html, textFallback };
+}
+async function datosRechazoCorte(idCorte) {
+  const c = (await db.query('select *, fecha_liq_iso::text as fli from cortes where id_corte=$1', [idCorte])).rows[0];
+  if (!c) return null;
+  const nuevo = c.reemplazado_por ? (await db.query('select id_corte, total_disp from cortes where id_corte=$1', [c.reemplazado_por])).rows[0] : null;
+  return {
+    idCorte: c.id_corte, fechaLiq: c.fecha_liq, estadoAnterior: c.estado_previo_rechazo, quien: c.rechazado_por, motivo: c.motivo_rechazo,
+    cuando: c.rechazado_at ? new Date(c.rechazado_at).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' }) : new Date().toLocaleString('es-MX'),
+    totalRechazado: Number(c.total_disp || 0), idNuevo: nuevo ? nuevo.id_corte : null, totalNuevo: nuevo ? Number(nuevo.total_disp || 0) : 0,
+  };
+}
+// Correo "raíz" del hilo: la primera notificación que salió de ese corte. Si es anterior a que se guardara el id,
+// se recupera de la bitácora ("corte #N enviado (… msg <id>)"). null = ese corte nunca se notificó.
+async function raizNotificacionCorte(idCorte) {
+  const c = (await db.query('select notif_message_id, notif_subject from cortes where id_corte=$1', [idCorte])).rows[0] || {};
+  let id = c.notif_message_id, asunto = c.notif_subject;
+  if (!id) {
+    const b = (await db.query("select detalle from bitacora where accion='notificar' and detalle like $1 order by id asc limit 1", [`corte #${idCorte} enviado%`])).rows[0];
+    const m = b && /msg ([\w.-]+)\)/.exec(b.detalle || '');
+    if (m) { id = m[1]; try { asunto = (await armarInformeHTML(idCorte, {})).subject; } catch (_e) { asunto = null; } }
+  }
+  return id ? { id, asunto } : null;
+}
+async function enviarCorreoRechazoCorte(idCorte) {
+  if (!sesEnabled()) return { enviado: false, motivo: 'ses_no_configurado' };
+  const destRaw = (await db.query("select email,email_cifrado,nombre,nombre_cifrado,tipo from destinatarios where activo=true order by email")).rows;
+  const dest = destRaw.map(d => ({ email: descifraTexto(d.email_cifrado, d.email), nombre: descifraTexto(d.nombre_cifrado, d.nombre), tipo: d.tipo }));
+  const fmtAddr = d => d.nombre ? `"${d.nombre}" <${d.email}>` : d.email;
+  const to = dest.filter(d => (d.tipo || 'to') === 'to').map(fmtAddr), cc = dest.filter(d => d.tipo === 'cc').map(fmtAddr), bcc = dest.filter(d => d.tipo === 'bcc').map(fmtAddr);
+  if (!to.length) return { enviado: false, motivo: 'sin_destinatarios' };
+  const datos = await datosRechazoCorte(idCorte);
+  if (!datos) return { enviado: false, motivo: 'no_existe' };
+  const logoBuf = require('fs').readFileSync(path.join(__dirname, 'public', 'logo.png'));
+  const { subject, html, textFallback } = armarRechazoCorteHTML(datos, 'cid:polipay-logo');
+  // Hilo: respuesta ("Re:" + In-Reply-To/References) al primer correo de notificación del corte.
+  // SES entrega cada mensaje con Message-ID <MessageId@email.amazonses.com> (o <MessageId@región.amazonses.com> fuera de us-east-1).
+  const raiz = await raizNotificacionCorte(idCorte).catch(() => null);
+  const region = process.env.AWS_REGION || 'us-east-1', dominio = region === 'us-east-1' ? 'email.amazonses.com' : `${region}.amazonses.com`;
+  const refId = raiz ? `<${raiz.id}@${dominio}>` : null;
+  const asunto = raiz && raiz.asunto ? 'Re: ' + raiz.asunto : subject;
+  const messageId = await sendSES({ to, cc, bcc, subject: asunto, html, textFallback, headers: refId ? { 'In-Reply-To': refId, References: refId } : undefined, inlineImages: [{ cid: 'polipay-logo', filename: 'polipay-logo.png', contentType: 'image/png', content: logoBuf }] });
+  return { enviado: true, destinatarios: dest.length, messageId, en_hilo: !!refId };
+}
+app.get('/api/cortes/:id/rechazo/preview.html', auth, requiereRol('admin', 'tesoreria', 'bancos'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const datos = await datosRechazoCorte(parseInt(req.params.id, 10));
+  if (!datos || !datos.motivo) return res.status(404).send('Ese corte no está rechazado.');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(armarRechazoCorteHTML(datos, '/public/logo.png').html);
+});
+app.post('/api/cortes/:id/rechazar', auth, requiereRol('admin', 'tesoreria'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const id = parseInt(req.params.id, 10);
+  const motivo = String((req.body || {}).motivo || '').trim();
+  if (motivo.length < 5) return res.status(400).json({ error: 'motivo_requerido', mensaje: 'Escribe el motivo del rechazo (mínimo 5 caracteres).' });
+  const c = (await db.query('select *, fecha_liq_iso::text as fli from cortes where id_corte=$1', [id])).rows[0];
+  if (!c) return res.status(404).json({ error: 'no_existe' });
+  if (!['Borrador', 'Validado'].includes(c.estado)) return res.status(409).json({ error: 'transicion_invalida', estado: c.estado, mensaje: c.estado === 'Rechazado' ? 'Este corte ya fue rechazado.' : `Un corte ${c.estado} ya no se puede rechazar.` });
+  // Libera todo lo que el corte había tomado: ledger (retenciones/contracargos → Pendiente) y pendientes de dispersión.
+  await L.revertirCorte(db, id);
+  await db.query('delete from corte_aplicaciones where corte_id=$1', [id]);
+  await DP.revertirCorte(db, id);
+  await db.query('delete from alertas_transaccionalidad where corte_id=$1', [id]).catch(() => { /* tabla opcional */ });
+  await db.query("update cortes set estado='Rechazado', estado_previo_rechazo=$1, motivo_rechazo=$2, rechazado_por=$3, rechazado_at=now() where id_corte=$4", [c.estado, motivo, req.user.nombre, id]);
+  // Corte nuevo para la MISMA fecha de liquidación.
+  let idNuevo = null, errNuevo = null;
+  try {
+    const r = await crearCorteBorrador(c.fli, req.user.nombre);
+    idNuevo = r.idCorte;
+    await db.query('update cortes set reemplazado_por=$1 where id_corte=$2', [idNuevo, id]);
+    if (cardsHooks.alCortePOS) cardsHooks.alCortePOS({ idCorte: idNuevo, fecha_liq: c.fli, quien: req.user.nombre }).catch(() => { /* de mejor esfuerzo */ });
+  } catch (e) { errNuevo = e.message; console.error('[rechazar corte] no se pudo regenerar:', e.message); }
+  await bit(req, 'corte_rechazar', `corte #${id} (${c.estado}) rechazado: ${motivo}${idNuevo ? ` → nuevo corte #${idNuevo}` : ` · ⚠ no se pudo generar el nuevo: ${errNuevo}`}`, { resource_type: 'corte', resource_id: id });
+  // Aviso por correo (de mejor esfuerzo: un fallo de SES nunca deshace el rechazo).
+  const correo = await enviarCorreoRechazoCorte(id).catch(e => ({ enviado: false, motivo: 'error_envio', error: e.message }));
+  await bit(req, 'corte_rechazar_correo', correo.enviado ? `aviso enviado a ${correo.destinatarios} destinatario(s)` : `aviso no enviado: ${correo.motivo}${correo.error ? ' · ' + correo.error : ''}`, { resource_type: 'corte', resource_id: id, success: !!correo.enviado });
+  res.json({ ok: true, id_nuevo: idNuevo, error_nuevo: errNuevo, correo });
+});
+
 function transicionValida(estado, accion) {
   return (accion === 'validar' && estado === 'Borrador') || (accion === 'dispersar' && estado === 'Validado') || (accion === 'cerrar' && estado === 'Dispersado');
 }
@@ -2409,6 +2543,7 @@ app.get('/api/cortes/:id/layout.xlsx', auth, async (req, res) => {
   if (!dbReady(res)) return;
   const c = (await db.query('select *, fecha_liq_iso::text as fli from cortes where id_corte=$1', [parseInt(req.params.id, 10)])).rows[0];
   if (!c) return res.status(404).json({ error: 'no_existe' });
+  if (c.estado === 'Rechazado') return res.status(409).json({ error: 'corte_rechazado', mensaje: 'Corte rechazado: no se genera layout de dispersión. Usa el corte nuevo.' });
   const cal = (await db.query('select * from calculos where corte_id=$1', [c.id_corte])).rows
     .map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc }));
   // Órdenes de dispersión SEPARADAS: primero doméstico (nacional/INT), luego AMEX (aparte).
@@ -2587,6 +2722,7 @@ app.get('/api/cortes/:id/layout-pendientes.xlsx', auth, async (req, res) => {
   const idCorte = parseInt(req.params.id, 10);
   const c = (await db.query('select *, fecha_liq_iso::text as fli from cortes where id_corte=$1', [idCorte])).rows[0];
   if (!c) return res.status(404).json({ error: 'no_existe' });
+  if (c.estado === 'Rechazado') return res.status(409).json({ error: 'corte_rechazado', mensaje: 'Corte rechazado: no se genera layout de dispersión. Usa el corte nuevo.' });
   const resultado = await construirLayoutPendientes(idCorte);
   if (!resultado) return res.status(404).json({ error: 'sin_pendientes', mensaje: 'No hay montos pendientes de cortes anteriores para las afiliaciones de este corte.' });
   if (resultado.bloqueado) return res.status(409).json({ error: 'bloqueado', detalle: resultado.detalle });
@@ -5278,8 +5414,10 @@ app.get('/api/cortes/:id/notificar/preview.html', auth, requiereRol('admin', 'te
 
 app.post('/api/cortes/:id/notificar', auth, requiereRol('admin', 'tesoreria', 'bancos'), async (req, res) => {
   if (!dbReady(res)) return;
-  if (!sesEnabled()) return res.status(503).json({ error: 'ses_no_configurado', mensaje: 'Configura AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY y AWS_REGION en el entorno del servidor.' });
   const idCorte = parseInt(req.params.id, 10);
+  const est = (await db.query('select estado from cortes where id_corte=$1', [idCorte])).rows[0];
+  if (est && est.estado === 'Rechazado') return res.status(409).json({ error: 'corte_rechazado', mensaje: 'Este corte fue rechazado: no se notifica. Usa el corte nuevo.' });
+  if (!sesEnabled()) return res.status(503).json({ error: 'ses_no_configurado', mensaje: 'Configura AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY y AWS_REGION en el entorno del servidor.' });
   const destRaw = (await db.query("select email,email_cifrado,nombre,nombre_cifrado,tipo from destinatarios where activo=true order by email")).rows;
   if (!destRaw.length) return res.status(400).json({ error: 'sin_destinatarios', mensaje: 'Agrega al menos un destinatario activo en Sistema → Destinatarios.' });
   const dest = destRaw.map(d => ({
@@ -5300,6 +5438,8 @@ app.post('/api/cortes/:id/notificar', auth, requiereRol('admin', 'tesoreria', 'b
     const { subject, html } = await armarInformeHTML(idCorte, { logoSrc: 'cid:polipay-logo' });
     const attachments = await armarAdjuntosCorte(idCorte);
     const messageId = await sendSES({ to, cc, bcc, subject, html, attachments, inlineImages });
+    // Se guarda el PRIMER correo de notificación del corte: si luego se rechaza, el aviso de rechazo va como respuesta en ese mismo hilo.
+    await db.query('update cortes set notif_message_id=coalesce(notif_message_id,$1), notif_subject=coalesce(notif_subject,$2), notif_at=coalesce(notif_at,now()) where id_corte=$3', [String(messageId), subject, idCorte]).catch(() => { /* columnas nuevas: nunca tumban el envío */ });
     await bit(req, 'notificar', `corte #${idCorte} enviado (to:${to.length}, cc:${cc.length}, bcc:${bcc.length}, msg ${messageId})`);
     res.json({ ok: true, enviados: dest.length, to: to.length, cc: cc.length, bcc: bcc.length, messageId });
   } catch (e) {
