@@ -2631,7 +2631,8 @@ function enviarXLSX(res, filename, buffer) {
   res.send(buffer);
 }
 // Órdenes SPEI de una fila del corte (grupo + afiliación). Sin reparto: una orden por bloque a la cuenta del grupo, como siempre. Con reparto por
-// comercio (algún comercio con CLABE propia): una orden por cada parte con su CLABE, su banco y su beneficiario; el concepto es el mismo del grupo.
+// comercio (algún comercio con CLABE propia): una orden por cada parte con su CLABE y su banco; en "Nombre del beneficiario" va el NOMBRE DEL COMERCIO (no la razón
+// social); el concepto es el mismo del grupo.
 function ordenesDeFila(x, { prefijo = '', soloNoDispersado = false } = {}) {
   const dom = [], amex = [];
   const concDom = prefijo + x.concepto, concAmex = prefijo + `DISPERSION ${E.ult3(x.afil)}CPPXAMEX00${x.id_grupo}`;
@@ -2639,7 +2640,7 @@ function ordenesDeFila(x, { prefijo = '', soloNoDispersado = false } = {}) {
   const quiereDom = !soloNoDispersado || !x.dispersado_dom, quiereAmex = !soloNoDispersado || !x.dispersado_amex;
   if (rep && Array.isArray(rep.partes)) {
     for (const p of rep.partes) {
-      const base = { clabe: p.clabe, cod: p.codigo_banco, benef: p.beneficiario, razon: p.es_resto ? x.razon : (p.beneficiario || p.comercio), afil: x.afil, comercio: p.es_resto ? null : p.comercio };
+      const base = { clabe: p.clabe, cod: p.codigo_banco, benef: p.beneficiario, razon: p.es_resto ? x.razon : p.comercio, afil: x.afil, comercio: p.es_resto ? null : p.comercio };
       if (quiereDom && Math.abs(p.disp_dom) > 0.005) dom.push({ ...base, concepto: concDom, cant: E.round2(p.disp_dom) });
       if (quiereAmex && Math.abs(p.disp_amex) > 0.005) amex.push({ ...base, concepto: concAmex, cant: E.round2(p.disp_amex) });
     }
