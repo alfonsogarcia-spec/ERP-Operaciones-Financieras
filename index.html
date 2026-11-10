@@ -1706,19 +1706,19 @@ function openIngesta(){
   const ta=el('textarea',{style:'min-height:150px',placeholder:'fecha,hora,cliente,...'});
   body.append(zf,info,el('label',{class:'field'},'Modo de carga',modo),el('label',{class:'field'},'…o pega CSV',ta));
   const out=el('div',{});body.append(out);
-  // Candado: el servidor rechaza el archivo si la columna "referencia" trae duplicados (en el archivo o ya cargados).
+  // Candado: el servidor rechaza el archivo si una transacción repite referencia Y autorización (en el archivo o ya cargadas). Misma referencia con otra autorización, o al revés, sí pasa.
   const mostrarDuplicados=d=>{
     out.innerHTML='';
     out.append(el('div',{class:'banner err'},'⛔ '+d.mensaje));
     const ea=d.en_archivo||{referencias:0,ejemplos:[]}, yc=d.ya_cargadas||{referencias:0,ejemplos:[]};
     const lim=(n,l)=>n>l?` (se muestran las primeras ${l})`:'';
     if(ea.referencias){
-      out.append(el('h4',{style:'margin:12px 0 6px'},`Repetidas dentro del archivo: ${ea.referencias}${lim(ea.referencias,ea.ejemplos.length)}`));
-      out.append(tableWrap(['Referencia',{t:'Veces'},'Filas del archivo'],ea.ejemplos.map(x=>[`<span class="mono">${esc(x.referencia)}</span>`,{num:String(x.veces)},esc(x.filas.map(f=>f.fila).join(', ')+(x.veces>x.filas.length?'…':''))])));
+      out.append(el('h4',{style:'margin:12px 0 6px'},`Referencia y autorización repetidas dentro del archivo: ${ea.referencias}${lim(ea.referencias,ea.ejemplos.length)}`));
+      out.append(tableWrap(['Referencia','Autorización',{t:'Veces'},'Filas del archivo'],ea.ejemplos.map(x=>[`<span class="mono">${esc(x.referencia)}</span>`,x.autorizacion?`<span class="mono">${esc(x.autorizacion)}</span>`:'<span class="muted">(vacía)</span>',{num:String(x.veces)},esc(x.filas.map(f=>f.fila).join(', ')+(x.veces>x.filas.length?'…':''))])));
     }
     if(yc.referencias){
-      out.append(el('h4',{style:'margin:12px 0 6px'},`Ya cargadas en el sistema: ${yc.referencias}${lim(yc.referencias,yc.ejemplos.length)}`));
-      out.append(tableWrap(['Referencia','Fila del archivo','Ya existe en'],yc.ejemplos.map(x=>[`<span class="mono">${esc(x.referencia)}</span>`,esc(String(x.filas[0].fila)),esc((x.archivo||'—')+(x.cargado?' · '+String(x.cargado).slice(0,10):''))])));
+      out.append(el('h4',{style:'margin:12px 0 6px'},`Referencia y autorización ya cargadas en el sistema: ${yc.referencias}${lim(yc.referencias,yc.ejemplos.length)}`));
+      out.append(tableWrap(['Referencia','Autorización','Fila del archivo','Ya existe en'],yc.ejemplos.map(x=>[`<span class="mono">${esc(x.referencia)}</span>`,x.autorizacion?`<span class="mono">${esc(x.autorizacion)}</span>`:'<span class="muted">(vacía)</span>',esc(String(x.filas[0].fila)),esc((x.archivo||'—')+(x.cargado?' · '+String(x.cargado).slice(0,10):''))])));
     }
     out.scrollIntoView({behavior:'smooth',block:'nearest'});
   };
@@ -1727,7 +1727,7 @@ function openIngesta(){
     const fd=new FormData();fd.append('modo',modo.value);
     if(file.files[0])fd.append('archivo',file.files[0]);else if(ta.value.trim())fd.append('csv',ta.value.trim());else{toast('Sube un archivo o pega CSV','err');return;}
     try{const res=await withBusy('Procesando en el servidor…',()=>api('POST','/api/transacciones/ingesta',fd));closeModal();render();toast(`Cargadas ${res.validas} · ${res.invalidas} inválidas · ${mxn(res.monto)}`,res.invalidas?'':'ok');}
-    catch(e){if(e.data&&e.data.error==='referencias_duplicadas'){mostrarDuplicados(e.data);toast('Archivo bloqueado: hay referencias duplicadas','err');}else toast('Error: '+errMsg(e),'err');}
+    catch(e){if(e.data&&e.data.error==='referencias_duplicadas'){mostrarDuplicados(e.data);toast('Archivo bloqueado: hay transacciones repetidas (misma referencia y autorización)','err');}else toast('Error: '+errMsg(e),'err');}
   }},'Procesar'));
   modal('Ingesta de transacciones',body,foot,true);
 }

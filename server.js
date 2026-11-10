@@ -943,24 +943,33 @@ function extraerAntifraude(o) {
    Las filas sin referencia no cuentan (no hay con qué compararlas). Se compara sin espacios ni mayúsculas. */
 const REF_DUP_EJEMPLOS = 100;
 async function referenciasDuplicadas(filas, modo) {
+  // Una transacción se repite SOLO si coinciden referencia Y autorización (sin importar mayúsculas ni espacios de más).
+  // Misma referencia con otra autorización, o misma autorización con otra referencia, NO es repetida. Sin referencia no se compara.
   const norm = r => String(r == null ? '' : r).trim().toUpperCase();
-  const vistas = new Map();
-  filas.forEach((f, i) => { const r = norm(f.referencia); if (!r) return; if (!vistas.has(r)) vistas.set(r, []); vistas.get(r).push(i); });
-  const enArchivo = [...vistas.entries()].filter(([, v]) => v.length > 1);
+  const SEP = '\u0001';
+  const vistas = new Map();   // "REF␁AUT" → { ref, aut, filas: [índices] }
+  filas.forEach((f, i) => {
+    const r = norm(f.referencia); if (!r) return;
+    const a = norm(f.autorizacion), k = r + SEP + a;
+    if (!vistas.has(k)) vistas.set(k, { ref: r, aut: a, filas: [] });
+    vistas.get(k).filas.push(i);
+  });
+  const enArchivo = [...vistas.values()].filter(v => v.filas.length > 1);
   let yaCargadas = [];
   if (modo !== 'replace' && vistas.size) {
+    const pares = [...vistas.values()];
     yaCargadas = (await db.query(
-      `select upper(btrim(t.referencia)) as ref, count(*)::int as veces, max(t.archivo_origen) as archivo, max(t.ingesta_fecha)::text as cargado
-         from transacciones t join unnest($1::text[]) u(r) on upper(btrim(t.referencia)) = u.r
-        group by 1 order by 1`, [[...vistas.keys()]])).rows;
+      `select upper(btrim(t.referencia)) as ref, upper(btrim(coalesce(t.autorizacion, ''))) as aut, count(*)::int as veces, max(t.archivo_origen) as archivo, max(t.ingesta_fecha)::text as cargado
+         from transacciones t join unnest($1::text[], $2::text[]) u(r, a) on upper(btrim(t.referencia)) = u.r and upper(btrim(coalesce(t.autorizacion, ''))) = u.a
+        group by 1, 2 order by 1, 2`, [pares.map(v => v.ref), pares.map(v => v.aut)])).rows;
   }
   if (!enArchivo.length && !yaCargadas.length) return null;
   const fila = i => ({ fila: i + 2, fecha: filas[i].fecha, monto: filas[i].monto, estatus: filas[i].estatus });
   return {
-    en_archivo: { referencias: enArchivo.length, filas_repetidas: enArchivo.reduce((n, [, v]) => n + v.length, 0),
-      ejemplos: enArchivo.slice(0, REF_DUP_EJEMPLOS).map(([ref, v]) => ({ referencia: ref, veces: v.length, filas: v.slice(0, 6).map(fila) })) },
+    en_archivo: { referencias: enArchivo.length, filas_repetidas: enArchivo.reduce((n, v) => n + v.filas.length, 0),
+      ejemplos: enArchivo.slice(0, REF_DUP_EJEMPLOS).map(v => ({ referencia: v.ref, autorizacion: v.aut, veces: v.filas.length, filas: v.filas.slice(0, 6).map(fila) })) },
     ya_cargadas: { referencias: yaCargadas.length,
-      ejemplos: yaCargadas.slice(0, REF_DUP_EJEMPLOS).map(r => ({ referencia: r.ref, veces: r.veces, archivo: r.archivo || '—', cargado: r.cargado || null, filas: [fila(vistas.get(r.ref)[0])] })) },
+      ejemplos: yaCargadas.slice(0, REF_DUP_EJEMPLOS).map(r => ({ referencia: r.ref, autorizacion: r.aut, veces: r.veces, archivo: r.archivo || '—', cargado: r.cargado || null, filas: [fila(vistas.get(r.ref + SEP + r.aut).filas[0])] })) },
   };
 }
 app.post('/api/transacciones/ingesta', auth, requiereRol('admin', 'operador'), upload.single('archivo'), validaArchivo, async (req, res) => {
@@ -991,10 +1000,10 @@ app.post('/api/transacciones/ingesta', auth, requiereRol('admin', 'operador'), u
   const dup = await referenciasDuplicadas(filas, modo);
   if (dup) {
     const nombreDup = req.file ? (req.file.originalname || '') : '(pegado)';
-    await bit(req, 'ingesta_bloqueada', `referencias duplicadas: ${dup.en_archivo.referencias} repetidas en el archivo, ${dup.ya_cargadas.referencias} ya cargadas · archivo ${nombreDup}`, { success: false });
+    await bit(req, 'ingesta_bloqueada', `referencia+autorización duplicadas: ${dup.en_archivo.referencias} repetidas en el archivo, ${dup.ya_cargadas.referencias} ya cargadas · archivo ${nombreDup}`, { success: false });
     const partes = [];
-    if (dup.en_archivo.referencias) partes.push(`${dup.en_archivo.referencias} referencia(s) repetida(s) dentro del archivo`);
-    if (dup.ya_cargadas.referencias) partes.push(`${dup.ya_cargadas.referencias} referencia(s) que ya están cargadas en el sistema`);
+    if (dup.en_archivo.referencias) partes.push(`${dup.en_archivo.referencias} transacción(es) con la misma referencia y autorización repetida(s) dentro del archivo`);
+    if (dup.ya_cargadas.referencias) partes.push(`${dup.ya_cargadas.referencias} transacción(es) con la misma referencia y autorización que ya están cargadas en el sistema`);
     return res.status(409).json({ error: 'referencias_duplicadas', mensaje: `El archivo NO se cargó: ${partes.join(' y ')}. Corrígelo y vuelve a subirlo.`, ...dup });
   }
   if (modo === 'replace') await db.query('delete from transacciones');
