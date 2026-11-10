@@ -576,6 +576,20 @@
     .fd-ico{display:inline-flex;color:var(--muted);flex:none}
     .fd-x{border:0;background:transparent;color:var(--muted);font-size:var(--fs-lg);line-height:1;padding:0 10px 0 2px;cursor:pointer}
     .fd-x:hover{color:var(--ink)}
+    /* Desplegable de las casillas de selección (select): reemplaza la lista nativa del navegador; el campo cerrado no cambia. */
+    .sel-pop{position:fixed;z-index:3600;display:flex;flex-direction:column;gap:6px;padding:var(--sp-2);max-width:calc(100vw - 16px);background:var(--panel-strong);border:1px solid var(--glass-border);border-radius:var(--radius);box-shadow:var(--shadow-lg);backdrop-filter:blur(var(--blur)) saturate(160%);-webkit-backdrop-filter:blur(var(--blur)) saturate(160%);outline:none;animation:selpop var(--dur-fast,.14s) ease-out}
+    @keyframes selpop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+    @media(prefers-reduced-motion:reduce){.sel-pop{animation:none}}
+    .sel-pop .sel-bus{width:100%;padding:8px 10px;font-size:var(--fs-sm)}
+    .sel-list{display:flex;flex-direction:column;gap:2px;overflow-y:auto;max-height:min(300px,46vh);overscroll-behavior:contain;scrollbar-width:thin}
+    .sel-g{padding:8px 10px 3px;font-size:var(--fs-xs);font-weight:var(--fw-bold);letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+    .sel-op{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;text-align:left;padding:8px 10px;border:0;border-radius:var(--radius-xs);background:transparent;color:var(--ink);font:var(--fw-regular) var(--fs-md) var(--font);cursor:pointer;overflow-wrap:anywhere}
+    .sel-op:hover,.sel-op.act{background:var(--accent-soft)}
+    .sel-op.on{color:var(--accent-ink);font-weight:var(--fw-semibold)}
+    .sel-op.on::after{content:'✓';flex:none;color:var(--accent-ink);font-weight:var(--fw-bold)}
+    .sel-op.vacio:not(.on){color:var(--muted)}
+    .sel-op[disabled]{opacity:.45;cursor:not-allowed}
+    .sel-nada{padding:10px;color:var(--muted);font-size:var(--fs-sm)}
     .fd-pop{position:fixed;z-index:3500;display:flex;max-width:calc(100vw - 16px);background:var(--panel-strong);border:1px solid var(--glass-border);border-radius:var(--radius);box-shadow:var(--shadow-lg);backdrop-filter:blur(var(--blur)) saturate(160%);-webkit-backdrop-filter:blur(var(--blur)) saturate(160%);overflow:hidden}
     .fd-pre{display:flex;flex-direction:column;gap:2px;min-width:164px;padding:var(--sp-2);border-right:1px solid var(--line)}
     .fd-item{display:block;width:100%;text-align:left;padding:7px 10px;border:0;border-radius:var(--radius-xs);background:transparent;color:var(--ink);font:var(--fw-regular) var(--fs-md) var(--font);cursor:pointer}
@@ -955,6 +969,97 @@ document.addEventListener('keydown',e=>{
   const n=e.target;if(!n||n!==document.activeElement)return;
   if(n.matches&&(n.matches('[role="button"]:not(button):not(input)')||n.matches('tr[tabindex]'))){e.preventDefault();n.click();}
 });
+/* ---------- Casillas de selección (select): desplegable propio ----------
+   El <select> sigue siendo la fuente de verdad (valor, opciones, eventos, deshabilitado, ancho): solo se cambia la LISTA que se despliega, que antes
+   era la nativa del navegador. Búsqueda si hay más de 8 opciones, teclado completo (↑ ↓ Inicio Fin Enter Esc y escribir para saltar), grupos
+   (optgroup) y abre hacia arriba si abajo no cabe. Excluidos: select múltiples, con size>1 o con data-nativo. */
+(function(){
+  let ab=null;                                            // {sel,pop,items,act,buscar}
+  const elegible=s=>s&&s.tagName==='SELECT'&&!s.multiple&&!(s.size>1)&&!s.disabled&&!s.hasAttribute('data-nativo');
+  function cerrar(devolverFoco){
+    if(!ab)return;const {sel,pop}=ab;ab=null;
+    document.removeEventListener('pointerdown',alFuera,true);document.removeEventListener('keydown',alTeclado,true);
+    window.removeEventListener('resize',cerrarSimple);window.removeEventListener('scroll',alScroll,true);
+    pop.remove();sel.setAttribute('aria-expanded','false');
+    if(devolverFoco){try{sel.focus({preventScroll:true});}catch(e){}}
+  }
+  const cerrarSimple=()=>cerrar(false);
+  function alFuera(e){if(ab&&!ab.pop.contains(e.target)&&e.target!==ab.sel)cerrar(false);}
+  function alScroll(e){if(ab&&!ab.pop.contains(e.target))cerrar(false);}
+  function elegir(op){
+    const sel=ab.sel;
+    if(sel.selectedIndex!==op.index){sel.selectedIndex=op.index;sel.dispatchEvent(new Event('input',{bubbles:true}));sel.dispatchEvent(new Event('change',{bubbles:true}));}
+    cerrar(true);
+  }
+  function marcar(i,desplazar){
+    if(!ab)return;const it=ab.items;if(!it.length)return;
+    ab.act=Math.max(0,Math.min(it.length-1,i));
+    it.forEach((x,k)=>x.btn.classList.toggle('act',k===ab.act));
+    if(desplazar!==false)it[ab.act].btn.scrollIntoView({block:'nearest'});
+  }
+  function alTeclado(e){
+    if(!ab)return;const k=e.key,it=ab.items;
+    if(k==='Escape'){e.preventDefault();e.stopPropagation();cerrar(true);return;}
+    if(k==='Tab'){cerrar(false);return;}
+    if(k==='ArrowDown'){e.preventDefault();marcar(ab.act+1);}
+    else if(k==='ArrowUp'){e.preventDefault();marcar(ab.act-1);}
+    else if(k==='Home'){e.preventDefault();marcar(0);}
+    else if(k==='End'){e.preventDefault();marcar(it.length-1);}
+    else if(k==='Enter'){e.preventDefault();e.stopPropagation();if(it[ab.act])elegir(it[ab.act].op);}
+    else if(!ab.buscar&&k.length===1&&!e.ctrlKey&&!e.metaKey&&!e.altKey){            // sin buscador: escribir salta a la opción que empieza así
+      ab.tipo=(ab.tipo||'')+k.toLowerCase();clearTimeout(ab.tt);ab.tt=setTimeout(()=>{if(ab)ab.tipo='';},700);
+      const j=it.findIndex(x=>x.txt.toLowerCase().startsWith(ab.tipo));if(j>=0)marcar(j);
+    }
+  }
+  function abrir(sel){
+    if(!elegible(sel))return;cerrar(false);
+    const lista=[];                                       // opciones y encabezados de grupo, en orden
+    const agrega=(op,grupo)=>{if(op.hidden)return;lista.push({op,txt:(op.label||op.textContent||'').trim(),grupo});};
+    [...sel.children].forEach(h=>{
+      if(h.tagName==='OPTGROUP'){if(h.hidden)return;lista.push({enc:h.label||''});[...h.children].forEach(o=>{if(o.tagName==='OPTION')agrega(o,h.label);});}
+      else if(h.tagName==='OPTION')agrega(h);
+    });
+    const nOps=lista.filter(x=>x.op).length,buscar=nOps>8;
+    const pop=document.createElement('div');pop.className='sel-pop';pop.setAttribute('role','presentation');pop.tabIndex=-1;
+    const r=sel.getBoundingClientRect();pop.style.minWidth=Math.max(r.width,180)+'px';
+    let bus=null;
+    if(buscar){bus=document.createElement('input');bus.type='search';bus.className='sel-bus';bus.placeholder='Buscar…';bus.setAttribute('aria-label','Buscar en la lista');bus.autocomplete='off';pop.append(bus);}
+    const cont=document.createElement('div');cont.className='sel-list';cont.setAttribute('role','listbox');pop.append(cont);
+    const items=[];
+    const pinta=filtro=>{
+      cont.innerHTML='';items.length=0;const f=(filtro||'').trim().toLowerCase();let enc=null,hay=false;
+      lista.forEach(x=>{
+        if(x.enc!==undefined){enc=x.enc;return;}
+        if(f&&!x.txt.toLowerCase().includes(f))return;
+        if(enc!==null&&x.grupo===enc){const g=document.createElement('div');g.className='sel-g';g.textContent=enc;cont.append(g);enc=null;}
+        const b=document.createElement('button');b.type='button';b.tabIndex=-1;b.setAttribute('role','option');
+        b.className='sel-op'+(x.op.selected?' on':'')+(x.op.value===''?' vacio':'');b.textContent=x.txt||'—';b.setAttribute('aria-selected',x.op.selected?'true':'false');
+        if(x.op.disabled)b.disabled=true;
+        b.addEventListener('mouseenter',()=>{const i=items.findIndex(y=>y.btn===b);if(i>=0)marcar(i,false);});
+        b.addEventListener('click',()=>{if(!x.op.disabled)elegir(x.op);});
+        cont.append(b);items.push({btn:b,op:x.op,txt:x.txt});hay=true;
+      });
+      if(!hay){const n=document.createElement('div');n.className='sel-nada';n.textContent='Sin coincidencias';cont.append(n);}
+    };
+    pinta('');
+    document.body.append(pop);
+    ab={sel,pop,items,act:0,buscar:!!bus};
+    sel.setAttribute('aria-expanded','true');
+    // posición: debajo del campo; si no cabe y arriba hay más espacio, hacia arriba
+    const ph=Math.min(pop.offsetHeight,360),abajo=window.innerHeight-r.bottom-8,arriba=r.top-8;
+    const sube=abajo<Math.min(ph,220)&&arriba>abajo;
+    pop.style.maxHeight=Math.max(120,(sube?arriba:abajo))+'px';
+    const alto=pop.offsetHeight;
+    pop.style.top=(sube?Math.max(8,r.top-alto-6):r.bottom+6)+'px';
+    pop.style.left=Math.max(8,Math.min(r.left,window.innerWidth-pop.offsetWidth-8))+'px';
+    const i0=items.findIndex(x=>x.op.selected);marcar(i0>=0?i0:0);
+    document.addEventListener('pointerdown',alFuera,true);document.addEventListener('keydown',alTeclado,true);
+    window.addEventListener('resize',cerrarSimple);window.addEventListener('scroll',alScroll,true);
+    if(bus){bus.addEventListener('input',()=>{pinta(bus.value);marcar(0,false);});bus.focus({preventScroll:true});}else pop.focus({preventScroll:true});
+  }
+  document.addEventListener('mousedown',e=>{const s=e.target.closest&&e.target.closest('select');if(elegible(s)&&e.button===0){e.preventDefault();try{s.focus({preventScroll:true});}catch(_e){}ab&&ab.sel===s?cerrar(false):abrir(s);}},true);
+  document.addEventListener('keydown',e=>{const s=e.target;if(!ab&&elegible(s)&&['Enter',' ','ArrowDown','ArrowUp'].includes(e.key)&&!e.altKey&&!e.ctrlKey&&!e.metaKey){e.preventDefault();abrir(s);}},true);
+})();
 /* ---------- Diálogos accesibles: modal, confirmar(), pedir() ----------
    role=dialog + aria-modal · Escape cierra · Tab queda dentro · el foco vuelve a quien abrió. */
 const FOCUSABLE='a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
@@ -971,7 +1076,7 @@ function closeModal(){_ovClose('#ov');}
 $('#ov').addEventListener('click',e=>{if(e.target.id==='ov')closeModal();});
 $('#ovc').addEventListener('click',e=>{if(e.target.id==='ovc'&&e.currentTarget._cancel)e.currentTarget._cancel();});
 document.addEventListener('keydown',e=>{
-  if(document.querySelector('.fd-pop'))return;   // con el calendario de fechas abierto, Escape y Tab los maneja él
+  if(document.querySelector('.fd-pop,.sel-pop'))return;   // con el calendario de fechas o una lista desplegada abierta, Escape y Tab los maneja ella
   const top=['#ovc','#ov'].map(s=>$(s)).find(o=>o&&o.classList.contains('show'));
   if(!top)return;
   if(e.key==='Escape'){e.preventDefault();if(top.id==='ovc'){top._cancel&&top._cancel();}else closeModal();return;}
@@ -1435,76 +1540,55 @@ function setView(v,node){v.innerHTML='';v.append(node);}
 /* ============================================================================
    VISTAS
    ========================================================================= */
-/* ---------- Datos del negocio (Panel): comercios, volumen, canal, contracargos, giros y tarjetas ---------- */
-function panelNegocio(grupos){
-  const N=panelNegocio._f||(panelNegocio._f={desde:'',hasta:'',grupo:''});
-  const hoy=hoyMx();
-  const menos=(iso,d)=>{const t=new Date(iso+'T00:00:00Z');t.setUTCDate(t.getUTCDate()-d);return t.toISOString().slice(0,10);};
+/* ---------- Datos del negocio: KPIs del MISMO Resumen del periodo (mismos filtros de fechas, grupo y afiliación) ---------- */
+function kpisNegocio(ng){
   const pc=n=>Number(n||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2})+'%';
-  const mes=m=>{const [y,mo]=String(m).split('-');return ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'][(+mo||1)-1]+' '+y;};
-  const inD=el('input',{id:'negDesde',type:'date',value:N.desde||menos(hoy,364)}),inH=el('input',{id:'negHasta',type:'date',value:N.hasta||hoy});
-  const selG=el('select',{id:'negGrupo'},el('option',{value:''},'Todos los grupos'),...grupos.map(g=>el('option',{value:String(g.id)},g.nombre)));selG.value=N.grupo||'';
-  const salida=el('div',{'aria-live':'polite'});
-  const q=()=>new URLSearchParams({desde:inD.value,hasta:inH.value,grupo:selG.value}).toString();
-  const validar=()=>{if(!inD.value||!inH.value){toast('Elige las fechas del periodo','err');return false;}if(inD.value>inH.value){toast('La fecha "desde" no puede ser posterior a "hasta"','err');return false;}return true;};
-  const pintar=d=>{
-    salida.innerHTML='';
-    const c=d.comercios,vo=d.volumen,cc=d.contracargos;
-    salida.append(cards([
-      ['Comercios activos',String(c.activos_30_dias),'con ventas en los últimos 30 días · '+c.activos_en_periodo+' en el periodo · '+c.historicos+' en el histórico'],
-      ['Volumen del periodo',mxn(vo.monto),vo.n_trx.toLocaleString('es-MX')+' transacciones · ticket '+mxn(vo.ticket_promedio)],
-      ['Últimos 12 meses',mxn(vo.ultimos_12_meses.monto),vo.ultimos_12_meses.n.toLocaleString('es-MX')+' transacciones'],
-      ['Tasa de contracargos',pc(cc.tasa_pct_monto),cc.n+' contracargos · '+mxn(cc.monto)+' · '+pc(cc.tasa_pct_trx)+' de las transacciones'],
-    ]));
-    const dosCol=el('div',{class:'grid2'});
-    const p1=el('div',{class:'panel'});p1.append(el('h3',{},'Comercios nuevos por año'));
-    p1.append(tableWrap(['Año de su primera venta',{t:'Comercios'}],c.nuevos_por_anio.map(x=>[String(x.anio)+(x.base_inicial?' <span class="muted" title="Año en que empieza el histórico del sistema: es la base inicial, no son altas">(base inicial)</span>':''),{num:String(x.n)}]),{empty:'Sin datos.'}));
-    p1.append(el('div',{class:'muted',style:'margin-top:8px'},c.nuevos_ultimos_12_meses==null?'Aún no hay 12 meses de historial para estimar cuántos comercios suma por año. La meta de altas es una proyección del negocio, no un dato del sistema.':'En los últimos 12 meses se sumaron '+c.nuevos_ultimos_12_meses+' comercios: ese es el ritmo anual que muestra el histórico. La meta de altas es una proyección del negocio.'));
-    const p2=el('div',{class:'panel'});p2.append(el('h3',{},'Volumen anual'));
-    p2.append(tableWrap(['Año',{t:'Monto'},{t:'Trx'}],vo.anual.map(x=>[String(x.anio)+(x.parcial?' <span class="muted" title="El periodo no cubre el año completo">(parcial)</span>':''),{num:mxn(x.monto)},{num:x.n.toLocaleString('es-MX')}]),{empty:'Sin datos.'}));
-    dosCol.append(p1,p2);salida.append(dosCol);
-    const pm=el('div',{class:'panel'});pm.append(el('h3',{},'Volumen mensual'));
-    const tasaDe=new Map(cc.mensual.map(x=>[x.mes,x]));
-    pm.append(tableWrap(['Mes',{t:'Monto procesado'},{t:'Transacciones'},{t:'Comercios con ventas'},{t:'Contracargos'}],vo.mensual.map(x=>{const t=tasaDe.get(x.mes);return [mes(x.mes),{num:mxn(x.monto)},{num:x.n.toLocaleString('es-MX')},{num:String(x.comercios)},{num:t?t.n+' · '+pc(t.tasa_pct):'—'}];}),{empty:'Sin transacciones aprobadas en el periodo.'}));
-    salida.append(pm);
-    const pt=el('div',{class:'panel'});pt.append(el('h3',{},'Tarjetas que pagan'));
-    pt.append(tableWrap(['Tipo',{t:'Monto'},{t:'% monto'},{t:'% trx'}],d.tarjetas.map(x=>[esc(x.etiqueta),{num:mxn(x.monto)},{num:pc(x.pct_monto)},{num:pc(x.pct_trx)}]),{empty:'Sin datos.'}));
-    const pk=el('div',{class:'panel'});pk.append(el('h3',{},'Canales'));
-    pk.append(tableWrap(['Canal',{t:'Monto'},{t:'% monto'},{t:'% trx'}],d.canales.agrupado.map(x=>[esc(x.etiqueta),{num:mxn(x.monto)},{num:pc(x.pct_monto)},{num:pc(x.pct_trx)}]),{empty:'Sin datos.'}));
-    pk.append(el('div',{class:'muted',style:'margin-top:8px'},d.canales.sin_clasificar_pct>0?pc(d.canales.sin_clasificar_pct)+' del monto no trae el modo de entrada (viene en la carga de antifraude), por eso no se puede clasificar como TPV o e-commerce. URL cuenta como e-commerce; chip, contactless y banda, como TPV.':'Se deduce del modo de entrada: URL es e-commerce; chip, contactless y banda, TPV.'));
-    salida.append(pt,pk);
-    const pg=el('div',{class:'panel'});pg.append(el('h3',{},'Giros principales (MCC)'));
-    const gl=[...d.giros.principales,...(d.giros.otros?[d.giros.otros]:[]),...(d.giros.sin_mcc?[d.giros.sin_mcc]:[])];
-    pg.append(tableWrap(['MCC','Giro',{t:'Monto'},{t:'% monto'},{t:'Comercios'}],gl.map(x=>[x.mcc?`<span class="mono">${esc(x.mcc)}</span>`:'',esc(x.giro||'—'),{num:mxn(x.monto)},{num:pc(x.pct_monto)},{num:String(x.comercios)}]),{empty:'Sin datos.'}));
-    pg.append(el('div',{class:'muted',style:'margin-top:8px'},'El MCC sale del catálogo de afiliaciones. La columna Comercios cuenta cada comercio por afiliación.'));
-    salida.append(pg);
+  const mesTxt=m=>{const [y,mo]=String(m).split('-');return ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'][(+mo||1)-1]+' '+y;};
+  if(!ng||ng._err)return [el('div',{class:'banner warn'},(ng&&ng._err&&ng._err.data&&ng._err.data.mensaje)||'No se pudieron calcular los datos del negocio.')];
+  const c=ng.comercios,vo=ng.volumen,cc=ng.contracargos;
+  const fila1=cards([
+    ['Comercios activos',String(c.activos_30_dias),'con ventas en los 30 días previos al fin del periodo · '+c.activos_en_periodo+' con ventas en el periodo'],
+    ['Últimos 12 meses',mxn(vo.ultimos_12_meses.monto),vo.ultimos_12_meses.n.toLocaleString('es-MX')+' transacciones · al '+fmtISO(ng.periodo.hasta)],
+    ['Tasa de contracargos',pc(cc.tasa_pct_monto),cc.n+' contracargos · '+mxn(cc.monto)+' · '+pc(cc.tasa_pct_trx)+' de las transacciones'],
+    ['Ticket promedio',mxn(vo.ticket_promedio),c.historicos+' comercios en el histórico'+(c.nuevos_ultimos_12_meses!=null?' · '+c.nuevos_ultimos_12_meses+' altas en 12 meses':'')],
+  ]);
+  // Tarjeta de "share": cada categoría con su porcentaje del monto.
+  const share=(titulo,lista,nota)=>{
+    const d=el('div',{class:'card'},el('div',{class:'label'},titulo));
+    if(!lista.length)d.append(el('div',{class:'hint'},'Sin datos en el periodo'));
+    lista.forEach(x=>d.append(el('div',{style:'display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0;border-top:0.5px solid var(--line,#e5e7eb)'},el('span',{style:'min-width:0;overflow-wrap:anywhere'},x.etiqueta),el('b',{style:'font-variant-numeric:tabular-nums;white-space:nowrap'},pc(x.pct_monto)))));
+    if(nota)d.append(el('div',{class:'hint',style:'margin-top:6px'},nota));
+    return d;
   };
-  const generar=async()=>{
-    if(!validar())return;N.desde=inD.value;N.hasta=inH.value;N.grupo=selG.value;
-    salida.innerHTML='';salida.append(el('div',{class:'muted'},'Calculando…'));
-    try{pintar(await withBusy('Calculando datos del negocio…',()=>api('GET','/api/dashboard/negocio?'+q())));}
-    catch(e){salida.innerHTML='';salida.append(el('div',{class:'banner err'},(e.data&&e.data.mensaje)||errMsg(e)));}
-  };
-  const barra=el('div',{style:'display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px'},
-    el('label',{class:'field',style:'margin:0'},'Desde (fecha de operación)',inD),el('label',{class:'field',style:'margin:0'},'Hasta',inH),
-    el('label',{class:'field',style:'margin:0;min-width:220px'},'Grupo de cliente',selG),
-    el('button',{class:'btn',onclick:generar},'Generar'),
-    el('button',{class:'btn secondary',onclick:async()=>{if(!validar())return;
-      try{await withBusy('Generando Excel…',()=>descargar('/api/dashboard/negocio.xlsx?'+q(),'datos_negocio_'+inD.value+'_a_'+inH.value+'.xlsx'));}
-      catch(e){toast((e.data&&e.data.mensaje)||errMsg(e),'err');}}},'⬇ Excel'));
-  const w=el('div',{style:'margin-top:22px'},el('h3',{style:'margin:0 0 4px;font-size:15px'},'Datos del negocio'),
-    el('div',{class:'muted',style:'margin:0 0 10px'},'Comercios activos, volumen mensual y anual, canales, contracargos, giros y tarjetas. Solo transacciones aprobadas, por fecha de operación. Por omisión, los últimos 12 meses.'),barra,salida);
-  salida.append(el('div',{class:'muted'},'Elige el periodo y presiona Generar.'));
-  if(N.desde)setTimeout(generar,0);   // si ya se había generado en esta sesión, se recalcula al volver al Panel
-  return w;
+  const giros=[...ng.giros.principales.slice(0,5).map(x=>({etiqueta:(x.mcc?x.mcc+' · ':'')+(x.giro||'—'),pct_monto:x.pct_monto})),
+    ...((ng.giros.principales.length>5||ng.giros.otros)?[{etiqueta:'Otros giros',pct_monto:r2c(ng.giros.principales.slice(5).reduce((s,x)=>s+x.pct_monto,0)+(ng.giros.otros?ng.giros.otros.pct_monto:0))}]:[]),
+    ...(ng.giros.sin_mcc?[{etiqueta:'Sin MCC en el catálogo',pct_monto:ng.giros.sin_mcc.pct_monto}]:[])];
+  const sinCanal=ng.canales.sin_clasificar_pct;
+  const fila2=el('div',{class:'cards'},
+    share('Tarjetas que pagan',ng.tarjetas),
+    share('Marcas',ng.marcas),
+    share('Canales',ng.canales.agrupado,sinCanal>0?pc(sinCanal)+' no trae modo de entrada (carga de antifraude)':''),
+    share('Giros principales (MCC)',giros));
+  // Desglose mensual, anual y altas por año: plegado para no alargar el Panel.
+  const det=el('details',{style:'margin:0 0 14px'});
+  det.append(el('summary',{style:'cursor:pointer;font-weight:600;padding:6px 0'},'Desglose: volumen mensual y anual · comercios nuevos por año'));
+  const tasaDe=new Map(cc.mensual.map(x=>[x.mes,x]));
+  det.append(el('div',{class:'panel',style:'margin-top:8px'},el('h3',{},'Volumen mensual'),tableWrap(['Mes',{t:'Monto procesado'},{t:'Transacciones'},{t:'Comercios con ventas'},{t:'Contracargos'}],vo.mensual.map(x=>{const t=tasaDe.get(x.mes);return [mesTxt(x.mes),{num:mxn(x.monto)},{num:x.n.toLocaleString('es-MX')},{num:String(x.comercios)},{num:t?t.n+' · '+pc(t.tasa_pct):'—'}];}),{empty:'Sin transacciones aprobadas en el periodo.'})));
+  const g2=el('div',{});
+  g2.append(el('div',{class:'panel',style:'margin-top:12px'},el('h3',{},'Volumen anual'),tableWrap(['Año',{t:'Monto'},{t:'Trx'}],vo.anual.map(x=>[String(x.anio)+(x.parcial?' <span class="muted" title="El periodo no cubre el año completo">(parcial)</span>':''),{num:mxn(x.monto)},{num:x.n.toLocaleString('es-MX')}]),{empty:'Sin datos.'})));
+  const pn=el('div',{class:'panel',style:'margin-top:12px'},el('h3',{},'Comercios nuevos por año'),tableWrap(['Año de su primera venta',{t:'Comercios'}],c.nuevos_por_anio.map(x=>[String(x.anio)+(x.base_inicial?' <span class="muted" title="Año en que empieza el histórico del sistema: es la base inicial, no son altas">(base inicial)</span>':''),{num:String(x.n)}]),{empty:'Sin datos.'}));
+  pn.append(el('div',{class:'muted',style:'margin-top:8px'},c.nuevos_ultimos_12_meses==null?'Aún no hay 12 meses de historial para estimar el ritmo de altas. La meta de altas es una proyección del negocio, no un dato del sistema.':'En los 12 meses previos al fin del periodo se sumaron '+c.nuevos_ultimos_12_meses+' comercios. La meta de altas es una proyección del negocio.'));
+  g2.append(pn);det.append(g2);
+  return [fila1,fila2,det];
 }
+const r2c=n=>Math.round((Number(n)||0)*100)/100;
 async function vDashboard(v){
   const hoy = new Date();
   const y = hoy.getFullYear(), mo = hoy.getMonth()+1;
   // Filtros del resumen (persisten mientras la sesión); '' = el servidor usa el mes en curso / todas las afiliaciones.
   const F = vDashboard._f || (vDashboard._f = {desde:'',hasta:'',afil:'',grupo:''});
   const qsF = new URLSearchParams({desde:F.desde,hasta:F.hasta,afiliacion:F.afil,grupo:F.grupo||''}).toString();
-  const [cortes,tx,cbsResp,refsResp,dashDisp,contab,alertasTrans,resumen]=await Promise.all([
+  const [cortes,tx,cbsResp,refsResp,dashDisp,contab,alertasTrans,resumen,negocio]=await Promise.all([
     api('GET','/api/cortes').catch(()=>[]),
     api('GET','/api/transacciones').catch(()=>({total:0,aprobadas:0,montoAprobado:0,items:[]})),
     api('GET','/api/disputa/chargebacks').catch(()=>({rows:[]})),
@@ -1513,6 +1597,7 @@ async function vDashboard(v){
     api('GET','/api/contabilidad/mes?y='+y+'&m='+mo).catch(()=>null),
     api('GET','/api/alertas/transaccionalidad').catch(()=>[]),
     api('GET','/api/dashboard/resumen?'+qsF).catch(e=>({_err:e})),
+    api('GET','/api/dashboard/negocio?'+qsF).catch(e=>({_err:e})),
   ]);
   // Los endpoints devuelven formatos distintos: chargebacks → {total,rows}; refunds → array.
   const cbs  = Array.isArray(cbsResp)  ? cbsResp  : (cbsResp?.rows  || []);
@@ -1551,7 +1636,14 @@ async function vDashboard(v){
       const d=inDesde.value||(rs&&rs.desde)||'',h=inHasta.value||(rs&&rs.hasta)||'';
       try{await withBusy('Generando reporte…',()=>descargar('/api/dashboard/reporte.xlsx?'+new URLSearchParams(q).toString(),'panel_indicadores_'+d+'_a_'+h+'_por_'+selAgr.value+'.xlsx'));}
       catch(e){toast([404,413].includes(e.status)?((e.data&&e.data.mensaje)||'Sin datos para esos filtros'):errMsg(e),'err');}
-    }},'⬇ Descargar reporte'));
+    }},'⬇ Descargar reporte'),
+    el('button',{class:'btn secondary',title:'Comercios, volumen mensual y anual, canales, marcas, contracargos y giros, con los filtros de arriba',onclick:async()=>{
+      if(inDesde.value&&inHasta.value&&inDesde.value>inHasta.value){toast('La fecha "desde" no puede ser posterior a "hasta"','err');return;}
+      const q={desde:inDesde.value,hasta:inHasta.value,afiliacion:selAf.value,grupo:selGr.value};
+      const d=inDesde.value||(rs&&rs.desde)||'',h=inHasta.value||(rs&&rs.hasta)||'';
+      try{await withBusy('Generando Excel…',()=>descargar('/api/dashboard/negocio.xlsx?'+new URLSearchParams(q).toString(),'datos_negocio_'+d+'_a_'+h+'.xlsx'));}
+      catch(e){toast((e.data&&e.data.mensaje)||errMsg(e),'err');}
+    }},'⬇ Datos del negocio'));
   v.append(el('h3',{style:'margin:0 0 10px;font-size:15px'},'Resumen del periodo'),barra);
   if(!rs){
     const msg=resumen&&resumen._err&&resumen._err.data&&resumen._err.data.mensaje;
@@ -1564,6 +1656,7 @@ async function vDashboard(v){
       ['IVA',mxn(rs.iva),'Sobre la comisión pactada'],
       ['Monto dispersado (neto)',mxn(rs.dispersado),'Monto − comisión − IVA − banca'],
     ]));
+    kpisNegocio(negocio).forEach(x=>v.append(x));   // datos del negocio: mismos filtros, dentro del mismo panel
     if(rs.afiliacion==='ninguna'||rs.grupo==='ninguno')v.append(el('div',{class:'banner warn',html:'Estas transacciones <b>no están ligadas al catálogo</b> '+(rs.afiliacion==='ninguna'?'(su afiliación no pertenece a ningún grupo)':'(su cliente no coincide con ningún grupo)')+': no tienen tasa pactada, por eso la comisión sale en $0. Para identificarlas, agrega la afiliación al grupo en Catálogos.'}));
   }
   // KPIs
@@ -1635,7 +1728,6 @@ async function vDashboard(v){
     }
   }
   gr2.append(pAler); v.append(gr2);
-  v.append(panelNegocio(rs?rs.opciones_grupos:[]));   // al final del Panel: es un reporte largo y no debe empujar los indicadores de arriba
 }
 
 /* ---------- INGESTA ---------- */

@@ -8,6 +8,14 @@ test('productoDe: débito, crédito, internacional y AMEX; lo demás queda sin c
   assert.equal(DN.productoDe('Internacional'), 'int'); assert.equal(DN.productoDe('Vale despensa'), 'otro'); assert.equal(DN.productoDe(''), 'otro');
 });
 
+test('marcaDe: unifica las escrituras de Visa, Mastercard, American Express y Carnet; lo vacío es "Sin marca"', () => {
+  for (const m of ['visa', 'VISA DEBITO', 'Visa']) assert.equal(DN.marcaDe(m), 'Visa', m);
+  for (const m of ['mastercard', 'Master Card', 'MC', 'MASTERCARD CREDITO']) assert.equal(DN.marcaDe(m), 'Mastercard', m);
+  for (const m of ['AMEX', 'American Express', 'americanexpress']) assert.equal(DN.marcaDe(m), 'American Express', m);
+  assert.equal(DN.marcaDe('CARNET'), 'Carnet'); assert.equal(DN.marcaDe(''), 'Sin marca'); assert.equal(DN.marcaDe(null), 'Sin marca');
+  assert.equal(DN.marcaDe('DISCOVER'), 'Discover');                  // otra marca se conserva, con mayúscula inicial
+});
+
 test('canalDe: URL es e-commerce, chip/contactless/banda es TPV, MANUAL aparte y vacío sin clasificar', () => {
   assert.equal(DN.canalDe('URL'), 'E-commerce'); assert.equal(DN.canalDe('ecommerce'), 'E-commerce'); assert.equal(DN.canalDe('Link de pago'), 'E-commerce');
   for (const m of ['CHIP', 'CONTACTLESS', 'BANDA', 'NFC', 'EMV']) assert.equal(DN.canalDe(m), 'TPV', m);
@@ -46,6 +54,7 @@ test('ensamblar: tasa de contracargos, ticket, nuevos por año con la base inici
     tot: { n: 30, monto: '4000', comercios: 5 }, u12: { n: 30, monto: '4000', comercios: 5 }, act30: 4, hist: { n: 6, primero: '2024-03-10' },
     nuevosR: [{ anio: 2024, n: 3 }, { anio: 2025, n: 2 }, { anio: 2026, n: 1 }], nuevos12: 2,
     prodR: [{ clave: 'TDC', monto: '3000', n: 20 }, { clave: 'TDD', monto: '1000', n: 10 }],
+    marcaR: [{ clave: 'VISA', monto: '2500', n: 20 }, { clave: 'Mastercard', monto: '1000', n: 8 }, { clave: '', monto: '500', n: 2 }],
     canalR: [{ clave: 'URL', monto: '1000', n: 5 }, { clave: 'CHIP', monto: '2000', n: 15 }, { clave: '', monto: '1000', n: 10 }],
     mccR: [{ mcc: 5812, giro: null, monto: '4000', n: 30, comercios: 5 }],
     ccR: [{ mes: '2026-10', n: 3, monto: '60' }],
@@ -57,6 +66,7 @@ test('ensamblar: tasa de contracargos, ticket, nuevos por año con la base inici
   assert.equal(d.comercios.nuevos_ultimos_12_meses, 2);
   assert.equal(d.canales.agrupado.find(c => c.clave === 'Sin clasificar').pct_monto, 25); assert.equal(d.canales.sin_clasificar_pct, 25);
   assert.equal(d.tarjetas[0].etiqueta, 'Crédito'); assert.equal(d.tarjetas[0].pct_monto, 75);
+  assert.deepEqual(d.marcas.map(m => m.etiqueta), ['Visa', 'Mastercard', 'Sin marca']); assert.equal(d.marcas[0].pct_monto, 62.5);
   assert.equal(d.volumen.ultimos_12_meses.desde, '2025-11-01');
   // sin 12 meses de historial no se inventa un ritmo
   const corto = DN.ensamblar({ ...r, hist: { n: 6, primero: '2026-03-01' } }, { desde: '2026-01-01', hasta: '2026-10-31' });

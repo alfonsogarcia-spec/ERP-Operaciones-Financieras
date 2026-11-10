@@ -3289,7 +3289,7 @@ app.get('/api/contable.xlsx', auth, async (req, res) => {
 // Registro contable (computeContable) para que las cifras cuadren con contabilidad.
 const DASH_MAX_TX = 200000;   // tope de transacciones por consulta: computeContable las carga en memoria
 // Filtros del Panel (fechas de liquidación, afiliación y grupo de cliente) → valores listos para consultar, o {error:{status,body}}.
-async function panelFiltros(q) {
+async function panelFiltros(q, opt = {}) {
   const fechaOk = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
   const hoy = hoyISOmx();
   const desde = fechaOk(q.desde) ? q.desde : hoy.slice(0, 8) + '01';
@@ -3307,40 +3307,45 @@ async function panelFiltros(q) {
   const cliente = sinGrupo ? NO_IDENT : (grupo ? nrm(grupo.nombre_cliente) : '');
   const vals = [desde, hasta];
   const extra = filtroTx(afil, cliente, vals);
-  const n = (await db.query("select count(*)::int n from transacciones where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'" + extra, vals)).rows[0].n;
+  const n = opt.sinTope ? 0 : (await db.query("select count(*)::int n from transacciones where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'" + extra, vals)).rows[0].n;   // los datos del negocio agregan en la base: no tienen ese tope
   if (n > DASH_MAX_TX) return { error: { status: 413, body: { error: 'periodo_muy_grande', total: n, maximo: DASH_MAX_TX, mensaje: `El periodo tiene ${n} transacciones y el máximo por consulta es ${DASH_MAX_TX}. Acota las fechas o elige una afiliación o un grupo.` } } };
   return { desde, hasta, afil, sinGrupo, grupo, cliente, grupos, afilGrupo };
 }
-// ===== DATOS DEL NEGOCIO (Panel): comercios activos, volumen mensual y anual, canal, contracargos, giros (MCC) y share por tipo de tarjeta =====
-// Por fecha de operación de las transacciones aprobadas. Periodo por omisión: los últimos 12 meses. Ver lib/datos-negocio.js.
-async function negocioParams(q) {
-  const fechaOk = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
-  const hasta = fechaOk(q.hasta) ? q.hasta : hoyISOmx();
-  const desde = fechaOk(q.desde) ? q.desde : DN.isoMenosDias(hasta, 364);
-  if (desde > hasta) return { error: { status: 400, body: { error: 'rango_invalido', mensaje: 'La fecha "desde" no puede ser posterior a "hasta".' } } };
-  if (DN.isoMenosDias(hasta, 366 * 6) > desde) return { error: { status: 400, body: { error: 'rango_muy_grande', mensaje: 'El periodo máximo es de 6 años.' } } };
-  const idg = String(q.grupo || '').replace(/\D/g, '');
-  let grupo = null;
-  if (idg) { grupo = (await getGrupos()).find(g => String(g.id_grupo) === idg); if (!grupo) return { error: { status: 400, body: { error: 'grupo_invalido', mensaje: 'El grupo de cliente no existe.' } } }; }
-  return { desde, hasta, grupo, cliente: grupo ? nrm(grupo.nombre_cliente) : '' };
+// ===== DATOS DEL NEGOCIO (Panel): KPIs dentro del mismo Resumen del periodo =====
+// Comercios activos, volumen mensual y anual, canal, marca, contracargos, giros (MCC) y share por tipo de tarjeta. Usan los MISMOS filtros del Resumen
+// (fechas de liquidación, grupo de cliente y afiliación) y la misma base, así que cuadran con "Monto transaccionado". Ver lib/datos-negocio.js.
+function filtroCC(afilFiltro, clienteFiltro, vals) {
+  let extra = '';
+  if (afilFiltro === NO_IDENT) extra += ' and not exists (select 1 from afil_grupo ag where ag.numero_afiliacion = contracargos.numero_afiliacion)';
+  else if (afilFiltro) { vals.push(afilFiltro); extra += ' and numero_afiliacion=$' + vals.length; }
+  if (clienteFiltro === NO_IDENT) extra += ' and not exists (select 1 from grupos g where lower(trim(g.nombre_cliente)) = lower(trim(contracargos.grupo_cliente)))';
+  else if (clienteFiltro) { vals.push(clienteFiltro); extra += ' and lower(trim(grupo_cliente))=$' + vals.length; }
+  return extra;
+}
+async function negocioDatos(q) {
+  const P = await panelFiltros(q, { sinTope: true });
+  if (P.error) return { error: P.error };
+  if (DN.isoMenosDias(P.hasta, 366 * 6) > P.desde) return { error: { status: 400, body: { error: 'rango_muy_grande', mensaje: 'El periodo máximo es de 6 años.' } } };
+  const vals = [], extra = filtroTx(P.afil, P.cliente, vals);
+  const valsCC = [P.desde, P.hasta], extraCC = filtroCC(P.afil, P.cliente, valsCC);
+  const d = await DN.datosNegocio(db, { desde: P.desde, hasta: P.hasta, extra, vals, extraCC, valsCC });
+  return { P, d: { ...d, grupo: P.grupo ? { id: P.grupo.id_grupo, nombre: P.grupo.nombre_cliente } : (P.sinGrupo ? 'ninguno' : null), afiliacion: P.afil === NO_IDENT ? 'ninguna' : (P.afil || null) } };
 }
 app.get('/api/dashboard/negocio', auth, async (req, res) => {
   if (!dbReady(res)) return;
-  const P = await negocioParams(req.query || {});
-  if (P.error) return res.status(P.error.status).json(P.error.body);
-  const d = await DN.datosNegocio(db, P);
-  res.json({ ...d, grupo: P.grupo ? { id: P.grupo.id_grupo, nombre: P.grupo.nombre_cliente } : null });
+  const r = await negocioDatos(req.query || {});
+  if (r.error) return res.status(r.error.status).json(r.error.body);
+  res.json(r.d);
 });
 app.get('/api/dashboard/negocio.xlsx', auth, async (req, res) => {
   if (!dbReady(res)) return;
-  const P = await negocioParams(req.query || {});
-  if (P.error) return res.status(P.error.status).json(P.error.body);
-  const d = await DN.datosNegocio(db, P);
-  const m = n => Number(n) || 0;
+  const r = await negocioDatos(req.query || {});
+  if (r.error) return res.status(r.error.status).json(r.error.body);
+  const { P, d } = r;
   const resumen = [
-    ['Datos del negocio'], [P.grupo ? 'Grupo: ' + P.grupo.nombre_cliente : 'Todos los grupos de cliente'], ['Periodo', `${d.periodo.desde} a ${d.periodo.hasta}`],
-    ['Base', 'Transacciones aprobadas, por fecha de operación. Contracargos por fecha del reporte en que se cargaron (sin cancelados).'], [],
-    ['Comercios'], ['Comercios activos (con ventas en los últimos 30 días al corte)', d.comercios.activos_30_dias], ['Comercios con ventas en el periodo', d.comercios.activos_en_periodo],
+    ['Datos del negocio'], [P.grupo ? 'Grupo: ' + P.grupo.nombre_cliente : (P.sinGrupo ? 'Clientes sin grupo en el catálogo' : 'Todos los grupos de cliente') + (P.afil ? ' · Afiliación: ' + (P.afil === NO_IDENT ? 'no identificada' : P.afil) : '')], ['Periodo (fecha de liquidación)', `${d.periodo.desde} a ${d.periodo.hasta}`],
+    ['Base', 'Transacciones aprobadas, por fecha de liquidación (la misma del Panel). Contracargos por fecha del reporte en que se cargaron (sin cancelados).'], [],
+    ['Comercios'], ['Comercios activos (con ventas en los 30 días previos al corte del periodo)', d.comercios.activos_30_dias], ['Comercios con ventas en el periodo', d.comercios.activos_en_periodo],
     ['Comercios en el histórico', d.comercios.historicos], ['Primer dato en el sistema', d.comercios.primer_dato || '—'],
     ['Altas en los últimos 12 meses (ritmo para proyectar el año)', d.comercios.nuevos_ultimos_12_meses == null ? 'Sin 12 meses de historial' : d.comercios.nuevos_ultimos_12_meses], [],
     ['Volumen'], ['Monto procesado en el periodo', d.volumen.monto], ['Transacciones aprobadas', d.volumen.n_trx], ['Ticket promedio', d.volumen.ticket_promedio],
@@ -3348,12 +3353,13 @@ app.get('/api/dashboard/negocio.xlsx', auth, async (req, res) => {
     ['Contracargos'], ['Contracargos del periodo (cantidad)', d.contracargos.n], ['Contracargos del periodo (monto)', d.contracargos.monto],
     ['Tasa de contracargos (monto contracargos / monto procesado, %)', d.contracargos.tasa_pct_monto], ['Tasa de contracargos (cantidad / transacciones, %)', d.contracargos.tasa_pct_trx],
   ];
+  const share = (tit, arr) => ({ name: tit, aoa: [[tit === 'Tarjetas' ? 'Tipo de tarjeta' : 'Marca', 'Monto', '% del monto', 'Transacciones', '% de transacciones'], ...arr.map(x => [x.etiqueta, x.monto, x.pct_monto, x.n, x.pct_trx])], cols: [{ wch: 22 }, { wch: 20 }, { wch: 14 }, { wch: 16 }, { wch: 20 }] });
   const sheets = [
     { name: 'Resumen', aoa: resumen, cols: [{ wch: 70 }, { wch: 22 }] },
     { name: 'Volumen mensual', aoa: [['Mes', 'Monto procesado', 'Transacciones', 'Comercios con ventas'], ...d.volumen.mensual.map(x => [x.mes, x.monto, x.n, x.comercios])], cols: [{ wch: 12 }, { wch: 20 }, { wch: 16 }, { wch: 20 }] },
     { name: 'Volumen anual', aoa: [['Año', 'Monto procesado', 'Transacciones', 'Cobertura'], ...d.volumen.anual.map(x => [x.anio, x.monto, x.n, x.parcial ? 'Año parcial dentro del periodo' : 'Año completo'])], cols: [{ wch: 10 }, { wch: 20 }, { wch: 16 }, { wch: 32 }] },
     { name: 'Comercios nuevos', aoa: [['Año de su primera venta', 'Comercios', 'Nota'], ...d.comercios.nuevos_por_anio.map(x => [x.anio, x.n, x.base_inicial ? 'Año en que empieza el histórico: es la base inicial, no son altas' : ''])], cols: [{ wch: 26 }, { wch: 14 }, { wch: 70 }] },
-    { name: 'Tarjetas', aoa: [['Tipo de tarjeta', 'Monto', '% del monto', 'Transacciones', '% de transacciones'], ...d.tarjetas.map(x => [x.etiqueta, x.monto, x.pct_monto, x.n, x.pct_trx])], cols: [{ wch: 22 }, { wch: 20 }, { wch: 14 }, { wch: 16 }, { wch: 20 }] },
+    share('Tarjetas', d.tarjetas), share('Marcas', d.marcas),
     { name: 'Canales', aoa: [['Canal', 'Monto', '% del monto', 'Transacciones', '% de transacciones'], ...d.canales.agrupado.map(x => [x.etiqueta, x.monto, x.pct_monto, x.n, x.pct_trx]), [], ['Detalle por modo de entrada'], ['Modo de entrada', 'Canal asignado', 'Monto', 'Transacciones'], ...d.canales.detalle.map(x => [x.modo, x.canal, x.monto, x.n])], cols: [{ wch: 30 }, { wch: 28 }, { wch: 20 }, { wch: 16 }, { wch: 20 }] },
     { name: 'Giros MCC', aoa: [['MCC', 'Giro', 'Monto', '% del monto', 'Transacciones', 'Comercios'], ...[...d.giros.principales, ...(d.giros.otros ? [d.giros.otros] : []), ...(d.giros.sin_mcc ? [d.giros.sin_mcc] : [])].map(x => [x.mcc || '', x.giro || '', x.monto, x.pct_monto, x.n, x.comercios])], cols: [{ wch: 8 }, { wch: 52 }, { wch: 20 }, { wch: 14 }, { wch: 16 }, { wch: 12 }] },
     { name: 'Contracargos', aoa: [['Mes', 'Contracargos', 'Monto', 'Tasa sobre el monto del mes (%)'], ...d.contracargos.mensual.map(x => [x.mes, x.n, x.monto, x.tasa_pct])], cols: [{ wch: 12 }, { wch: 16 }, { wch: 20 }, { wch: 32 }] },
