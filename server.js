@@ -46,6 +46,7 @@ const mountDisputasRoutes = require('./lib/disputas-routes.js');
 const CCS = require('./lib/contracargos-sync.js');
 const L = require('./lib/ledger.js');
 const RC = require('./lib/reparto-comercio.js');
+const DN = require('./lib/datos-negocio.js');
 const DP = require('./lib/dispersion-pendiente.js');
 const CI = require('./lib/cumplimiento-ingesta.js');
 const PLD = require('./lib/pld-alertas.js');
@@ -3310,6 +3311,57 @@ async function panelFiltros(q) {
   if (n > DASH_MAX_TX) return { error: { status: 413, body: { error: 'periodo_muy_grande', total: n, maximo: DASH_MAX_TX, mensaje: `El periodo tiene ${n} transacciones y el máximo por consulta es ${DASH_MAX_TX}. Acota las fechas o elige una afiliación o un grupo.` } } };
   return { desde, hasta, afil, sinGrupo, grupo, cliente, grupos, afilGrupo };
 }
+// ===== DATOS DEL NEGOCIO (Panel): comercios activos, volumen mensual y anual, canal, contracargos, giros (MCC) y share por tipo de tarjeta =====
+// Por fecha de operación de las transacciones aprobadas. Periodo por omisión: los últimos 12 meses. Ver lib/datos-negocio.js.
+async function negocioParams(q) {
+  const fechaOk = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+  const hasta = fechaOk(q.hasta) ? q.hasta : hoyISOmx();
+  const desde = fechaOk(q.desde) ? q.desde : DN.isoMenosDias(hasta, 364);
+  if (desde > hasta) return { error: { status: 400, body: { error: 'rango_invalido', mensaje: 'La fecha "desde" no puede ser posterior a "hasta".' } } };
+  if (DN.isoMenosDias(hasta, 366 * 6) > desde) return { error: { status: 400, body: { error: 'rango_muy_grande', mensaje: 'El periodo máximo es de 6 años.' } } };
+  const idg = String(q.grupo || '').replace(/\D/g, '');
+  let grupo = null;
+  if (idg) { grupo = (await getGrupos()).find(g => String(g.id_grupo) === idg); if (!grupo) return { error: { status: 400, body: { error: 'grupo_invalido', mensaje: 'El grupo de cliente no existe.' } } }; }
+  return { desde, hasta, grupo, cliente: grupo ? nrm(grupo.nombre_cliente) : '' };
+}
+app.get('/api/dashboard/negocio', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const P = await negocioParams(req.query || {});
+  if (P.error) return res.status(P.error.status).json(P.error.body);
+  const d = await DN.datosNegocio(db, P);
+  res.json({ ...d, grupo: P.grupo ? { id: P.grupo.id_grupo, nombre: P.grupo.nombre_cliente } : null });
+});
+app.get('/api/dashboard/negocio.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const P = await negocioParams(req.query || {});
+  if (P.error) return res.status(P.error.status).json(P.error.body);
+  const d = await DN.datosNegocio(db, P);
+  const m = n => Number(n) || 0;
+  const resumen = [
+    ['Datos del negocio'], [P.grupo ? 'Grupo: ' + P.grupo.nombre_cliente : 'Todos los grupos de cliente'], ['Periodo', `${d.periodo.desde} a ${d.periodo.hasta}`],
+    ['Base', 'Transacciones aprobadas, por fecha de operación. Contracargos por fecha del reporte en que se cargaron (sin cancelados).'], [],
+    ['Comercios'], ['Comercios activos (con ventas en los últimos 30 días al corte)', d.comercios.activos_30_dias], ['Comercios con ventas en el periodo', d.comercios.activos_en_periodo],
+    ['Comercios en el histórico', d.comercios.historicos], ['Primer dato en el sistema', d.comercios.primer_dato || '—'],
+    ['Altas en los últimos 12 meses (ritmo para proyectar el año)', d.comercios.nuevos_ultimos_12_meses == null ? 'Sin 12 meses de historial' : d.comercios.nuevos_ultimos_12_meses], [],
+    ['Volumen'], ['Monto procesado en el periodo', d.volumen.monto], ['Transacciones aprobadas', d.volumen.n_trx], ['Ticket promedio', d.volumen.ticket_promedio],
+    [`Monto últimos 12 meses (${d.volumen.ultimos_12_meses.desde} a ${d.volumen.ultimos_12_meses.hasta})`, d.volumen.ultimos_12_meses.monto], [],
+    ['Contracargos'], ['Contracargos del periodo (cantidad)', d.contracargos.n], ['Contracargos del periodo (monto)', d.contracargos.monto],
+    ['Tasa de contracargos (monto contracargos / monto procesado, %)', d.contracargos.tasa_pct_monto], ['Tasa de contracargos (cantidad / transacciones, %)', d.contracargos.tasa_pct_trx],
+  ];
+  const sheets = [
+    { name: 'Resumen', aoa: resumen, cols: [{ wch: 70 }, { wch: 22 }] },
+    { name: 'Volumen mensual', aoa: [['Mes', 'Monto procesado', 'Transacciones', 'Comercios con ventas'], ...d.volumen.mensual.map(x => [x.mes, x.monto, x.n, x.comercios])], cols: [{ wch: 12 }, { wch: 20 }, { wch: 16 }, { wch: 20 }] },
+    { name: 'Volumen anual', aoa: [['Año', 'Monto procesado', 'Transacciones', 'Cobertura'], ...d.volumen.anual.map(x => [x.anio, x.monto, x.n, x.parcial ? 'Año parcial dentro del periodo' : 'Año completo'])], cols: [{ wch: 10 }, { wch: 20 }, { wch: 16 }, { wch: 32 }] },
+    { name: 'Comercios nuevos', aoa: [['Año de su primera venta', 'Comercios', 'Nota'], ...d.comercios.nuevos_por_anio.map(x => [x.anio, x.n, x.base_inicial ? 'Año en que empieza el histórico: es la base inicial, no son altas' : ''])], cols: [{ wch: 26 }, { wch: 14 }, { wch: 70 }] },
+    { name: 'Tarjetas', aoa: [['Tipo de tarjeta', 'Monto', '% del monto', 'Transacciones', '% de transacciones'], ...d.tarjetas.map(x => [x.etiqueta, x.monto, x.pct_monto, x.n, x.pct_trx])], cols: [{ wch: 22 }, { wch: 20 }, { wch: 14 }, { wch: 16 }, { wch: 20 }] },
+    { name: 'Canales', aoa: [['Canal', 'Monto', '% del monto', 'Transacciones', '% de transacciones'], ...d.canales.agrupado.map(x => [x.etiqueta, x.monto, x.pct_monto, x.n, x.pct_trx]), [], ['Detalle por modo de entrada'], ['Modo de entrada', 'Canal asignado', 'Monto', 'Transacciones'], ...d.canales.detalle.map(x => [x.modo, x.canal, x.monto, x.n])], cols: [{ wch: 30 }, { wch: 28 }, { wch: 20 }, { wch: 16 }, { wch: 20 }] },
+    { name: 'Giros MCC', aoa: [['MCC', 'Giro', 'Monto', '% del monto', 'Transacciones', 'Comercios'], ...[...d.giros.principales, ...(d.giros.otros ? [d.giros.otros] : []), ...(d.giros.sin_mcc ? [d.giros.sin_mcc] : [])].map(x => [x.mcc || '', x.giro || '', x.monto, x.pct_monto, x.n, x.comercios])], cols: [{ wch: 8 }, { wch: 52 }, { wch: 20 }, { wch: 14 }, { wch: 16 }, { wch: 12 }] },
+    { name: 'Contracargos', aoa: [['Mes', 'Contracargos', 'Monto', 'Tasa sobre el monto del mes (%)'], ...d.contracargos.mensual.map(x => [x.mes, x.n, x.monto, x.tasa_pct])], cols: [{ wch: 12 }, { wch: 16 }, { wch: 20 }, { wch: 32 }] },
+  ];
+  await bit(req, 'reporte', `exportó datos del negocio ${d.periodo.desde} a ${d.periodo.hasta}${P.grupo ? ' · ' + P.grupo.nombre_cliente : ''}`);
+  enviarXLSX(res, `datos_negocio_${d.periodo.desde}_a_${d.periodo.hasta}.xlsx`, X.buildXLSX(sheets));
+});
+
 app.get('/api/dashboard/resumen', auth, async (req, res) => {
   if (!dbReady(res)) return;
   const P = await panelFiltros(req.query || {});

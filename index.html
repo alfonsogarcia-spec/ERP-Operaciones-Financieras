@@ -1435,6 +1435,69 @@ function setView(v,node){v.innerHTML='';v.append(node);}
 /* ============================================================================
    VISTAS
    ========================================================================= */
+/* ---------- Datos del negocio (Panel): comercios, volumen, canal, contracargos, giros y tarjetas ---------- */
+function panelNegocio(grupos){
+  const N=panelNegocio._f||(panelNegocio._f={desde:'',hasta:'',grupo:''});
+  const hoy=hoyMx();
+  const menos=(iso,d)=>{const t=new Date(iso+'T00:00:00Z');t.setUTCDate(t.getUTCDate()-d);return t.toISOString().slice(0,10);};
+  const pc=n=>Number(n||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2})+'%';
+  const mes=m=>{const [y,mo]=String(m).split('-');return ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'][(+mo||1)-1]+' '+y;};
+  const inD=el('input',{id:'negDesde',type:'date',value:N.desde||menos(hoy,364)}),inH=el('input',{id:'negHasta',type:'date',value:N.hasta||hoy});
+  const selG=el('select',{id:'negGrupo'},el('option',{value:''},'Todos los grupos'),...grupos.map(g=>el('option',{value:String(g.id)},g.nombre)));selG.value=N.grupo||'';
+  const salida=el('div',{'aria-live':'polite'});
+  const q=()=>new URLSearchParams({desde:inD.value,hasta:inH.value,grupo:selG.value}).toString();
+  const validar=()=>{if(!inD.value||!inH.value){toast('Elige las fechas del periodo','err');return false;}if(inD.value>inH.value){toast('La fecha "desde" no puede ser posterior a "hasta"','err');return false;}return true;};
+  const pintar=d=>{
+    salida.innerHTML='';
+    const c=d.comercios,vo=d.volumen,cc=d.contracargos;
+    salida.append(cards([
+      ['Comercios activos',String(c.activos_30_dias),'con ventas en los últimos 30 días · '+c.activos_en_periodo+' en el periodo · '+c.historicos+' en el histórico'],
+      ['Volumen del periodo',mxn(vo.monto),vo.n_trx.toLocaleString('es-MX')+' transacciones · ticket '+mxn(vo.ticket_promedio)],
+      ['Últimos 12 meses',mxn(vo.ultimos_12_meses.monto),vo.ultimos_12_meses.n.toLocaleString('es-MX')+' transacciones'],
+      ['Tasa de contracargos',pc(cc.tasa_pct_monto),cc.n+' contracargos · '+mxn(cc.monto)+' · '+pc(cc.tasa_pct_trx)+' de las transacciones'],
+    ]));
+    const dosCol=el('div',{class:'grid2'});
+    const p1=el('div',{class:'panel'});p1.append(el('h3',{},'Comercios nuevos por año'));
+    p1.append(tableWrap(['Año de su primera venta',{t:'Comercios'}],c.nuevos_por_anio.map(x=>[String(x.anio)+(x.base_inicial?' <span class="muted" title="Año en que empieza el histórico del sistema: es la base inicial, no son altas">(base inicial)</span>':''),{num:String(x.n)}]),{empty:'Sin datos.'}));
+    p1.append(el('div',{class:'muted',style:'margin-top:8px'},c.nuevos_ultimos_12_meses==null?'Aún no hay 12 meses de historial para estimar cuántos comercios suma por año. La meta de altas es una proyección del negocio, no un dato del sistema.':'En los últimos 12 meses se sumaron '+c.nuevos_ultimos_12_meses+' comercios: ese es el ritmo anual que muestra el histórico. La meta de altas es una proyección del negocio.'));
+    const p2=el('div',{class:'panel'});p2.append(el('h3',{},'Volumen anual'));
+    p2.append(tableWrap(['Año',{t:'Monto'},{t:'Trx'}],vo.anual.map(x=>[String(x.anio)+(x.parcial?' <span class="muted" title="El periodo no cubre el año completo">(parcial)</span>':''),{num:mxn(x.monto)},{num:x.n.toLocaleString('es-MX')}]),{empty:'Sin datos.'}));
+    dosCol.append(p1,p2);salida.append(dosCol);
+    const pm=el('div',{class:'panel'});pm.append(el('h3',{},'Volumen mensual'));
+    const tasaDe=new Map(cc.mensual.map(x=>[x.mes,x]));
+    pm.append(tableWrap(['Mes',{t:'Monto procesado'},{t:'Transacciones'},{t:'Comercios con ventas'},{t:'Contracargos'}],vo.mensual.map(x=>{const t=tasaDe.get(x.mes);return [mes(x.mes),{num:mxn(x.monto)},{num:x.n.toLocaleString('es-MX')},{num:String(x.comercios)},{num:t?t.n+' · '+pc(t.tasa_pct):'—'}];}),{empty:'Sin transacciones aprobadas en el periodo.'}));
+    salida.append(pm);
+    const pt=el('div',{class:'panel'});pt.append(el('h3',{},'Tarjetas que pagan'));
+    pt.append(tableWrap(['Tipo',{t:'Monto'},{t:'% monto'},{t:'% trx'}],d.tarjetas.map(x=>[esc(x.etiqueta),{num:mxn(x.monto)},{num:pc(x.pct_monto)},{num:pc(x.pct_trx)}]),{empty:'Sin datos.'}));
+    const pk=el('div',{class:'panel'});pk.append(el('h3',{},'Canales'));
+    pk.append(tableWrap(['Canal',{t:'Monto'},{t:'% monto'},{t:'% trx'}],d.canales.agrupado.map(x=>[esc(x.etiqueta),{num:mxn(x.monto)},{num:pc(x.pct_monto)},{num:pc(x.pct_trx)}]),{empty:'Sin datos.'}));
+    pk.append(el('div',{class:'muted',style:'margin-top:8px'},d.canales.sin_clasificar_pct>0?pc(d.canales.sin_clasificar_pct)+' del monto no trae el modo de entrada (viene en la carga de antifraude), por eso no se puede clasificar como TPV o e-commerce. URL cuenta como e-commerce; chip, contactless y banda, como TPV.':'Se deduce del modo de entrada: URL es e-commerce; chip, contactless y banda, TPV.'));
+    salida.append(pt,pk);
+    const pg=el('div',{class:'panel'});pg.append(el('h3',{},'Giros principales (MCC)'));
+    const gl=[...d.giros.principales,...(d.giros.otros?[d.giros.otros]:[]),...(d.giros.sin_mcc?[d.giros.sin_mcc]:[])];
+    pg.append(tableWrap(['MCC','Giro',{t:'Monto'},{t:'% monto'},{t:'Comercios'}],gl.map(x=>[x.mcc?`<span class="mono">${esc(x.mcc)}</span>`:'',esc(x.giro||'—'),{num:mxn(x.monto)},{num:pc(x.pct_monto)},{num:String(x.comercios)}]),{empty:'Sin datos.'}));
+    pg.append(el('div',{class:'muted',style:'margin-top:8px'},'El MCC sale del catálogo de afiliaciones. La columna Comercios cuenta cada comercio por afiliación.'));
+    salida.append(pg);
+  };
+  const generar=async()=>{
+    if(!validar())return;N.desde=inD.value;N.hasta=inH.value;N.grupo=selG.value;
+    salida.innerHTML='';salida.append(el('div',{class:'muted'},'Calculando…'));
+    try{pintar(await withBusy('Calculando datos del negocio…',()=>api('GET','/api/dashboard/negocio?'+q())));}
+    catch(e){salida.innerHTML='';salida.append(el('div',{class:'banner err'},(e.data&&e.data.mensaje)||errMsg(e)));}
+  };
+  const barra=el('div',{style:'display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px'},
+    el('label',{class:'field',style:'margin:0'},'Desde (fecha de operación)',inD),el('label',{class:'field',style:'margin:0'},'Hasta',inH),
+    el('label',{class:'field',style:'margin:0;min-width:220px'},'Grupo de cliente',selG),
+    el('button',{class:'btn',onclick:generar},'Generar'),
+    el('button',{class:'btn secondary',onclick:async()=>{if(!validar())return;
+      try{await withBusy('Generando Excel…',()=>descargar('/api/dashboard/negocio.xlsx?'+q(),'datos_negocio_'+inD.value+'_a_'+inH.value+'.xlsx'));}
+      catch(e){toast((e.data&&e.data.mensaje)||errMsg(e),'err');}}},'⬇ Excel'));
+  const w=el('div',{style:'margin-top:22px'},el('h3',{style:'margin:0 0 4px;font-size:15px'},'Datos del negocio'),
+    el('div',{class:'muted',style:'margin:0 0 10px'},'Comercios activos, volumen mensual y anual, canales, contracargos, giros y tarjetas. Solo transacciones aprobadas, por fecha de operación. Por omisión, los últimos 12 meses.'),barra,salida);
+  salida.append(el('div',{class:'muted'},'Elige el periodo y presiona Generar.'));
+  if(N.desde)setTimeout(generar,0);   // si ya se había generado en esta sesión, se recalcula al volver al Panel
+  return w;
+}
 async function vDashboard(v){
   const hoy = new Date();
   const y = hoy.getFullYear(), mo = hoy.getMonth()+1;
@@ -1572,6 +1635,7 @@ async function vDashboard(v){
     }
   }
   gr2.append(pAler); v.append(gr2);
+  v.append(panelNegocio(rs?rs.opciones_grupos:[]));   // al final del Panel: es un reporte largo y no debe empujar los indicadores de arriba
 }
 
 /* ---------- INGESTA ---------- */
