@@ -45,6 +45,7 @@ const D = require('./lib/disputas.js');
 const mountDisputasRoutes = require('./lib/disputas-routes.js');
 const CCS = require('./lib/contracargos-sync.js');
 const L = require('./lib/ledger.js');
+const RC = require('./lib/reparto-comercio.js');
 const DP = require('./lib/dispersion-pendiente.js');
 const CI = require('./lib/cumplimiento-ingesta.js');
 const PLD = require('./lib/pld-alertas.js');
@@ -630,17 +631,37 @@ app.get('/api/catalogo/grupos-full.xlsx', auth, async (req, res) => {
 // la plantilla de importación (id_grupo, numero_afiliacion, nombre_comercial,
 // razon_social_beneficiario, banco, clabe). Se registra ANTES del handler
 // paramétrico por la misma razón que grupos-full.xlsx.
+// Comercios que han llegado en las transacciones de un grupo (últimos 120 días), con cuántas llevan y si ya tienen CLABE propia.
+// Sirve para elegir el comercio al dar de alta su cuenta, sin escribir el nombre a mano. Va ANTES de /api/catalogo/:tipo.
+app.get('/api/catalogo/comercios', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const idg = parseInt((req.query || {}).id_grupo, 10);
+  if (!idg) return res.status(400).json({ error: 'grupo' });
+  const [grupos, cuentas] = [await getGrupos(), await getCuentas()];
+  const g = grupos.find(x => String(x.id_grupo) === String(idg));
+  if (!g) return res.status(404).json({ error: 'grupo_no_existe' });
+  const rows = (await db.query("select cliente, comercio, numero_afiliacion, count(*)::int n from transacciones where creado_at > now() - interval '120 days' and coalesce(comercio,'') <> '' group by 1,2,3")).rows
+    .filter(r => nrm(r.cliente) === nrm(g.nombre_cliente));
+  const porComercio = new Map();
+  for (const r of rows) {
+    const k = RC.norm(r.comercio); const e = porComercio.get(k) || { comercio: r.comercio, n: 0, afiliaciones: new Set() };
+    e.n += r.n; if (r.numero_afiliacion) e.afiliaciones.add(r.numero_afiliacion); porComercio.set(k, e);
+  }
+  const conCuenta = new Set(cuentas.filter(c => c.comercio && String(c.id_grupo) === String(idg)).map(c => RC.norm(c.comercio)));
+  res.json([...porComercio.values()].sort((a, b) => b.n - a.n).slice(0, 300).map(e => ({ comercio: e.comercio, n: e.n, afiliaciones: [...e.afiliaciones], con_cuenta: conCuenta.has(RC.norm(e.comercio)) })));
+});
+
 app.get('/api/catalogo/cuentas.xlsx', auth, async (req, res) => {
   if (!dbReady(res)) return;
   const [cuentas, grupos] = await Promise.all([getCuentas(), getGrupos()]);
   const nombreDe = idg => { const g = grupos.find(x => String(x.id_grupo) === String(idg)); return g ? g.nombre_cliente : ''; };
   const HEAD = ['id_grupo', 'nombre_cliente', 'numero_afiliacion', 'nombre_comercial',
-    'razon_social_beneficiario', 'banco', 'codigo_banco', 'clabe'];
+    'razon_social_beneficiario', 'banco', 'codigo_banco', 'clabe', 'comercio'];
   const filas = cuentas.map(c => [
     c.id_grupo, nombreDe(c.id_grupo), c.numero_afiliacion || '',
     c.nombre_comercial || '', c.razon_social_beneficiario || '',
     c.banco || '', c.codigo_banco == null ? '' : c.codigo_banco,
-    c.clabe || '',
+    c.clabe || '', c.comercio || '',
   ]);
   filas.sort((a, b) => String(a[1]).localeCompare(String(b[1])) || String(a[2]).localeCompare(String(b[2])));
   const iso = new Date().toISOString().slice(0, 10);
@@ -766,22 +787,26 @@ app.post('/api/catalogo/cuenta', auth, requiereRol('admin'), async (req, res) =>
   const cl = String(b.clabe || '').replace(/\D/g, ''); if (cl && !/^\d{18}$/.test(cl)) return res.status(400).json({ error: 'clabe_18' });
   if (!b.id_grupo) return res.status(400).json({ error: 'grupo' });
   const afil = String(b.numero_afiliacion || '').replace(/\D/g, '');
+  // Cuenta de COMERCIO: el comercio (como llega en la ingesta) recibe su parte de la dispersión del grupo en esta CLABE. Exige CLABE y banco.
+  const comercio = String(b.comercio || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (comercio && !cl) return res.status(400).json({ error: 'clabe_requerida_comercio', mensaje: 'Una cuenta de comercio necesita su CLABE.' });
+  if (comercio && !b.banco) return res.status(400).json({ error: 'banco_requerido_comercio', mensaje: 'Elige el banco de la CLABE del comercio.' });
   const cod = b.banco ? (await db.query('select codigo_spei from bancos where lower(nombre)=lower($1)', [b.banco])).rows[0] : null;
   const codigo = cod ? cod.codigo_spei : null;
   const rzn = b.razon_social_beneficiario || '', bnc = b.banco || '';
   const clHash = cl ? C.hmac(cl) : null, clCif = cl ? C.encrypt(cl) : null;
   const rznCif = C.encrypt(rzn), bncCif = C.encrypt(bnc);
   if (b.id) {
-    await db.query('update cuentas set id_grupo=$1,numero_afiliacion=$2,nombre_comercial=$3,razon_social_beneficiario=$4,banco=$5,clabe=$6,codigo_banco=$7,clabe_hash=$8,clabe_cifrada=$9,razon_social_beneficiario_cifrada=$10,banco_cifrado=$11 where id=$12',
-      [parseInt(b.id_grupo, 10), afil, b.nombre_comercial || '', rzn, bnc, cl, codigo, clHash, clCif, rznCif, bncCif, b.id]);
+    await db.query('update cuentas set id_grupo=$1,numero_afiliacion=$2,nombre_comercial=$3,razon_social_beneficiario=$4,banco=$5,clabe=$6,codigo_banco=$7,clabe_hash=$8,clabe_cifrada=$9,razon_social_beneficiario_cifrada=$10,banco_cifrado=$11,comercio=$13 where id=$12',
+      [parseInt(b.id_grupo, 10), afil, b.nombre_comercial || '', rzn, bnc, cl, codigo, clHash, clCif, rznCif, bncCif, b.id, comercio || null]);
   } else {
-    // dedupe por grupo+afiliación
-    const dup = (await db.query('select id from cuentas where id_grupo=$1 and coalesce(numero_afiliacion,\'\')=$2', [parseInt(b.id_grupo, 10), afil])).rows[0];
+    // dedupe por grupo+afiliación+comercio (la cuenta general del grupo no lleva comercio)
+    const dup = (await db.query('select id from cuentas where id_grupo=$1 and coalesce(numero_afiliacion,\'\')=$2 and lower(btrim(coalesce(comercio,\'\')))=lower($3)', [parseInt(b.id_grupo, 10), afil, comercio])).rows[0];
     if (dup) await db.query('update cuentas set nombre_comercial=$1,razon_social_beneficiario=$2,banco=$3,clabe=$4,codigo_banco=$5,clabe_hash=$6,clabe_cifrada=$7,razon_social_beneficiario_cifrada=$8,banco_cifrado=$9 where id=$10', [b.nombre_comercial || '', rzn, bnc, cl, codigo, clHash, clCif, rznCif, bncCif, dup.id]);
-    else await db.query('insert into cuentas(id_grupo,numero_afiliacion,nombre_comercial,razon_social_beneficiario,banco,clabe,codigo_banco,clabe_hash,clabe_cifrada,razon_social_beneficiario_cifrada,banco_cifrado) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-      [parseInt(b.id_grupo, 10), afil, b.nombre_comercial || '', rzn, bnc, cl, codigo, clHash, clCif, rznCif, bncCif]);
+    else await db.query('insert into cuentas(id_grupo,numero_afiliacion,nombre_comercial,razon_social_beneficiario,banco,clabe,codigo_banco,clabe_hash,clabe_cifrada,razon_social_beneficiario_cifrada,banco_cifrado,comercio) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
+      [parseInt(b.id_grupo, 10), afil, b.nombre_comercial || '', rzn, bnc, cl, codigo, clHash, clCif, rznCif, bncCif, comercio || null]);
   }
-  await bit(req, b.id ? 'cuenta_editar' : 'cuenta_alta', `grupo ${b.id_grupo} afil ${afil || 'nivel-grupo'} clabe ${cl ? cl.slice(-4).padStart(cl.length, '*') : '—'}`, { resource_type: 'cuenta', resource_id: b.id });
+  await bit(req, b.id ? 'cuenta_editar' : 'cuenta_alta', `grupo ${b.id_grupo} afil ${afil || 'nivel-grupo'}${comercio ? ' comercio ' + comercio : ''} clabe ${cl ? cl.slice(-4).padStart(cl.length, '*') : '—'}`, { resource_type: 'cuenta', resource_id: b.id });
   res.json({ ok: true });
 });
 app.delete('/api/catalogo/cuenta/:id', auth, requiereRol('admin'), async (req, res) => {
@@ -862,12 +887,14 @@ app.post('/api/catalogo/:tipo/import', auth, requiereRol('admin'), upload.single
       for (const o of objs) {
         if (!o.id_grupo) continue; const idg = parseInt(o.id_grupo, 10); const afil = String(o.numero_afiliacion || '').replace(/\D/g, '');
         const cod = (await db.query('select codigo_spei from bancos where lower(nombre)=lower($1)', [o.banco || ''])).rows[0];
-        const dup = (await db.query('select id from cuentas where id_grupo=$1 and coalesce(numero_afiliacion,\'\')=$2', [idg, afil])).rows[0];
+        const comV = String(o.comercio || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+        const dup = (await db.query('select id from cuentas where id_grupo=$1 and coalesce(numero_afiliacion,\'\')=$2 and lower(btrim(coalesce(comercio,\'\')))=lower($3)', [idg, afil, comV])).rows[0];
         const rznV = String(o.razon_social_beneficiario || ''), bncV = String(o.banco || '');
         const clV = String(o.clabe || '').replace(/\D/g, '');
+        if (comV && !/^\d{18}$/.test(clV)) continue;   // una cuenta de comercio sin CLABE válida no sirve: se omite
         const vals = [idg, afil, String(o.nombre_comercial || ''), rznV, bncV, clV, cod ? cod.codigo_spei : null, clV ? C.hmac(clV) : null, clV ? C.encrypt(clV) : null, C.encrypt(rznV), C.encrypt(bncV)];
-        if (dup) await db.query('update cuentas set id_grupo=$1,numero_afiliacion=$2,nombre_comercial=$3,razon_social_beneficiario=$4,banco=$5,clabe=$6,codigo_banco=$7,clabe_hash=$8,clabe_cifrada=$9,razon_social_beneficiario_cifrada=$10,banco_cifrado=$11 where id=$12', [...vals, dup.id]);
-        else await db.query('insert into cuentas(id_grupo,numero_afiliacion,nombre_comercial,razon_social_beneficiario,banco,clabe,codigo_banco,clabe_hash,clabe_cifrada,razon_social_beneficiario_cifrada,banco_cifrado) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', vals);
+        if (dup) await db.query('update cuentas set id_grupo=$1,numero_afiliacion=$2,nombre_comercial=$3,razon_social_beneficiario=$4,banco=$5,clabe=$6,codigo_banco=$7,clabe_hash=$8,clabe_cifrada=$9,razon_social_beneficiario_cifrada=$10,banco_cifrado=$11,comercio=$13 where id=$12', [...vals, dup.id, comV || null]);
+        else await db.query('insert into cuentas(id_grupo,numero_afiliacion,nombre_comercial,razon_social_beneficiario,banco,clabe,codigo_banco,clabe_hash,clabe_cifrada,razon_social_beneficiario_cifrada,banco_cifrado,comercio) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', [...vals, comV || null]);
         n++;
       }
     } else return res.status(404).json({ error: 'tipo' });
@@ -1248,7 +1275,7 @@ app.get('/api/inventario/terminales.xlsx', auth, async (req, res) => {
    CORTES
    ========================================================================= */
 async function computeCorte(fechaLiqIso) {
-  const txs = (await db.query("select cliente,numero_afiliacion,producto,monto from transacciones where fecha_liq=$1 and upper(estatus)='APROBADO'", [fechaLiqIso])).rows;
+  const txs = (await db.query("select cliente,numero_afiliacion,comercio,producto,monto from transacciones where fecha_liq=$1 and upper(estatus)='APROBADO'", [fechaLiqIso])).rows;
   // LEDGER: cargos cobrables (Pendiente/Parcial) agrupados por afil||bloque,
   // en orden FIFO. A diferencia del modelo viejo, la llave es SOLO
   // afiliación+bloque — no se homologa nombre de grupo para matchear, así que
@@ -1260,12 +1287,14 @@ async function computeCorte(fechaLiqIso) {
   const tasasDe = (idg, afil) => afilGrupo.find(a => String(a.id_grupo) === String(idg) && String(a.numero_afiliacion) === String(afil));
   const costosDe = afil => costos.find(c => String(c.numero_afiliacion) === String(afil));
   const bancoCod = nombre => { const b = bancos.find(x => nrm(x.nombre) === nrm(nombre)); return b ? b.codigo_spei : null; };
+  // Las cuentas de COMERCIO (con `comercio`) no son la cuenta general del grupo/afiliación: solo sirven para repartir (ver lib/reparto-comercio.js).
+  const cuentasGenerales = cuentas.filter(c => !c.comercio);
   const cuentaDe = (idg, afil) => {
-    if (afil) { const m = cuentas.find(c => String(c.id_grupo) === String(idg) && String(c.numero_afiliacion || '') === String(afil)); if (m) return m; }
-    return cuentas.find(c => String(c.id_grupo) === String(idg) && !String(c.numero_afiliacion || '')) || cuentas.find(c => String(c.id_grupo) === String(idg));
+    if (afil) { const m = cuentasGenerales.find(c => String(c.id_grupo) === String(idg) && String(c.numero_afiliacion || '') === String(afil)); if (m) return m; }
+    return cuentasGenerales.find(c => String(c.id_grupo) === String(idg) && !String(c.numero_afiliacion || '')) || cuentasGenerales.find(c => String(c.id_grupo) === String(idg));
   };
   const groups = {};
-  for (const t of txs) { const k = `${t.cliente}||${t.numero_afiliacion}`; (groups[k] = groups[k] || []).push({ producto: t.producto, monto: Number(t.monto) }); }
+  for (const t of txs) { const k = `${t.cliente}||${t.numero_afiliacion}`; (groups[k] = groups[k] || []).push({ producto: t.producto, monto: Number(t.monto), comercio: t.comercio }); }
   const calculos = []; let total_comp = 0, total_disp = 0, total_monto = 0;
   const aplicaciones = [];  // {cargo_id, monto_aplicado, bloque} — para persistir en corte_aplicaciones
   const afilesVistos = new Set();
@@ -1310,16 +1339,31 @@ async function computeCorte(fechaLiqIso) {
       financiamiento_amex: resAmex.totFin,
     };
     const r = E.calcularCompensacion(arr, cat, params, ajustes);
-    const faltantes = []; if (!g) faltantes.push('grupo'); if (!tasas) faltantes.push('tasas'); if (!co) faltantes.push('costos'); if (!cuenta && Math.abs(r.disp_total) > 0.005) faltantes.push('cuenta');
+    // REPARTO POR COMERCIO: el cálculo es del grupo; si algún comercio de la fila tiene CLABE propia, su parte sale a esa cuenta.
+    let reparto = null;
+    const ctaCom = idGrupo ? RC.cuentasDeFila(cuentas, idGrupo, afil) : [];
+    if (ctaCom.length) {
+      const bancoDe = c => c.codigo_banco || bancoCod(c.banco);
+      reparto = RC.repartir({
+        txs: arr,
+        cuentasComercio: ctaCom.map(c => ({ comercio: c.comercio, clabe: c.clabe, codigo_banco: bancoDe(c), banco: c.banco, beneficiario: c.razon_social_beneficiario || c.nombre_comercial || c.comercio })),
+        calcular: sub => E.calcularCompensacion(sub, cat, params, {}),
+        final: r,
+        general: cuenta ? { clabe: cuenta.clabe, codigo_banco: cuenta.codigo_banco || bancoCod(cuenta.banco), banco: cuenta.banco, beneficiario: cuenta.razon_social_beneficiario || cuenta.nombre_comercial } : null,
+      });
+    }
+    const faltantes = []; if (!g) faltantes.push('grupo'); if (!tasas) faltantes.push('tasas'); if (!co) faltantes.push('costos');
+    if (reparto) { RC.partesBloqueadas(reparto).forEach(p => faltantes.push(p.es_resto ? 'cuenta' : 'cuenta de ' + p.comercio)); }
+    else if (!cuenta && Math.abs(r.disp_total) > 0.005) faltantes.push('cuenta');
     calculos.push({
       cliente, afil, id_grupo: idGrupo, razon: g ? g.nombre_cliente : cliente, concepto: idGrupo ? E.concepto(afil, idGrupo) : '',
       clabe: cuenta ? cuenta.clabe : '', codigo_banco: cuenta ? (cuenta.codigo_banco || bancoCod(cuenta.banco)) : null, banco: cuenta ? cuenta.banco : '', beneficiario: cuenta ? (cuenta.razon_social_beneficiario || cuenta.nombre_comercial) : '',
-      calc: r, faltantes, ajustes,
+      calc: r, faltantes, ajustes, reparto,
     });
     total_comp += r.comp_total; total_disp += r.disp_total; total_monto += r.m_tdd + r.m_tdc + r.m_amex + r.m_int;
   }
   let cuadra = true; calculos.forEach(c => { if (Math.abs(c.calc.diferencia) > 0.01) cuadra = false; });
-  const bloqueos = calculos.filter(c => Math.abs(c.calc.disp_total) > 0.005 && (!c.clabe || !c.codigo_banco)).length;
+  const bloqueos = calculos.filter(c => c.reparto ? RC.partesBloqueadas(c.reparto).length > 0 : (Math.abs(c.calc.disp_total) > 0.005 && (!c.clabe || !c.codigo_banco))).length;
   // Cargos que siguen con saldo pendiente tras este corte (no hubo transacciones
   // ese día para su afiliación, o la bolsa no alcanzó a cubrirlos completos).
   // Ya NO son "huérfanos perdidos": el próximo corte los vuelve a intentar.
@@ -2139,8 +2183,8 @@ async function crearCorteBorrador(iso, nombreUsuario) {
   const ins = (await db.query('insert into cortes(fecha_liq,fecha_liq_iso,estado,creado_por,total_monto,total_comp,total_disp,n_trx,cuadra,bloqueos) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id_corte',
     [E.fmtFecha(E.parseFecha(iso)), iso, 'Borrador', nombreUsuario, c.total_monto, c.total_comp, c.total_disp, c.n_trx, c.cuadra, c.bloqueos])).rows[0];
   const idCorte = ins.id_corte;
-  await insertMany('calculos', ['corte_id', 'cliente', 'afil', 'id_grupo', 'razon', 'concepto', 'clabe', 'codigo_banco', 'banco', 'beneficiario', 'calc', 'faltantes', 'ajustes'],
-    c.calculos.map(cc => ({ corte_id: idCorte, cliente: cc.cliente, afil: cc.afil, id_grupo: cc.id_grupo, razon: cc.razon, concepto: cc.concepto, clabe: cc.clabe, codigo_banco: cc.codigo_banco, banco: cc.banco, beneficiario: cc.beneficiario, calc: JSON.stringify(cc.calc), faltantes: JSON.stringify(cc.faltantes), ajustes: JSON.stringify(cc.ajustes) })));
+  await insertMany('calculos', ['corte_id', 'cliente', 'afil', 'id_grupo', 'razon', 'concepto', 'clabe', 'codigo_banco', 'banco', 'beneficiario', 'calc', 'faltantes', 'ajustes', 'reparto'],
+    c.calculos.map(cc => ({ corte_id: idCorte, cliente: cc.cliente, afil: cc.afil, id_grupo: cc.id_grupo, razon: cc.razon, concepto: cc.concepto, clabe: cc.clabe, codigo_banco: cc.codigo_banco, banco: cc.banco, beneficiario: cc.beneficiario, calc: JSON.stringify(cc.calc), faltantes: JSON.stringify(cc.faltantes), ajustes: JSON.stringify(cc.ajustes), reparto: cc.reparto ? JSON.stringify(cc.reparto) : null })));
   // LEDGER: aplica los cargos que computeCorte determinó cobrables (FIFO,
   // capados a la bolsa disponible por bloque) y espeja el estatus hacia las
   // tablas legacy (contracargos/financiamientos/disputa.chargebacks) para que
@@ -2352,7 +2396,9 @@ app.post('/api/cortes/:id/retener', auth, requiereRol('admin', 'operador'), asyn
   const k = esCC ? 'contracargo_solo_' : 'financiamiento_';
   aj[k + 'dom'] = E.round2((aj[k + 'dom'] || 0) + take.dom); aj[k + 'amex'] = E.round2((aj[k + 'amex'] || 0) + take.amex);
   aj.manuales = (aj.manuales || []).concat([{ cargo_id: idCargo, folio: g.origen_ref, monto, por: req.user.nombre, fecha: new Date().toISOString() }]);
-  await db.query('update calculos set calc=$1, ajustes=$2 where id=$3', [JSON.stringify(calc), JSON.stringify(aj), fila.id]);
+  // Con reparto por comercio, lo retenido también baja de las partes (en proporción a lo que cada una tenía).
+  const repartoNuevo = fila.reparto ? RC.reescalar(typeof fila.reparto === 'string' ? JSON.parse(fila.reparto) : fila.reparto, calc) : null;
+  await db.query('update calculos set calc=$1, ajustes=$2, reparto=$4 where id=$3', [JSON.stringify(calc), JSON.stringify(aj), fila.id, repartoNuevo ? JSON.stringify(repartoNuevo) : null]);
   await L.aplicarEnCorte(db, idCorte, [{ cargo_id: idCargo, monto_aplicado: monto, bloque: g.bloque }]);
   const tot = (await db.query("select coalesce(sum((calc->>'disp_total')::numeric),0) as d from calculos where corte_id=$1", [idCorte])).rows[0];
   await db.query('update cortes set total_disp=$1 where id_corte=$2', [E.round2(Number(tot.d)), idCorte]);
@@ -2575,6 +2621,27 @@ function enviarXLSX(res, filename, buffer) {
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send(buffer);
 }
+// Órdenes SPEI de una fila del corte (grupo + afiliación). Sin reparto: una orden por bloque a la cuenta del grupo, como siempre. Con reparto por
+// comercio (algún comercio con CLABE propia): una orden por cada parte con su CLABE, su banco y su beneficiario; el concepto es el mismo del grupo.
+function ordenesDeFila(x, { prefijo = '', soloNoDispersado = false } = {}) {
+  const dom = [], amex = [];
+  const concDom = prefijo + x.concepto, concAmex = prefijo + `DISPERSION ${E.ult3(x.afil)}CPPXAMEX00${x.id_grupo}`;
+  const rep = x.reparto ? (typeof x.reparto === 'string' ? JSON.parse(x.reparto) : x.reparto) : null;
+  const quiereDom = !soloNoDispersado || !x.dispersado_dom, quiereAmex = !soloNoDispersado || !x.dispersado_amex;
+  if (rep && Array.isArray(rep.partes)) {
+    for (const p of rep.partes) {
+      const base = { clabe: p.clabe, cod: p.codigo_banco, benef: p.beneficiario, razon: p.es_resto ? x.razon : (p.beneficiario || p.comercio), afil: x.afil, comercio: p.es_resto ? null : p.comercio };
+      if (quiereDom && Math.abs(p.disp_dom) > 0.005) dom.push({ ...base, concepto: concDom, cant: E.round2(p.disp_dom) });
+      if (quiereAmex && Math.abs(p.disp_amex) > 0.005) amex.push({ ...base, concepto: concAmex, cant: E.round2(p.disp_amex) });
+    }
+    return { dom, amex };
+  }
+  const r = x.calc, base = { clabe: x.clabe, cod: x.codigo_banco, benef: x.beneficiario, razon: x.razon, afil: x.afil };
+  if (quiereDom && Math.abs(r.disp_dom) > 0.005) dom.push({ ...base, concepto: concDom, cant: E.round2(r.disp_dom) });
+  if (quiereAmex && Math.abs(r.disp_amex) > 0.005) amex.push({ ...base, concepto: concAmex, cant: E.round2(r.disp_amex) });
+  return { dom, amex };
+}
+
 app.get('/api/cortes/:id/layout.xlsx', auth, async (req, res) => {
   if (!dbReady(res)) return;
   const c = (await db.query('select *, fecha_liq_iso::text as fli from cortes where id_corte=$1', [parseInt(req.params.id, 10)])).rows[0];
@@ -2585,11 +2652,7 @@ app.get('/api/cortes/:id/layout.xlsx', auth, async (req, res) => {
   // Órdenes de dispersión SEPARADAS: primero doméstico (nacional/INT), luego AMEX (aparte).
   // AMEX usa concepto DISPERSION <ult3>CPPXAMEX00<id_grupo>.
   const dom = [], amex = [];
-  for (const x of cal) {
-    const r = x.calc;
-    if (Math.abs(r.disp_dom) > 0.005) dom.push({ concepto: x.concepto, clabe: x.clabe, cod: x.codigo_banco, benef: x.beneficiario, cant: E.round2(r.disp_dom), razon: x.razon, afil: x.afil });
-    if (Math.abs(r.disp_amex) > 0.005) amex.push({ concepto: `DISPERSION ${E.ult3(x.afil)}CPPXAMEX00${x.id_grupo}`, clabe: x.clabe, cod: x.codigo_banco, benef: x.beneficiario, cant: E.round2(r.disp_amex), razon: x.razon, afil: x.afil });
-  }
+  for (const x of cal) { const o = ordenesDeFila(x); dom.push(...o.dom); amex.push(...o.amex); }
   const orders = [...dom, ...amex];
   const bloq = orders.filter(o => !o.clabe || !o.cod);
   if (bloq.length) return res.status(409).json({ error: 'bloqueado', detalle: bloq.map(o => ({ razon: o.razon, afil: o.afil, importe: o.cant, falta: !o.clabe ? 'CLABE' : 'codigo_banco' })) });
@@ -2659,10 +2722,7 @@ app.get('/api/cortes/:id/layout-no-dispersado.xlsx', auth, async (req, res) => {
   const cal = (await db.query('select * from calculos where corte_id=$1', [c.id_corte])).rows
     .map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc }));
   const orders = [];
-  for (const x of cal) {
-    if (!x.dispersado_dom && Math.abs(x.calc.disp_dom) > 0.005) orders.push({ concepto: 'NO DISPERSADO: ' + x.concepto, clabe: x.clabe, cod: x.codigo_banco, benef: x.beneficiario, cant: E.round2(x.calc.disp_dom), razon: x.razon, afil: x.afil });
-    if (!x.dispersado_amex && Math.abs(x.calc.disp_amex) > 0.005) orders.push({ concepto: 'NO DISPERSADO: ' + `DISPERSION ${E.ult3(x.afil)}CPPXAMEX00${x.id_grupo}`, clabe: x.clabe, cod: x.codigo_banco, benef: x.beneficiario, cant: E.round2(x.calc.disp_amex), razon: x.razon, afil: x.afil });
-  }
+  for (const x of cal) { const o = ordenesDeFila(x, { prefijo: 'NO DISPERSADO: ', soloNoDispersado: true }); orders.push(...o.dom, ...o.amex); }
   const referencia = referenciaHoy();
   const rowsL = orders.map(o => [o.concepto, String(o.clabe || ''), Number(o.cod) || o.cod, o.razon, '', o.cant, referencia, '']);
   const buf = X.buildXLSX([{
@@ -2720,10 +2780,11 @@ async function construirLayoutPendientes(idCorte) {
   // comparte esa misma afiliación y también tuvo actividad en este corte.
   const [cuentas, bancos] = [await getCuentas(), await getBancos()];
   const bancoCod = nombre => { const b = bancos.find(x => nrm(x.nombre) === nrm(nombre)); return b ? b.codigo_spei : null; };
+  const cuentasGenerales = cuentas.filter(c => !c.comercio);   // las cuentas de comercio no son la cuenta general del grupo
   const cuentaDe = (idg, afil) => {
     if (idg == null) return null;
-    if (afil) { const m = cuentas.find(c => String(c.id_grupo) === String(idg) && String(c.numero_afiliacion || '') === String(afil)); if (m) return m; }
-    return cuentas.find(c => String(c.id_grupo) === String(idg));
+    if (afil) { const m = cuentasGenerales.find(c => String(c.id_grupo) === String(idg) && String(c.numero_afiliacion || '') === String(afil)); if (m) return m; }
+    return cuentasGenerales.find(c => String(c.id_grupo) === String(idg));
   };
   // Fallback (solo para pendientes antiguas registradas sin id_grupo): el
   // comportamiento previo, ambiguo si la afiliación es compartida.
@@ -5340,11 +5401,7 @@ async function armarAdjuntosCorte(idCorte) {
     .map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc }));
   // Layout (mismo formato que /api/cortes/:id/layout.xlsx)
   const dom = [], amex = [];
-  for (const x of cal) {
-    const r = x.calc;
-    if (Math.abs(r.disp_dom) > 0.005) dom.push({ concepto: x.concepto, clabe: x.clabe, cod: x.codigo_banco, benef: x.beneficiario, cant: E.round2(r.disp_dom), razon: x.razon });
-    if (Math.abs(r.disp_amex) > 0.005) amex.push({ concepto: `DISPERSION ${E.ult3(x.afil)}CPPXAMEX00${x.id_grupo}`, clabe: x.clabe, cod: x.codigo_banco, benef: x.beneficiario, cant: E.round2(r.disp_amex), razon: x.razon });
-  }
+  for (const x of cal) { const o = ordenesDeFila(x); dom.push(...o.dom); amex.push(...o.amex); }
   const orders = [...dom, ...amex];
   const pz = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: '2-digit', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
   const gp = t => (pz.find(p => p.type === t) || {}).value || '';
@@ -5582,7 +5639,7 @@ app.get('/api/plantilla/:tipo.xlsx', auth, (req, res) => {
     ['100001', '05/10/2026', '10:15:22', '2026-10-05T16:15:22Z', 'DEAL', 'Comercio Demo', '7194416', 'APROBADO', '411111', '0234', 'LIQUIDADA', 'VISA', 'T01', 'VENTA', 'Débito', 'F001', 'REF001', '', 'A12345', 0, 1250.5, 0, 0, 'BBVA', 'Polipay', 'STP', 'CHIP'],
     ['100002', '05/10/2026', '10:16:40', '2026-10-05T16:16:40Z', 'DEAL', 'Comercio Demo', '7194416', 'RECHAZADO', '411111', '0234', '', 'VISA', 'T01', 'VENTA', 'Débito', 'F002', 'REF002', '', '', 0, 899, 0, 0, 'BBVA', 'Polipay', 'STP', 'URL']] };
   else if (t === 'grupos') sheet = { name: 'Grupos', aoa: [['id_grupo', 'nombre_cliente', 'numero_afiliacion', 'razon_social', 'tasa_pac_tdd', 'tasa_pac_tdc', 'tasa_pac_amex', 'tasa_pac_int', 'costo_x_trx', 'pct_banca', 'int_tdd', 'int_tdc', 'int_amex', 'int_int', 'fee_broxel', 'mcc', 'descripcion_giro'], [3, 'DEAL', '7194416', 'Deal Comercializadora SA', 0.025, 0.029, 0.035, 0.038, 0, 0.005, 0.011, 0.015, 0.0247, 0.0302, 0.0028, '5812', 'Restaurante de comida casual']] };
-  else if (t === 'cuentas') sheet = { name: 'Cuentas', aoa: [['id_grupo', 'numero_afiliacion', 'nombre_comercial', 'razon_social_beneficiario', 'banco', 'clabe'], [3, '7194416', 'DEAL', 'Deal Comercializadora SA', 'STP', '646180123456789012']] };
+  else if (t === 'cuentas') sheet = { name: 'Cuentas', aoa: [['id_grupo', 'numero_afiliacion', 'nombre_comercial', 'razon_social_beneficiario', 'banco', 'clabe', 'comercio'], [3, '7194416', 'DEAL', 'Deal Comercializadora SA', 'STP', '646180123456789012', ''], ['3', '', 'Sucursal Norte', 'Deal Sucursal Norte SA', 'BBVA', '012180000000000001', 'Sucursal Norte']] };   // 2.ª fila: cuenta de COMERCIO (columna comercio = nombre como llega en la ingesta)
   else return res.status(404).json({ error: 'tipo' });
   enviarXLSX(res, `plantilla_${t}.xlsx`, X.buildXLSX([sheet]));
 });

@@ -2168,7 +2168,7 @@ async function abrirCorte(id){
   pa.append(el('div',{class:'foot-links'},`Creado por ${esc(c.creado_por||'—')}`,c.validado_por?`· Validado por ${esc(c.validado_por)}`:'',c.dispersado_por?`· Dispersado por ${esc(c.dispersado_por)}`:''));
   v.append(pa);
   const pt=el('div',{class:'panel'});pt.append(el('h3',{},'Compensación y dispersión por grupo'));
-  const rows=cal.map(cc=>{const r=cc.calc;const tr=[`<div class="tt">${esc(cc.razon)}<small>Afil. ${esc(cc.afil)} · ${esc(cc.concepto||'sin grupo')}</small></div>`,{num:r.num_trx},{num:mxn(r.m_tdd+r.m_tdc+r.m_amex+r.m_int)},{num:mxn(r.comp_total)},{num:mxn(r.banca+r.iva_banca)},{num:mxn(r.disp_total)},Math.abs(r.diferencia)<=0.01?'<span class="flagok">0.00</span>':`<span class="flagbad">${num(r.diferencia)}</span>`,(cc.faltantes&&cc.faltantes.length)?`<span class="badge warn">falta ${cc.faltantes.join(', ')}</span>`:'<span class="badge ok">ok</span>'];tr._onclick=()=>detalleCalculo(cc,c);return tr;});
+  const rows=cal.map(cc=>{const r=cc.calc;const tr=[`<div class="tt">${esc(cc.razon)}<small>Afil. ${esc(cc.afil)} · ${esc(cc.concepto||'sin grupo')}${cc.reparto&&cc.reparto.partes?` · <b>reparto: ${cc.reparto.partes.length} cuenta${cc.reparto.partes.length>1?'s':''}</b>`:''}</small></div>`,{num:r.num_trx},{num:mxn(r.m_tdd+r.m_tdc+r.m_amex+r.m_int)},{num:mxn(r.comp_total)},{num:mxn(r.banca+r.iva_banca)},{num:mxn(r.disp_total)},Math.abs(r.diferencia)<=0.01?'<span class="flagok">0.00</span>':`<span class="flagbad">${num(r.diferencia)}</span>`,(cc.faltantes&&cc.faltantes.length)?`<span class="badge warn">falta ${cc.faltantes.join(', ')}</span>`:'<span class="badge ok">ok</span>'];tr._onclick=()=>detalleCalculo(cc,c);return tr;});
   pt.append(tableWrap(['Grupo / Afiliación',{t:'Trx'},{t:'Monto'},{t:'A compensar'},{t:'Banca+IVA'},{t:'A dispersar'},'Dif.','Estado'],rows));
   pt.append(el('div',{class:'muted',style:'margin-top:8px'},'Clic en un grupo para ver el desglose completo.'));
   v.append(pt);
@@ -2230,6 +2230,14 @@ function detalleCalculo(cc,corte){const r=cc.calc;const body=el('div',{});
   g.append(col('Banca (Telematic)',[['% banca',pct(r.pct_banca)],['Banca',mxn(r.banca)],['IVA banca',mxn(r.iva_banca)]]));
   g.append(col('Dispersión (RN-09)',[['Bloque dom.+INT',mxn(r.disp_dom)],['Bloque AMEX',mxn(r.disp_amex)],['Total a dispersar',mxn(r.disp_total),true]]));
   body.append(g);
+  // Reparto de la dispersión entre los comercios con CLABE propia (el cálculo es del grupo; esto es solo a quién se le paga).
+  const rep=typeof cc.reparto==='string'?JSON.parse(cc.reparto||'null'):cc.reparto;
+  if(rep&&rep.partes&&rep.partes.length){
+    const pr=el('div',{class:'panel',style:'margin:0 0 14px'});pr.append(el('h3',{style:'font-size:14px'},'Reparto por comercio · a qué CLABE sale cada parte'));
+    pr.append(tableWrap(['Comercio','CLABE',{t:'Trx'},{t:'DOM'},{t:'AMEX'}],rep.partes.map(p=>[`<div class="tt">${esc(p.es_resto?'Resto del grupo (cuenta general)':p.comercio)}<small>${esc(p.beneficiario||'')}${p.banco?' · '+esc(p.banco):''}</small></div>`,p.clabe?`<span class="mono">${esc(p.clabe)}</span>`:'<span class="badge danger">sin CLABE</span>',{num:p.n_trx},{num:mxn(p.disp_dom)},{num:mxn(p.disp_amex)}]),{empty:'Sin partes.'}));
+    pr.append(el('div',{class:'muted',style:'margin-top:6px'},'Los cargos (contracargos, retenciones) se aplican al grupo y se reparten entre los comercios en proporción a lo que le toca a cada uno.'));
+    body.append(pr);
+  }
   body.append(el('div',{class:'banner '+(Math.abs(r.diferencia)<=0.01?'ok':'err'),html:`Comprobación: ${mxn(r.comprobacion)} · Diferencia: <b>${num(r.diferencia)}</b> · Utilidad: <b>${mxn(r.utilidad)}</b>`}));
   // Retenciones que ya entraron en este grupo (automáticas o manuales) y, en Borrador, la opción de retener directo desde el corte.
   const aj=(typeof cc.ajustes==='string'?JSON.parse(cc.ajustes||'{}'):cc.ajustes)||{};
@@ -2440,9 +2448,10 @@ async function vCuentas(v){
   const gf=await api('GET','/api/catalogo/grupos-full');
   v.innerHTML='';const p=el('div',{class:'panel'});p.append(el('h3',{},'Cuentas de liquidación'));
   const rows=cuentas.map(c=>{const g=grupos.find(x=>String(x.id_grupo)===String(c.id_grupo));const clabeOk=/^\d{18}$/.test(String(c.clabe||''));
-    const r=[`<div class="tt">${esc(g?g.nombre_cliente:('grupo '+c.id_grupo))}<small>${esc(c.nombre_comercial||'')}</small></div>`,c.numero_afiliacion?`<span class="mono">${esc(c.numero_afiliacion)}</span>`:'<span class="pill">nivel grupo</span>',esc(c.razon_social_beneficiario||''),esc(c.banco||''),`<span class="mono">${esc(c.clabe||'')}</span> ${clabeOk?'':'<span class="badge danger">18?</span>'}`,c.codigo_banco||'<span class="badge warn">?</span>'];
+    const r=[`<div class="tt">${esc(g?g.nombre_cliente:('grupo '+c.id_grupo))}<small>${esc(c.nombre_comercial||'')}</small></div>`,c.numero_afiliacion?`<span class="mono">${esc(c.numero_afiliacion)}</span>`:'<span class="pill">nivel grupo</span>',c.comercio?`<b>${esc(c.comercio)}</b>`:'<span class="muted">cuenta general</span>',esc(c.razon_social_beneficiario||''),esc(c.banco||''),`<span class="mono">${esc(c.clabe||'')}</span> ${clabeOk?'':'<span class="badge danger">18?</span>'}`,c.codigo_banco||'<span class="badge warn">?</span>'];
     if(can('catalogos'))r._onclick=()=>editCuenta(c,grupos,bancos,gf);return r;});
-  p.append(tableWrap(['Grupo','Afiliación','Beneficiario','Banco','CLABE','Cód. SPEI'],rows,{empty:'Sin cuentas. Cada afiliación con importe necesita su cuenta.'}));
+  p.append(el('div',{class:'muted',style:'margin:0 0 10px'},'La cuenta general recibe la dispersión del grupo. Un comercio con su propia CLABE recibe en ella su parte: el cálculo sigue siendo por grupo.'));
+  p.append(tableWrap(['Grupo','Afiliación','Comercio','Beneficiario','Banco','CLABE','Cód. SPEI'],rows,{empty:'Sin cuentas. Cada afiliación con importe necesita su cuenta.'}));
   v.append(p);
 }
 async function editCuenta(c,grupos,bancos,gf){const isNew=!c;c=c||{};
@@ -2451,17 +2460,24 @@ async function editCuenta(c,grupos,bancos,gf){const isNew=!c;c=c||{};
   const gsel=el('select');grupos.forEach(g=>gsel.append(el('option',{value:g.id_grupo},`${g.id_grupo} · ${g.nombre_cliente}`)));if(c.id_grupo)gsel.value=c.id_grupo;
   const asel=el('select');
   function fillAfil(){asel.innerHTML='';asel.append(el('option',{value:''},'(todas — nivel grupo)'));gf.afilGrupo.filter(a=>String(a.id_grupo)===String(gsel.value)).forEach(a=>{const af=gf.afiliaciones.find(x=>String(x.numero_afiliacion)===String(a.numero_afiliacion));asel.append(el('option',{value:a.numero_afiliacion},`${a.numero_afiliacion}${af&&af.razon_social?' · '+af.razon_social:''}`));});if(c.numero_afiliacion)asel.value=c.numero_afiliacion;}
-  gsel.addEventListener('change',fillAfil);fillAfil();
+  gsel.addEventListener('change',()=>{fillAfil();cargaComercios();});fillAfil();
   const nc=el('input',{value:c.nombre_comercial||''}),rz=el('input',{value:c.razon_social_beneficiario||''});
+  // Comercio (opcional): si se llena, esta es la CLABE propia de ese comercio; vacío = cuenta general del grupo/afiliación.
+  const com=el('input',{id:'cuComercio',value:c.comercio||'',list:'cuComerciosDl',autocomplete:'off',placeholder:'Vacío = cuenta general del grupo'});
+  const dl=el('datalist',{id:'cuComerciosDl'});const ayudaCom=el('div',{class:'req-note','aria-live':'polite'});
+  const cargaComercios=async()=>{dl.innerHTML='';ayudaCom.textContent='';
+    try{const lst=await api('GET','/api/catalogo/comercios?id_grupo='+encodeURIComponent(gsel.value));lst.forEach(x=>dl.append(el('option',{value:x.comercio},x.n+' transacciones'+(x.con_cuenta?' · ya tiene CLABE':''))));
+      ayudaCom.textContent=lst.length?'Comercios que han llegado en las transacciones de este grupo: elige uno de la lista (el nombre debe ser igual al de la ingesta).':'Aún no hay transacciones de este grupo con comercio; escríbelo igual que llega en la ingesta.';}catch(_e){}};
   const bsel=el('select');bsel.append(el('option',{value:''},'— banco —'));bancos.forEach(b=>bsel.append(el('option',{value:b.nombre},`${b.nombre} (${b.codigo_spei})`)));if(c.banco)bsel.value=c.banco;
   const clabe=el('input',{value:c.clabe||'',maxlength:'18',placeholder:'18 dígitos'});
-  body.append(fld('Grupo',gsel),fld('Afiliación',asel),fld('Nombre comercial',nc),fld('Razón social del beneficiario',rz),fld('Banco (dispersor)',bsel),fld('CLABE (18 dígitos)',clabe));
+  body.append(fld('Grupo',gsel),fld('Afiliación',asel),fld('Comercio con CLABE propia (opcional)',com),dl,ayudaCom,fld('Nombre comercial',nc),fld('Razón social del beneficiario',rz),fld('Banco (dispersor)',bsel),fld('CLABE (18 dígitos)',clabe));
+  cargaComercios();
   if(!bancos.length)body.append(el('div',{class:'banner warn'},'No hay bancos. Carga “Bancos SPEI” para resolver el código.'));
   const foot=el('div',{});
   if(!isNew)foot.append(el('button',{class:'btn danger',onclick:async()=>{if(await confirmar('¿Eliminar cuenta?')){await api('DELETE','/api/catalogo/cuenta/'+c.id);closeModal();render();}}},'Eliminar'),el('div',{style:'flex:1'}));
   foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
-    try{await api('POST','/api/catalogo/cuenta',{id:c.id,id_grupo:gsel.value,numero_afiliacion:asel.value,nombre_comercial:nc.value,razon_social_beneficiario:rz.value,banco:bsel.value,clabe:clabe.value});closeModal();toast('Guardado','ok');render();}
-    catch(e){toast(e.data&&e.data.error==='clabe_18'?'La CLABE debe tener 18 dígitos':errMsg(e),'err');}
+    try{await api('POST','/api/catalogo/cuenta',{id:c.id,id_grupo:gsel.value,numero_afiliacion:asel.value,nombre_comercial:nc.value,razon_social_beneficiario:rz.value,banco:bsel.value,clabe:clabe.value,comercio:com.value});closeModal();toast('Guardado','ok');render();}
+    catch(e){toast(e.data&&e.data.error==='clabe_18'?'La CLABE debe tener 18 dígitos':(e.data&&e.data.mensaje)||errMsg(e),'err');}
   }},'Guardar'));
   modal(isNew?'Nueva cuenta de liquidación':'Editar cuenta',body,foot);
 }

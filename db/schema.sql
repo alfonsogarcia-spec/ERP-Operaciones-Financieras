@@ -724,3 +724,10 @@ begin
     update usuarios set rol_cards = 'cards_consulta' where rol = 'consulta';
   end if;
 end $$;
+
+-- ===== Dispersión por COMERCIO =====
+-- El cálculo sigue siendo por grupo de cliente + afiliación. Una cuenta con `comercio` (nombre como llega en la ingesta) es la CLABE propia de ese
+-- comercio: al generar el layout, su parte de la dispersión del grupo sale a esa cuenta. Sin `comercio`, es la cuenta general del grupo/afiliación.
+alter table cuentas add column if not exists comercio text;
+-- Cómo se repartió la dispersión de cada fila del corte entre los comercios (null = se paga a la cuenta del grupo, como siempre).
+alter table calculos add column if not exists reparto jsonb;
