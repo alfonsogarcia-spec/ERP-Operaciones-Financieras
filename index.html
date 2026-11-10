@@ -1554,21 +1554,38 @@ function kpisNegocio(ng){
   ]);
   // Tarjeta de "share": cada categoría con su porcentaje del monto.
   const share=(titulo,lista,nota)=>{
-    const d=el('div',{class:'card'},el('div',{class:'label'},titulo));
+    const d=el('div',{class:'card',style:'padding:12px 14px'},el('div',{class:'label'},titulo));
     if(!lista.length)d.append(el('div',{class:'hint'},'Sin datos en el periodo'));
-    lista.forEach(x=>d.append(el('div',{style:'display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0;border-top:0.5px solid var(--line,#e5e7eb)'},el('span',{style:'min-width:0;overflow-wrap:anywhere'},x.etiqueta),el('b',{style:'font-variant-numeric:tabular-nums;white-space:nowrap'},pc(x.pct_monto)))));
+    lista.forEach(x=>d.append(filaShare(x.etiqueta,x.pct_monto)));
     if(nota)d.append(el('div',{class:'hint',style:'margin-top:6px'},nota));
     return d;
   };
-  const giros=[...ng.giros.principales.slice(0,5).map(x=>({etiqueta:(x.mcc?x.mcc+' · ':'')+(x.giro||'—'),pct_monto:x.pct_monto})),
-    ...((ng.giros.principales.length>5||ng.giros.otros)?[{etiqueta:'Otros giros',pct_monto:r2c(ng.giros.principales.slice(5).reduce((s,x)=>s+x.pct_monto,0)+(ng.giros.otros?ng.giros.otros.pct_monto:0))}]:[]),
+  // Una línea por categoría: el nombre se corta con puntos suspensivos (el texto completo sale al pasar el cursor) para que la tarjeta no se alargue.
+  const filaShare=(txt,pct,envolver)=>el('div',{style:'display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:12.5px;line-height:1.35;padding:2px 0;border-top:0.5px solid var(--line,#e5e7eb)'},
+    el('span',{title:txt,style:envolver?'min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden':'min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'},txt),
+    el('b',{style:'font-variant-numeric:tabular-nums;white-space:nowrap'},pc(pct)));
+  // Giros (MCC): compacto por omisión (los 3 principales, una línea cada uno); "Ver todos" despliega la lista completa.
+  const girosTodos=[...ng.giros.principales.map(x=>({etiqueta:(x.mcc?x.mcc+' · ':'')+(x.giro||'—'),pct_monto:x.pct_monto})),
+    ...(ng.giros.otros?[{etiqueta:ng.giros.otros.giro,pct_monto:ng.giros.otros.pct_monto}]:[]),
     ...(ng.giros.sin_mcc?[{etiqueta:'Sin MCC en el catálogo',pct_monto:ng.giros.sin_mcc.pct_monto}]:[])];
+  const tarjetaGiros=()=>{
+    const d=el('div',{class:'card',style:'padding:12px 14px'},el('div',{class:'label'},'Giros principales (MCC)'));
+    const cuerpo=el('div',{});d.append(cuerpo);
+    let abierto=false;
+    const btn=el('button',{type:'button',class:'btn ghost sm',style:'margin-top:6px;padding:3px 8px;font-size:12px'});
+    const pinta=()=>{cuerpo.innerHTML='';(abierto?girosTodos:girosTodos.slice(0,3)).forEach(x=>cuerpo.append(filaShare(x.etiqueta,x.pct_monto,abierto)));
+      btn.textContent=abierto?'Ver menos ▴':'Ver todos ('+girosTodos.length+') ▾';btn.setAttribute('aria-expanded',abierto?'true':'false');};
+    btn.onclick=()=>{abierto=!abierto;pinta();};
+    if(!girosTodos.length)cuerpo.append(el('div',{class:'hint'},'Sin datos en el periodo'));
+    else{pinta();if(girosTodos.length>3)d.append(btn);}
+    return d;
+  };
   const sinCanal=ng.canales.sin_clasificar_pct;
-  const fila2=el('div',{class:'cards'},
+  const fila2=el('div',{class:'cards',style:'align-items:start'},   // cada tarjeta mide lo suyo: una larga no estira a las demás
     share('Tarjetas que pagan',ng.tarjetas),
     share('Marcas',ng.marcas),
     share('Canales',ng.canales.agrupado,sinCanal>0?pc(sinCanal)+' no trae modo de entrada (carga de antifraude)':''),
-    share('Giros principales (MCC)',giros));
+    tarjetaGiros());
   // Desglose mensual, anual y altas por año: plegado para no alargar el Panel.
   const det=el('details',{style:'margin:0 0 14px'});
   det.append(el('summary',{style:'cursor:pointer;font-weight:600;padding:6px 0'},'Desglose: volumen mensual y anual · comercios nuevos por año'));
@@ -1581,7 +1598,6 @@ function kpisNegocio(ng){
   g2.append(pn);det.append(g2);
   return [fila1,fila2,det];
 }
-const r2c=n=>Math.round((Number(n)||0)*100)/100;
 async function vDashboard(v){
   const hoy = new Date();
   const y = hoy.getFullYear(), mo = hoy.getMonth()+1;
