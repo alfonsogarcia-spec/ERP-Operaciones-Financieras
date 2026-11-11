@@ -162,6 +162,9 @@ app.post('/api/ingesta/evento', exigirBD, conToken, async (req, res) => {
   } else if (evento === 'fin' && clave) {
     await db.q(`update actividad set fin = now(), duracion_s = round(extract(epoch from now() - inicio))::int
                 where sesion = $1 and clave = $2 and fin is null and now() - inicio >= interval '${LANZAMIENTO_RAPIDO_S} seconds'`, [sesion, clave]);
+  } else if (evento === 'error' && clave) {
+    // El tool Agent falló (p. ej. agente inexistente): el agente nunca trabajó, se borra la actividad abierta.
+    await db.q('delete from actividad where sesion = $1 and clave = $2 and fin is null', [sesion, clave]);
   } else if (evento === 'sub-fin' && agente) {
     await db.q(`update actividad set fin = now(), duracion_s = round(extract(epoch from now() - inicio))::int
                 where id = (select id from actividad where sesion = $1 and agente = $2 and fin is null order by inicio limit 1)`, [sesion, agente]);

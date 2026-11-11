@@ -9,6 +9,7 @@ Registra qué agente está trabajando:
 Eventos (argumento 1):
   inicio   PreToolUse del tool Agent/Task
   fin      PostToolUse del tool Agent/Task
+  error    PostToolUseFailure del tool Agent/Task (agente inexistente u otro fallo)
   sub-fin  SubagentStop
   prompt   UserPromptSubmit (Recepción atiende)
   stop     Stop (Recepción queda libre)
@@ -43,11 +44,34 @@ def config_remota():
     return (url.rstrip("/"), token, bool(cfg.get("enviar_prompt"))) if url and token else (None, None, False)
 
 
+def contexto_ssl():
+    # El Python de python.org en macOS no trae certificados: usa certifi o los del sistema.
+    import ssl
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+    ctx = ssl.create_default_context()
+    if not ctx.get_ca_certs() and os.path.exists("/etc/ssl/cert.pem"):
+        ctx.load_verify_locations("/etc/ssl/cert.pem")
+    return ctx
+
+
 def enviar(url, token, ruta, datos):
     req = urllib.request.Request(url + ruta, data=json.dumps(datos).encode(), method="POST",
                                  headers={"Content-Type": "application/json", "Authorization": "Bearer " + token,
                                           "User-Agent": "oficina-polipay-hook/1.0"})
-    urllib.request.urlopen(req, timeout=2.5).read()
+    urllib.request.urlopen(req, timeout=2.5, context=contexto_ssl()).read()
+
+
+def agente_existe(tipo, proyecto_dir):
+    # Solo se registra un agente que realmente existe en el proyecto o en ~/.claude/agents; si no existe,
+    # el tool Agent falla de inmediato y nunca llegaría el aviso de fin (quedaría "Trabajando" para siempre).
+    if not tipo or "/" in tipo or "\\" in tipo:
+        return False
+    return any(os.path.exists(os.path.join(d, tipo + ".md")) for d in
+               (os.path.join(proyecto_dir, ".claude", "agents"), os.path.expanduser("~/.claude/agents")))
 
 
 def escribir_local(base, evento, entrada, ti):
@@ -79,6 +103,8 @@ def escribir_local(base, evento, entrada, ti):
             act = d["activos"].get(clave)
             if act and ahora() - act["inicio_ts"] >= LANZAMIENTO_RAPIDO_S:
                 terminar(clave)
+        elif evento == "error":
+            d["activos"].pop(clave, None)
         elif evento == "sub-fin":
             tipo = entrada.get("agent_type") or entrada.get("subagent_type")
             cands = sorted(((k, v) for k, v in d["activos"].items() if v["agente"] != "recepcion" and v["agente"] == tipo),
@@ -113,6 +139,9 @@ def main():
     if global_ and os.path.exists(os.path.join(base_local, "hooks", "actividad.py")):
         return
 
+    if evento == "inicio" and not agente_existe(ti.get("subagent_type"), proyecto_dir):
+        return
+
     if os.path.exists(os.path.join(base_local, "agentes.json")):
         try:
             escribir_local(base_local, evento, entrada, ti)
@@ -124,7 +153,7 @@ def main():
         return
     datos = {"evento": evento, "sesion": entrada.get("session_id") or "sin-sesion",
              "proyecto": os.path.basename(os.path.normpath(proyecto_dir)), "maquina": socket.gethostname().split(".")[0]}
-    if evento in ("inicio", "fin"):
+    if evento in ("inicio", "fin", "error"):
         if not ti.get("subagent_type"):
             return
         datos.update(agente=ti["subagent_type"], descripcion=ti.get("description"),
