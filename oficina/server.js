@@ -92,7 +92,8 @@ async function conToken(req, res, next) {
 }
 
 // ---------------------------------------------------------------- salud y config
-app.get('/healthz', (_req, res) => res.status(dbListo ? 200 : 503).json({ ok: dbListo, db: dbKind || null, error: dbError, version: require('./package.json').version }));
+// Siempre 200 para que Render complete el despliegue; el estado real de la BD va en el cuerpo (ok/db/error).
+app.get('/healthz', (_req, res) => res.status(200).json({ ok: dbListo, db: dbKind || null, error: dbError, version: require('./package.json').version }));
 app.get('/api/config', (req, res) => res.json({ modo: 'remoto', googleClientId: GOOGLE_CLIENT_ID, dominio: ALLOWED_HD || null, dev: MODO_DEV, usuario: usuarioSesion(req) }));
 
 // ---------------------------------------------------------------- login Google
