@@ -59,3 +59,33 @@ services:
         sync: false
       - key: CARTERA_CLAVE_OPERADOR
         sync: false
+
+  # ----------------------------------------------------------------
+  # Oficina Virtual Polipay — mapa animado del equipo de agentes de IA.
+  # Vive en la carpeta oficina/ de ESTE repo (rootDir), con su propia URL.
+  # Mismo Supabase, aislada en el schema `oficina`. No guarda CLABEs, tarjetahabientes ni KYC.
+  - type: web
+    name: oficina-polipay
+    rootDir: oficina
+    runtime: node
+    plan: starter
+    region: oregon
+    buildCommand: npm install --omit=dev
+    startCommand: node server.js
+    autoDeploy: true
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: OFICINA_SCHEMA
+        value: oficina
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false        # misma cadena de Supabase que DATABASE_URL de conciliación (Session pooler)
+      - key: GOOGLE_CLIENT_ID
+        sync: false        # mismo OAuth Client ID; agrega la URL de la oficina en "Orígenes autorizados"
+      - key: ALLOWED_HD
+        sync: false        # polipay.io
+      - key: OFICINA_ADMINS
+        sync: false        # correos separados por coma que pueden generar tokens de conexión

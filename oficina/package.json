@@ -1,0 +1,20 @@
+{
+  "name": "oficina-polipay",
+  "version": "1.0.0",
+  "description": "Oficina Virtual Polipay — mapa animado del equipo de agentes de IA (Claude Code)",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "scripts": { "start": "node server.js", "dev": "node server.js" },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^4.19.2",
+    "express-rate-limit": "^8.6.2",
+    "google-auth-library": "^11.0.0",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4"
+  }
+}
