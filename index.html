@@ -1897,14 +1897,15 @@ function openIngesta(){
   const mostrarDuplicados=d=>{
     out.innerHTML='';
     out.append(el('div',{class:'banner err'},'⛔ '+d.mensaje));
+    out.append(el('div',{class:'req-note'},'Regla: una referencia y autorización repetidas solo son válidas si la fila repetida es una devolución, es decir, con el monto en negativo (por ejemplo −1,250.00). Una venta repetida, o con monto cero, bloquea el archivo.'));
     const ea=d.en_archivo||{referencias:0,ejemplos:[]}, yc=d.ya_cargadas||{referencias:0,ejemplos:[]};
     const lim=(n,l)=>n>l?` (se muestran las primeras ${l})`:'';
     if(ea.referencias){
-      out.append(el('h4',{style:'margin:12px 0 6px'},`Referencia y autorización repetidas dentro del archivo: ${ea.referencias}${lim(ea.referencias,ea.ejemplos.length)}`));
+      out.append(el('h4',{style:'margin:12px 0 6px'},`Referencia y autorización repetidas que no son devolución (dentro del archivo): ${ea.referencias}${lim(ea.referencias,ea.ejemplos.length)}`));
       out.append(tableWrap(['Referencia','Autorización',{t:'Veces'},'Filas del archivo'],ea.ejemplos.map(x=>[`<span class="mono">${esc(x.referencia)}</span>`,x.autorizacion?`<span class="mono">${esc(x.autorizacion)}</span>`:'<span class="muted">(vacía)</span>',{num:String(x.veces)},esc(x.filas.map(f=>f.fila).join(', ')+(x.veces>x.filas.length?'…':''))])));
     }
     if(yc.referencias){
-      out.append(el('h4',{style:'margin:12px 0 6px'},`Referencia y autorización ya cargadas en el sistema: ${yc.referencias}${lim(yc.referencias,yc.ejemplos.length)}`));
+      out.append(el('h4',{style:'margin:12px 0 6px'},`Ventas con referencia y autorización que ya están cargadas en el sistema: ${yc.referencias}${lim(yc.referencias,yc.ejemplos.length)}`));
       out.append(tableWrap(['Referencia','Autorización','Fila del archivo','Ya existe en'],yc.ejemplos.map(x=>[`<span class="mono">${esc(x.referencia)}</span>`,x.autorizacion?`<span class="mono">${esc(x.autorizacion)}</span>`:'<span class="muted">(vacía)</span>',esc(String(x.filas[0].fila)),esc((x.archivo||'—')+(x.cargado?' · '+String(x.cargado).slice(0,10):''))])));
     }
     out.scrollIntoView({behavior:'smooth',block:'nearest'});
@@ -1913,8 +1914,8 @@ function openIngesta(){
   foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cerrar'),el('button',{class:'btn',onclick:async()=>{
     const fd=new FormData();fd.append('modo',modo.value);
     if(file.files[0])fd.append('archivo',file.files[0]);else if(ta.value.trim())fd.append('csv',ta.value.trim());else{toast('Sube un archivo o pega CSV','err');return;}
-    try{const res=await withBusy('Procesando en el servidor…',()=>api('POST','/api/transacciones/ingesta',fd));closeModal();render();toast(`Cargadas ${res.validas} · ${res.invalidas} inválidas · ${mxn(res.monto)}`,res.invalidas?'':'ok');}
-    catch(e){if(e.data&&e.data.error==='referencias_duplicadas'){mostrarDuplicados(e.data);toast('Archivo bloqueado: hay transacciones repetidas (misma referencia y autorización)','err');}else toast('Error: '+errMsg(e),'err');}
+    try{const res=await withBusy('Procesando en el servidor…',()=>api('POST','/api/transacciones/ingesta',fd));closeModal();render();toast(`Cargadas ${res.validas} · ${res.invalidas} inválidas · ${mxn(res.monto)}`+(res.devoluciones?` · ${res.devoluciones} devolución(es) ligadas a su venta`:''),res.invalidas?'':'ok');}
+    catch(e){if(e.data&&e.data.error==='referencias_duplicadas'){mostrarDuplicados(e.data);toast('Archivo bloqueado: referencia y autorización repetidas que no son devolución (monto negativo)','err');}else toast('Error: '+errMsg(e),'err');}
   }},'Procesar'));
   modal('Ingesta de transacciones',body,foot,true);
 }

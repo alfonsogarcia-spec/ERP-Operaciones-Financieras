@@ -938,39 +938,35 @@ function extraerAntifraude(o) {
   };
 }
 
-/* Candado de ingesta: la columna "referencia" no puede repetirse.
-   Bloquea (no sube nada) si hay referencias repetidas DENTRO del archivo, o que YA estén cargadas en el sistema
-   (modo "Agregar"; en "Reemplazar todo" se borra lo existente, así que solo cuenta el archivo).
-   Las filas sin referencia no cuentan (no hay con qué compararlas). Se compara sin espacios ni mayúsculas. */
+/* Candado de ingesta: la misma referencia Y autorización NO puede repetirse, salvo en una DEVOLUCIÓN (monto en negativo). Las reglas viven en
+   lib/ingesta-duplicados.js. Bloquea (no sube nada) si el archivo trae una pareja repetida que no sea venta + devoluciones, o una venta cuya pareja
+   YA está cargada como venta (modo "Agregar"; en "Reemplazar todo" se borra lo existente, así que solo cuenta el archivo).
+   Las filas sin referencia no cuentan. Se compara sin espacios ni mayúsculas. */
+const DUP = require('./lib/ingesta-duplicados.js');
 const REF_DUP_EJEMPLOS = 100;
 async function referenciasDuplicadas(filas, modo) {
-  // Una transacción se repite SOLO si coinciden referencia Y autorización (sin importar mayúsculas ni espacios de más).
-  // Misma referencia con otra autorización, o misma autorización con otra referencia, NO es repetida. Sin referencia no se compara.
-  const norm = r => String(r == null ? '' : r).trim().toUpperCase();
-  const SEP = '\u0001';
-  const vistas = new Map();   // "REF␁AUT" → { ref, aut, filas: [índices] }
-  filas.forEach((f, i) => {
-    const r = norm(f.referencia); if (!r) return;
-    const a = norm(f.autorizacion), k = r + SEP + a;
-    if (!vistas.has(k)) vistas.set(k, { ref: r, aut: a, filas: [] });
-    vistas.get(k).filas.push(i);
-  });
-  const enArchivo = [...vistas.values()].filter(v => v.filas.length > 1);
-  let yaCargadas = [];
+  const vistas = DUP.agrupar(filas);
+  const enArchivo = DUP.repetidasEnArchivo(vistas);
+  let cargadas = [];
   if (modo !== 'replace' && vistas.size) {
     const pares = [...vistas.values()];
-    yaCargadas = (await db.query(
-      `select upper(btrim(t.referencia)) as ref, upper(btrim(coalesce(t.autorizacion, ''))) as aut, count(*)::int as veces, max(t.archivo_origen) as archivo, max(t.ingesta_fecha)::text as cargado
+    cargadas = (await db.query(
+      `select upper(btrim(t.referencia)) as ref, upper(btrim(coalesce(t.autorizacion, ''))) as aut, count(*)::int as veces,
+              count(*) filter (where t.monto >= 0)::int as ventas, count(*) filter (where t.monto < 0)::int as devoluciones,
+              max(t.archivo_origen) as archivo, max(t.ingesta_fecha)::text as cargado
          from transacciones t join unnest($1::text[], $2::text[]) u(r, a) on upper(btrim(t.referencia)) = u.r and upper(btrim(coalesce(t.autorizacion, ''))) = u.a
         group by 1, 2 order by 1, 2`, [pares.map(v => v.ref), pares.map(v => v.aut)])).rows;
   }
-  if (!enArchivo.length && !yaCargadas.length) return null;
+  const yaCargadas = DUP.repetidasContraCargadas(vistas, cargadas);
+  const devoluciones = DUP.devolucionesLigadas(vistas, cargadas);
+  if (!enArchivo.length && !yaCargadas.length) return { bloqueado: false, devoluciones };
   const fila = i => ({ fila: i + 2, fecha: filas[i].fecha, monto: filas[i].monto, estatus: filas[i].estatus });
   return {
-    en_archivo: { referencias: enArchivo.length, filas_repetidas: enArchivo.reduce((n, v) => n + v.filas.length, 0),
-      ejemplos: enArchivo.slice(0, REF_DUP_EJEMPLOS).map(v => ({ referencia: v.ref, autorizacion: v.aut, veces: v.filas.length, filas: v.filas.slice(0, 6).map(fila) })) },
+    bloqueado: true, devoluciones,
+    en_archivo: { referencias: enArchivo.length, filas_repetidas: enArchivo.reduce((n, v) => n + v.ventas.length, 0),
+      ejemplos: enArchivo.slice(0, REF_DUP_EJEMPLOS).map(v => ({ referencia: v.ref, autorizacion: v.aut, veces: v.filas.length, ventas: v.ventas.length, devoluciones: v.devoluciones.length, filas: v.filas.slice(0, 6).map(fila) })) },
     ya_cargadas: { referencias: yaCargadas.length,
-      ejemplos: yaCargadas.slice(0, REF_DUP_EJEMPLOS).map(r => ({ referencia: r.ref, autorizacion: r.aut, veces: r.veces, archivo: r.archivo || '—', cargado: r.cargado || null, filas: [fila(vistas.get(r.ref + SEP + r.aut).filas[0])] })) },
+      ejemplos: yaCargadas.slice(0, REF_DUP_EJEMPLOS).map(r => ({ referencia: r.ref, autorizacion: r.aut, veces: r.veces, archivo: r.archivo || '—', cargado: r.cargado || null, filas: vistas.get(r.ref + DUP.SEP + r.aut).ventas.slice(0, 6).map(fila) })) }
   };
 }
 app.post('/api/transacciones/ingesta', auth, requiereRol('admin', 'operador'), upload.single('archivo'), validaArchivo, async (req, res) => {
@@ -999,13 +995,13 @@ app.post('/api/transacciones/ingesta', auth, requiereRol('admin', 'operador'), u
   }
   // CANDADO: referencias duplicadas → el archivo NO se sube (se valida antes de borrar o insertar nada).
   const dup = await referenciasDuplicadas(filas, modo);
-  if (dup) {
+  if (dup.bloqueado) {
     const nombreDup = req.file ? (req.file.originalname || '') : '(pegado)';
     await bit(req, 'ingesta_bloqueada', `referencia+autorización duplicadas: ${dup.en_archivo.referencias} repetidas en el archivo, ${dup.ya_cargadas.referencias} ya cargadas · archivo ${nombreDup}`, { success: false });
     const partes = [];
-    if (dup.en_archivo.referencias) partes.push(`${dup.en_archivo.referencias} transacción(es) con la misma referencia y autorización repetida(s) dentro del archivo`);
-    if (dup.ya_cargadas.referencias) partes.push(`${dup.ya_cargadas.referencias} transacción(es) con la misma referencia y autorización que ya están cargadas en el sistema`);
-    return res.status(409).json({ error: 'referencias_duplicadas', mensaje: `El archivo NO se cargó: ${partes.join(' y ')}. Corrígelo y vuelve a subirlo.`, ...dup });
+    if (dup.en_archivo.referencias) partes.push(`${dup.en_archivo.referencias} transacción(es) con la misma referencia y autorización repetida(s) dentro del archivo que no son devolución`);
+    if (dup.ya_cargadas.referencias) partes.push(`${dup.ya_cargadas.referencias} transacción(es) con la misma referencia y autorización que ya están cargadas en el sistema y no son devolución`);
+    return res.status(409).json({ error: 'referencias_duplicadas', mensaje: `El archivo NO se cargó: ${partes.join(' y ')}. ${DUP.TEXTO_REGLA} Corrígelo y vuelve a subirlo.`, regla: DUP.TEXTO_REGLA, ...dup });
   }
   if (modo === 'replace') await db.query('delete from transacciones');
   // Asignar identificador de lote a todas las filas
@@ -1014,8 +1010,8 @@ app.post('/api/transacciones/ingesta', auth, requiereRol('admin', 'operador'), u
   const ingestaAt = new Date().toISOString();
   filas.forEach(r => { r.ingesta_id = ingestaId; r.ingesta_fecha = ingestaAt; r.archivo_origen = nombreArchivo; r.cargado_por = req.user.nombre; });
   await insertMany('transacciones', ['fecha', 'hora', 'cliente', 'comercio', 'numero_afiliacion', 'estatus', 'metodo', 'producto', 'monto', 'folio', 'referencia', 'autorizacion', 'terminal', 'fecha_liq', 'cancelacion', 'invalida', 'ingesta_id', 'ingesta_fecha', 'archivo_origen', 'cargado_por', ...X.TX_EXTRA, 'tarjeta_key'], filas);
-  await bit(req, 'ingesta', `${validas} válidas, ${invalidas} inválidas (${modo}) · lote ${ingestaId} · archivo ${nombreArchivo}`);
-  res.json({ validas, invalidas, monto: E.round2(monto), ingesta_id: ingestaId, con_datos_tarjeta: filas.filter(r => r.tarjeta_key).length });
+  await bit(req, 'ingesta', `${validas} válidas, ${invalidas} inválidas (${modo}) · lote ${ingestaId} · archivo ${nombreArchivo}${dup.devoluciones ? ` · ${dup.devoluciones} devolución(es) ligadas a su venta` : ''}`);
+  res.json({ validas, invalidas, monto: E.round2(monto), ingesta_id: ingestaId, con_datos_tarjeta: filas.filter(r => r.tarjeta_key).length, devoluciones: dup.devoluciones });
 });
 
 /* ---------- Completar datos de tarjeta de transacciones YA ingestadas ----------
