@@ -2531,7 +2531,7 @@ async function vGrupos(v){
     el('span',{},' '),
     el('button',{class:'btn secondary sm',onclick:()=>descargar('/api/plantilla/grupos.xlsx','plantilla_grupos.xlsx')},'⬇ Plantilla Excel'),
     el('span',{},' '),
-    el('button',{class:'btn secondary sm',onclick:()=>openImport('grupos','Importar grupos')},'Importar Excel'),
+    el('button',{class:'btn secondary sm',title:'Descarga el catálogo, cámbialo en Excel y súbelo: primero ves cada cambio y luego confirmas',onclick:()=>openLayoutGrupos()},'Modificar por layout'),
     el('span',{},' '),
     el('button',{class:'btn',onclick:()=>editGrupo()},'+ Alta guiada'),
   );
@@ -4760,6 +4760,104 @@ function bitQuery(){
   if(BIT.offset) params.push('offset='+BIT.offset);
   if(BIT.limit!==100) params.push('limit='+BIT.limit);
   return params.join('&');
+}
+
+/* ---------- Grupos y afiliaciones por layout: simula, muestra cada cambio y aplica solo al confirmar ---------- */
+function openLayoutGrupos(){
+  const body=el('div',{});
+  const paso1=el('div',{});
+  paso1.append(el('div',{class:'banner'},'1) Descarga el catálogo (botón «Descargar catálogo»)  2) Cambia lo que necesites en Excel  3) Súbelo aquí. Primero verás cada cambio (antes → después); no se guarda nada hasta que confirmes. El id_grupo es la llave del grupo y no se cambia por layout: un id distinto crea otro grupo. Las tasas van como porcentaje normal (2.5 = 2.5%, sin decimales de fracción como 0.025) · celda vacía = no cambia · escribe PARAM para volver al valor de Parámetros.'));
+  const zf=zonaArchivos({accept:'.xlsx,.xls,.csv,.tsv,.txt',titulo:'Arrastra aquí el layout (Excel o CSV)',ayuda:'.xlsx, .xls, .csv, .tsv o .txt · o haz clic para elegirlo'});
+  const file=zf.input;
+  const ta=el('textarea',{style:'min-height:90px',placeholder:'…o pega aquí el CSV'});
+  paso1.append(zf,el('label',{class:'field'},'…o pega CSV',ta));
+  const res=el('div',{});
+  body.append(paso1,res);
+  const foot=el('div',{});
+  let archivo=null,csv='',btnAp=null;
+  const cerrar=el('button',{class:'btn ghost',onclick:closeModal},'Cancelar');
+  const btnRev=el('button',{class:'btn',onclick:revisar},'Revisar cambios');
+  foot.append(cerrar,btnRev);
+  const fd0=(extra)=>{const fd=new FormData();if(archivo)fd.append('archivo',archivo);else fd.append('csv',csv);Object.entries(extra||{}).forEach(([k,v])=>fd.append(k,v));return fd;};
+  async function revisar(){
+    archivo=file.files[0]||null;csv=ta.value.trim();
+    if(!archivo&&!csv){toast('Sube un archivo o pega CSV','err');return;}
+    let r;
+    try{r=await withBusy('Revisando el layout…',()=>api('POST','/api/catalogo/grupos-layout',fd0()));}catch(e){toast('Error: '+errMsg(e),'err');return;}
+    pintar(r.plan);
+  }
+  const TXT=(campo,v)=>{if(v===null||v===undefined||v==='')return /^(razon_social|mcc)$/.test(campo)?'(vacío)':(/^int_(tdd|tdc)$/.test(campo)?'0%':'(Parámetros)');
+    if(/^(tasa_pac_|pct_banca|int_|fee_)/.test(campo))return (Math.round(Number(v)*1e6)/1e4).toLocaleString('es-MX',{maximumFractionDigits:4})+'%';
+    if(campo==='costo_x_trx')return '$'+Number(v).toFixed(2);return String(v);};
+  const ETQ={razon_social:'Razón social',mcc:'MCC',costo_x_trx:'Costo por trx',tasa_pac_tdd:'Tasa TDD',tasa_pac_tdc:'Tasa TDC',tasa_pac_amex:'Tasa AMEX',tasa_pac_int:'Tasa Int.',pct_banca:'% banca',int_tdd:'Interc. TDD',int_tdc:'Interc. TDC',int_amex:'Interc. AMEX',int_int:'Interc. Int.',fee_broxel:'Fee Broxel',relacion:'Relación'};
+  function pintar(plan){
+    paso1.hidden=true;res.innerHTML='';
+    const R=plan.resumen,hayErr=!plan.ok;
+    const chip=(t,cls)=>el('span',{class:'badge '+cls,style:'margin-right:6px'},t);
+    const chips=el('div',{style:'margin:0 0 10px 0'});
+    chips.append(chip(R.total+' filas','neutral'));
+    if(R.crear)chips.append(chip(R.crear+' nuevas','ok'));
+    if(R.modificar)chips.append(chip(R.modificar+' con cambios','info'));
+    if(R.sin_cambio)chips.append(chip(R.sin_cambio+' sin cambio','soft'));
+    if(R.error)chips.append(chip(R.error+' con error','danger'));
+    if(R.con_avisos)chips.append(chip(R.con_avisos+' con aviso','warn'));
+    if(R.con_escala)chips.append(chip(R.con_escala+' con aviso de escala','danger'));
+    res.append(chips);
+    const MODO={porcentaje:'Tasas leídas como porcentaje (2.5 = 2.5%)',fraccion:'Tasas leídas como fracción — archivo anterior (0.025 = 2.5%)',mixto:'Mezcla de formatos de tasa'};
+    if(MODO[plan.modo_tasas])res.append(el('div',{class:'req-note'},MODO[plan.modo_tasas]));
+    (plan.avisos_archivo||[]).forEach(m=>res.append(el('div',{class:'banner',style:'color:var(--warn-ink,#8a5a00)'},'⚠ '+m)));
+    (plan.errores_archivo||[]).forEach(m=>res.append(el('div',{class:'banner',style:'color:var(--danger)'},m)));
+    if(plan.columnas_ignoradas&&plan.columnas_ignoradas.length)res.append(el('div',{class:'req-note'},'Columnas que no se leen: '+plan.columnas_ignoradas.join(', ')));
+    if(hayErr&&!(plan.errores_archivo||[]).length)res.append(el('div',{class:'banner',style:'color:var(--danger)'},'Hay filas con error: no se guardaría nada. Corrígelas en el Excel y súbelo de nuevo.'));
+    const rows=[];
+    plan.filas.filter(f=>f.accion!=='sin_cambio'||f.errores.length||f.avisos.length).forEach(f=>{
+      const estado=f.errores.length?'<span class="badge danger">Error</span>':f.accion==='crear'?'<span class="badge ok">Nueva</span>':f.accion==='modificar'?'<span class="badge info">Cambia</span>':'<span class="badge soft">Sin cambio</span>';
+      const det=el('div',{style:'font-size:12px;line-height:1.5'});
+      f.errores.forEach(m=>det.append(el('div',{style:'color:var(--danger)'},'✖ '+m)));
+      f.cambios.forEach(c=>{if(c.campo==='relacion'){det.append(el('div',{},'Relación grupo ↔ afiliación nueva'));return;}
+        det.append(el('div',{},el('b',{},(ETQ[c.campo]||c.campo)+': '),f.nueva_relacion?TXT(c.campo,c.despues):TXT(c.campo,c.antes)+' → '+TXT(c.campo,c.despues)));});
+      f.avisos.forEach(m=>det.append(el('div',{class:f.escala?'':'muted',style:f.escala?'color:var(--warn-ink,#8a5a00)':''},'⚠ '+m)));
+      rows.push([String(f.n),estado,String(f.id_grupo==null?'—':f.id_grupo),String(f.numero_afiliacion||'—'),det]);
+    });
+    res.append(tableWrap(['Fila','Estado','Grupo','Afiliación','Detalle'],rows,{empty:'Nada que cambiar: el archivo coincide con el catálogo actual.'}));
+    let chkRen=null;
+    if(plan.renombres&&plan.renombres.length){
+      const caja=el('div',{class:'panel',style:'margin-top:12px'});
+      caja.append(el('div',{style:'font-weight:600;margin-bottom:6px'},'El archivo cambia el nombre de '+plan.renombres.length+' grupo(s)'));
+      plan.renombres.forEach(r=>{caja.append(el('div',{style:'font-size:13px'},'#'+r.id_grupo+': «'+r.antes+'» → «'+r.despues+'»'));
+        const im=(plan.impacto_renombres||[]).find(x=>x.id_grupo===r.id_grupo);
+        if(im&&im.efecto==='ninguno')caja.append(el('div',{class:'muted',style:'font-size:12px;margin:2px 0 6px 0'},'Solo cambian mayúsculas o minúsculas: no afecta la liga con las transacciones.'));
+        else if(im&&im.transacciones)caja.append(el('div',{style:'font-size:12px;color:var(--danger);margin:2px 0 6px 0'},'⚠ '+im.transacciones.toLocaleString('es-MX')+' transacciones ya cargadas llegan con el nombre «'+r.antes+'» (ya cortadas'+(im.ultima_fecha_liq?', hasta la liquidación del '+im.ultima_fecha_liq:'')+'): dejarían de ligarse a este grupo, y también las próximas cargas con ese nombre. Las que estén pendientes de corte bloquean el renombre.'));});
+      chkRen=el('input',{type:'checkbox',id:'layoutRenombrar'});
+      caja.append(el('label',{style:'display:flex;gap:8px;align-items:center;margin-top:8px;font-size:13px'},chkRen,'Entiendo el efecto y quiero renombrar estos grupos (aplica a todas sus afiliaciones). Si no lo marcas, se conservan los nombres actuales.'));
+      res.append(caja);
+    }
+    const nAplica=R.crear+R.modificar;
+    let chkEsc=null;
+    if(plan.requiere_confirmacion){
+      const caja=el('div',{class:'panel',style:'margin-top:12px'});
+      chkEsc=el('input',{type:'checkbox',id:'layoutEscala'});
+      caja.append(el('div',{style:'font-weight:600;margin-bottom:6px'},'Posible error de escala en las tasas'),
+        el('label',{style:'display:flex;gap:8px;align-items:center;font-size:13px'},chkEsc,'Revisé los avisos de escala y confirmo que las tasas están en el porcentaje correcto.'));
+      res.append(caja);
+    }
+    const habilita=()=>{btnAp.disabled=!!(hayErr||(!nAplica&&!chkRen)||(chkEsc&&!chkEsc.checked));};
+    foot.innerHTML='';
+    foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),
+      el('button',{class:'btn secondary',onclick:()=>{res.innerHTML='';paso1.hidden=false;foot.innerHTML='';foot.append(cerrar,btnRev);}},'Elegir otro archivo'),
+      btnAp=el('button',{class:'btn ok',onclick:async()=>{
+        try{
+          const r=await withBusy('Guardando cambios…',()=>api('POST','/api/catalogo/grupos-layout',fd0({aplicar:'1',huella:plan.huella,renombrar:chkRen&&chkRen.checked?'1':'0',confirmo_escala:chkEsc&&chkEsc.checked?'1':'0'})));
+          closeModal();toast(`Layout aplicado: ${r.creadas} nuevas, ${r.modificadas} modificadas${r.renombrados?`, ${r.renombrados} renombrados`:''}`,'ok');render();
+        }catch(e){
+          if(e.data&&e.data.plan)pintar(e.data.plan);
+          toast('No se guardó: '+errMsg(e),'err');
+        }
+      }},hayErr?'Corrige los errores para aplicar':nAplica?`Aplicar ${nAplica} cambio${nAplica===1?'':'s'}`:'Aplicar'));
+    if(chkEsc)chkEsc.addEventListener('change',habilita);
+    habilita();
+  }
+  modal('Modificar grupos y afiliaciones por layout',body,foot,true);
 }
 
 /* ---------- import genérico (Excel/CSV) ---------- */

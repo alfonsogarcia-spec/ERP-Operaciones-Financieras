@@ -290,7 +290,8 @@ async function getParams() {
   return { IVA: Number(r.iva), tasa_int_amex: Number(r.tasa_int_amex), tasa_int_int: Number(r.tasa_int_int), fee_broxel: Number(r.fee_broxel), prodParams: r.prodparams, umbral_pld: Number(r.umbral_pld), umbral_caida_pct: Number(r.umbral_caida_pct), umbral_contracargos_pct: Number(r.umbral_contracargos_pct) };
 }
 async function getFeriados() { return (await db.query('select fecha::text as fecha from feriados order by fecha')).rows.map(r => r.fecha); }
-async function getGrupos() { return (await db.query('select * from grupos')).rows; }
+// Orden fijo por id: si hubiera dos grupos con el mismo nombre (las transacciones se ligan por nombre), siempre gana el mismo (el de menor id), no el que Postgres devuelva primero.
+async function getGrupos() { return (await db.query('select * from grupos order by id_grupo')).rows; }
 async function getAfiliaciones() {
   const rows = (await db.query('select * from afiliaciones')).rows;
   return rows.map(a => ({ ...a, razon_social: descifraTexto(a.razon_social_cifrada, a.razon_social) }));
@@ -579,13 +580,17 @@ app.get('/api/catalogo/grupos-full.xlsx', auth, async (req, res) => {
   const grupoPor = id => grupos.find(g => String(g.id_grupo) === String(id));
   const afilPor  = n  => afiliaciones.find(a => String(a.numero_afiliacion) === String(n));
   const costoPor = n  => costos.find(c => String(c.numero_afiliacion) === String(n));
+  // Las tasas se descargan como NÚMERO DE PORCENTAJE (2.5 = 2.5 %), con sufijo _pct: así se capturan sin pensar en decimales.
   const HEAD = ['id_grupo', 'nombre_cliente', 'numero_afiliacion', 'razon_social',
-    'tasa_pac_tdd', 'tasa_pac_tdc', 'tasa_pac_amex', 'tasa_pac_int',
-    'costo_x_trx', 'pct_banca', 'int_tdd', 'int_tdc', 'int_amex', 'int_int', 'fee_broxel',
+    'tasa_pac_tdd_pct', 'tasa_pac_tdc_pct', 'tasa_pac_amex_pct', 'tasa_pac_int_pct',
+    'costo_x_trx', 'pct_banca_pct', 'int_tdd_pct', 'int_tdc_pct', 'int_amex_pct', 'int_int_pct', 'fee_broxel_pct',
     // Tasa de descuento = intercambio del producto + fee Broxel (costo total del
     // adquirente por esa transacción, antes del margen sobre la tasa pactada).
-    'tasa_descuento_tdd', 'tasa_descuento_tdc', 'tasa_descuento_amex', 'tasa_descuento_int',
+    'tasa_descuento_tdd_pct', 'tasa_descuento_tdc_pct', 'tasa_descuento_amex_pct', 'tasa_descuento_int_pct',
     'mcc', 'descripcion_giro'];
+  // fracción (0.025) → número de porcentaje (2.5), con 4 decimales de precisión de la fracción (0.0028 → 0.28)
+  // Sin recorte de decimales (12 cifras significativas): 0.0028 → 0.28, 0.01955555 → 1.955555; así re-subir sin editar nunca genera cambios fantasma.
+  const aPct = n => Number((Number(n) * 100).toPrecision(12));
   const filas = afilGrupo.map(ag => {
     const g = grupoPor(ag.id_grupo) || {};
     const af = afilPor(ag.numero_afiliacion) || {};
@@ -599,34 +604,56 @@ app.get('/api/catalogo/grupos-full.xlsx', auth, async (req, res) => {
     // sirve para tasas fraccionarias como 0.0028 (se volvería 0.00). Aquí
     // necesitamos 4 decimales — equivalen a 2 decimales al mostrarse como %.
     const round4 = n => Math.round(n * 10000) / 10000;
-    const descuento = intX => (intX == null || feeBroxel == null) ? '' : round4(intX + feeBroxel);
+    const descuento = intX => (intX == null || feeBroxel == null) ? '' : aPct(round4(intX + feeBroxel));
     return [
       ag.id_grupo, g.nombre_cliente || '', ag.numero_afiliacion, af.razon_social || '',
-      Number(ag.tasa_pac_tdd || 0), Number(ag.tasa_pac_tdc || 0),
-      Number(ag.tasa_pac_amex || 0), Number(ag.tasa_pac_int || 0),
-      Number(ag.costo_x_trx || 0), Number(ag.pct_banca || 0),
-      intTdd == null ? '' : intTdd, intTdc == null ? '' : intTdc,
-      intAmex == null ? '' : intAmex, intInt == null ? '' : intInt,
-      feeBroxel == null ? '' : feeBroxel,
+      aPct(ag.tasa_pac_tdd || 0), aPct(ag.tasa_pac_tdc || 0),
+      aPct(ag.tasa_pac_amex || 0), aPct(ag.tasa_pac_int || 0),
+      Number(ag.costo_x_trx || 0), aPct(ag.pct_banca || 0),
+      intTdd == null ? '' : aPct(intTdd), intTdc == null ? '' : aPct(intTdc),
+      intAmex == null ? '' : aPct(intAmex), intInt == null ? '' : aPct(intInt),
+      feeBroxel == null ? '' : aPct(feeBroxel),
       descuento(intTdd), descuento(intTdc), descuento(intAmex), descuento(intInt),
       af.mcc == null ? '' : String(af.mcc).padStart(4, '0'), af.descripcion_giro || '',
     ];
   });
   filas.sort((a, b) => String(a[1]).localeCompare(String(b[1])) || String(a[2]).localeCompare(String(b[2])));
   const iso = new Date().toISOString().slice(0, 10);
-  // Todas las columnas de tasa se guardan como fracción (0.025) pero se
-  // MUESTRAN como porcentaje (2.50%) vía formato de Excel — el valor sigue
-  // siendo el número real para poder sumar/operar sobre él en la hoja.
-  // Índices 0-based: 4-9 (tasas pactadas + costo_x_trx + %banca), 10-14
-  // (intercambio + fee Broxel), 15-18 (tasa de descuento calculada).
-  // costo_x_trx (col 8) es un MONTO en MXN, no una tasa — se excluye del %.
+  // Las columnas de tasa (sufijo _pct) van como número de porcentaje (2.5 = 2.5 %), sin signo %: se capturan tal cual.
+  // Índices 0-based: 4-7 (tasas pactadas), 9 (%banca), 10-14 (intercambio + fee Broxel), 15-18 (tasa de descuento calculada).
+  // costo_x_trx (col 8) es un MONTO en MXN, no una tasa.
   const colsPct = [4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
   const sheet = {
     name: 'Grupos', aoa: [HEAD, ...filas],
-    fmt: { z: '0.00%', cols: colsPct, rowFrom: 1 },
+    fmt: { z: '0.00##', cols: colsPct, rowFrom: 1 },
+  };
+  const instrucciones = {
+    name: 'Instrucciones', cols: [{ wch: 30 }, { wch: 110 }],
+    aoa: [
+      ['Modificar grupos y afiliaciones por layout', ''],
+      ['', ''],
+      ['Cómo se usa', 'Cambia las celdas de la hoja «Grupos» y súbelo en Grupos → «Modificar por layout». El sistema te muestra cada cambio (antes → después) y solo se guarda cuando confirmas.'],
+      ['Una fila', 'Es una relación grupo ↔ afiliación. Para agregar una relación nueva agrega una fila; el layout no borra: lo que quites del archivo se queda como está (para eliminar usa la pantalla).'],
+      ['Celda vacía', 'No cambia nada. Una celda vacía NO se convierte en 0. En una relación nueva, vacío en tasas significa 0 (el sistema te avisa).'],
+      ['Tasas (columnas _pct)', 'Escribe el PORCENTAJE como número normal: 2.5 significa 2.5%, 0.28 significa 0.28%, 16 significa 16%. No uses fracciones como 0.025. Debe ser menor a 100.'],
+      ['Formato de celda', 'No cambies el formato de las celdas a «Porcentaje» ni pegues celdas con formato %: si lo haces, el sistema lo detecta y las lee como el porcentaje que ves (2.5 %), y te lo avisa. Lo más seguro es escribir 2.5 con formato Número o General.'],
+      ['Avisos de escala', 'Si una tasa parece capturada en otra escala (muy pequeña, un salto de 5 veces o más, o muy alta), el sistema lo marca y te pide confirmar que lo revisaste antes de aplicar.'],
+      ['Glosario de columnas', 'tasa_pac_*_pct = tasa pactada con el comercio por producto · pct_banca_pct = % banca (Telematic) · int_*_pct = intercambio (costo) por producto · fee_broxel_pct = fee Broxel · tasa_descuento_*_pct = intercambio + fee (solo informativa) · costo_x_trx = pesos por transacción. El sufijo _pct indica la unidad: porcentaje. Todas las tasas deben venir con _pct o todas sin él (archivo anterior).'],
+      ['PARAM', 'En int_amex_pct, int_int_pct y fee_broxel_pct, escribe PARAM para volver a usar el valor de Parámetros. (El 0 significa cero de verdad.)'],
+      ['costo_x_trx', 'Monto en pesos por transacción (no es porcentaje).'],
+      ['id_grupo', 'Es la LLAVE del grupo (cuentas de liquidación, conceptos SPEI, cortes, retenciones): no se cambia por layout. Un id distinto crea OTRO grupo, y no puede llamarse igual que uno existente. Para renumerar un grupo pide apoyo de Sistemas.'],
+      ['nombre_cliente', 'Las transacciones se asignan al grupo por este NOMBRE. Renombrar un grupo deja sin grupo (sin tasas ni cuenta) las transacciones ya cargadas con el nombre anterior; la simulación te dice cuántas son.'],
+      ['Afiliación compartida', 'La razón social, el MCC y los costos (int_*_pct, fee_broxel_pct) son de la afiliación y aplican a todos sus grupos: si aparece en varias filas, deben decir lo mismo.'],
+      ['Grupo nuevo', 'Un grupo nuevo necesita nombre_cliente. Si cambias el nombre de uno existente, el sistema lo marca y solo lo renombra si lo confirmas.'],
+      ['MCC', 'Código de hasta 4 dígitos del catálogo; la descripción del giro se llena sola.'],
+      ['Encabezados', 'Si un encabezado trae «%» (por ejemplo «Fee Broxel (%)»), se lee como porcentaje. Para evitar dudas, deja los encabezados como se descargan.'],
+      ['Columnas que no se leen', 'tasa_descuento_*_pct y descripcion_giro se calculan al descargar; cambiarlas no hace nada.'],
+      ['Errores', 'Si una fila tiene error no se guarda nada del archivo (todo o nada); corrige y vuelve a subirlo.'],
+    ],
+    styles: [{ cell: 'A1', style: { font: { bold: true, size: 14 } } }, { range: 'A3:A20', style: { font: { bold: true } } }],
   };
   await bit(req, 'catalogo', `descargó grupos-full: ${filas.length} relaciones`);
-  enviarXLSX(res, `catalogo_grupos_${iso}.xlsx`, X.buildXLSX([sheet]));
+  enviarXLSX(res, `catalogo_grupos_${iso}.xlsx`, X.buildXLSX([sheet, instrucciones]));
 });
 
 // Descarga del catálogo de cuentas de liquidación con las mismas columnas que
@@ -704,6 +731,41 @@ app.put('/api/catalogo/params', auth, requiereRol('admin'), async (req, res) => 
   res.json({ ok: true, recalculadas: n });
 });
 
+/* Modificación de grupos y afiliaciones por LAYOUT (Excel/CSV). Dos pasos: simular (por defecto: no escribe nada, devuelve cada cambio) y aplicar (aplicar=1,
+   con la huella de lo simulado). Las reglas viven en lib/catalogo-layout.js. Todo o nada: con un solo error no se guarda nada. */
+/* Lee el layout subido: .xlsx/.xls con la hoja «Grupos»; .csv/.tsv/.txt siempre como UTF-8 (con respaldo latin1 si no es UTF-8 válido). */
+function leerLayout(req) {
+  const LA = require('./lib/catalogo-layout-aplicar.js');
+  if (req.file) {
+    const nombre = String(req.file.originalname || '').toLowerCase();
+    if (/\.(csv|tsv|txt)$/.test(nombre)) {
+      let t = req.file.buffer.toString('utf8'); if (t.includes('\uFFFD')) t = req.file.buffer.toString('latin1');
+      return { ...X.parseCSVText(t), hash: LA.hashArchivo(req.file.buffer) };
+    }
+    return { ...X.parseBuffer(req.file.buffer, { hoja: 'Grupos', pctFmt: true }), hash: LA.hashArchivo(req.file.buffer) };
+  }
+  const csv = String((req.body && req.body.csv) || '');
+  return { ...X.parseCSVText(csv), hash: LA.hashArchivo(csv) };
+}
+async function layoutGrupos(req, res) {
+  if (!dbReady(res)) return;
+  const LA = require('./lib/catalogo-layout-aplicar.js');
+  try {
+    const parsed = leerLayout(req);
+    const ctx = { db: { query: (t, p) => db.query(t, p), tx: fn => db.tx(fn) }, params: getParams, descifra: descifraTexto, cifra: C.encrypt, ult3: E.ult3, MCC };
+    const aplicar = String((req.body && req.body.aplicar) || '') === '1';
+    if (!aplicar) { const { vista } = await LA.simular(ctx, parsed); return res.json({ ok: true, aplicado: false, plan: vista }); }
+    const r = await LA.aplicar(ctx, parsed, { huella: req.body.huella, renombrar: String(req.body.renombrar || '') === '1', confirmoEscala: String(req.body.confirmo_escala || '') === '1' });
+    for (const linea of r.bitacora) await bit(req, 'catalogo', linea);
+    res.json({ ok: true, aplicado: true, ...r.resultado });
+  } catch (e) {
+    if (e instanceof LA.ErrorLayout) return res.status(e.codigo === 'layout_con_errores' ? 422 : e.codigo === 'demasiadas_filas' ? 413 : 409).json({ error: e.codigo, mensaje: e.message, plan: e.plan });
+    console.error('layout grupos:', e && e.message);
+    res.status(500).json({ error: 'no_se_guardo', mensaje: 'No se guardó nada: hubo un error al escribir en la base. Vuelve a intentar; si se repite, avisa a Sistemas.' });
+  }
+}
+app.post('/api/catalogo/grupos-layout', auth, requiereRol('admin'), upload.single('archivo'), validaArchivo, layoutGrupos);
+
 // Alta/edición de grupo+afiliación (admin)
 app.post('/api/catalogo/grupo-afiliacion', auth, requiereRol('admin'), async (req, res) => {
   if (!dbReady(res)) return;
@@ -714,15 +776,35 @@ app.post('/api/catalogo/grupo-afiliacion', auth, requiereRol('admin'), async (re
     const val = Number(v) || 0; if (val < 0 || val >= 1) return res.status(400).json({ error: `tasa ${k} fuera de [0,1)` });
   }
   // Un grupo ya existente NO se renombra en silencio: el upsert cambiaba el nombre de TODAS sus afiliaciones (así "DEAL" apareció como "NOVEK").
-  const nombreNuevo = String(b.nombre_cliente).trim();
+  // Y las transacciones se ligan al grupo por NOMBRE: renombrar deja sin grupo las ya cargadas con el nombre anterior.
+  const LAYN = require('./lib/catalogo-layout.js'), LAP = require('./lib/catalogo-layout-aplicar.js');
+  const nombreNuevo = String(b.nombre_cliente).replace(/\s+/g, ' ').trim();
   const existente = (await db.query('select nombre_cliente from grupos where id_grupo=$1', [idg])).rows[0];
-  if (existente && String(existente.nombre_cliente || '').trim() !== nombreNuevo && b.confirmar_renombrar !== true) {
-    const n = (await db.query('select count(*)::int n from afil_grupo where id_grupo=$1', [idg])).rows[0].n;
-    return res.status(409).json({ error: 'renombra_grupo', actual: existente.nombre_cliente, nuevo: nombreNuevo, afiliaciones: n,
-      mensaje: `El grupo #${idg} se llama "${existente.nombre_cliente}". Si continúas, se renombra a "${nombreNuevo}" y el cambio aplica a sus ${n} afiliación(es).` });
+  const cambiaNombre = !!existente && String(existente.nombre_cliente || '').replace(/\s+/g, ' ').trim() !== nombreNuevo;
+  if (cambiaNombre) {
+    const im = await LAP.impactoRenombre((t, p) => db.query(t, p), existente.nombre_cliente, nombreNuevo);
+    if (im.efecto !== 'ninguno' && im.pendientes > 0) return res.status(409).json({ error: 'renombre_con_pendientes', pendientes: im.pendientes,
+      mensaje: `El grupo #${idg} ("${existente.nombre_cliente}") tiene ${im.pendientes} transacciones aprobadas PENDIENTES DE CORTE (desde la liquidación del ${im.primera_pendiente}) con ese nombre. Renombrarlo ahora las dejaría SIN GRUPO (sin tasas ni cuenta) en el siguiente corte. Hazlo después de generar el corte de esas fechas.` });
+    if (b.confirmar_renombrar !== true) {
+      const n = (await db.query('select count(*)::int n from afil_grupo where id_grupo=$1', [idg])).rows[0].n;
+      return res.status(409).json({ error: 'renombra_grupo', actual: existente.nombre_cliente, nuevo: nombreNuevo, afiliaciones: n, transacciones: im.transacciones,
+        mensaje: `El grupo #${idg} se llama "${existente.nombre_cliente}". Si continúas, se renombra a "${nombreNuevo}" y el cambio aplica a sus ${n} afiliación(es).${im.efecto !== 'ninguno' && im.transacciones ? ` Ojo: ${im.transacciones} transacciones ya cargadas llegan con el nombre anterior y quedarían SIN GRUPO (sin tasas ni cuenta).` : ''}` });
+    }
   }
-  await db.query('insert into grupos(id_grupo,nombre_cliente,activo) values($1,$2,true) on conflict(id_grupo) do update set nombre_cliente=excluded.nombre_cliente', [idg, nombreNuevo]);
-  if (existente && String(existente.nombre_cliente || '').trim() !== nombreNuevo) await bit(req, 'catalogo', `RENOMBRÓ el grupo ${idg}: "${existente.nombre_cliente}" → "${nombreNuevo}"`);
+  // Un nombre no puede repetirse entre grupos (sin acentos, mayúsculas ni espacios de más): dos grupos con el mismo nombre dejan ambigua la liquidación.
+  // Se revisa y se escribe bajo el MISMO candado que el layout, para que una alta guiada y un layout no se crucen.
+  try {
+    await db.tx(async t => {
+      await t.query('select pg_advisory_xact_lock($1)', [LAP.LOCK_ID]);
+      const choca = (await t.query('select id_grupo, nombre_cliente from grupos')).rows.find(g => g.id_grupo !== idg && LAYN.normNombre(g.nombre_cliente) === LAYN.normNombre(nombreNuevo));
+      if (choca) { const er = new Error('nombre_duplicado'); er.nombreDuplicado = choca.id_grupo; throw er; }
+      await t.query('insert into grupos(id_grupo,nombre_cliente,activo) values($1,$2,true) on conflict(id_grupo) do update set nombre_cliente=excluded.nombre_cliente', [idg, nombreNuevo]);
+    });
+  } catch (e) {
+    if (e.nombreDuplicado) return res.status(409).json({ error: 'nombre_duplicado', mensaje: `El nombre «${nombreNuevo}» ya lo usa el grupo ${e.nombreDuplicado}. Las transacciones se asignan al grupo por nombre: usa otro nombre o edita ese grupo.` });
+    throw e;
+  }
+  if (cambiaNombre) await bit(req, 'catalogo', `RENOMBRÓ el grupo ${idg}: "${existente.nombre_cliente}" → "${nombreNuevo}"`);
   // MCC (4 dígitos) y descripción del giro de la afiliación: solo se tocan si vienen en la petición.
   const mccIn = MCC.normalizarMcc(b.mcc);
   if (!mccIn.ok) return res.status(400).json({ error: 'mcc_invalido', mensaje: 'El MCC debe ser un código de hasta 4 dígitos; elígelo de la lista.' });
@@ -851,6 +933,7 @@ app.post('/api/catalogo/feriados-mx', auth, requiereRol('admin'), async (req, re
 // Importar catálogo por Excel (admin): grupos | cuentas
 app.post('/api/catalogo/:tipo/import', auth, requiereRol('admin'), upload.single('archivo'), validaArchivo, async (req, res) => {
   if (!dbReady(res)) return;
+  if (req.params.tipo === 'grupos') return layoutGrupos(req, res);   // mismo flujo seguro: simula y aplica solo con confirmación
   const parsed = req.file ? X.parseBuffer(req.file.buffer) : X.parseCSVText((req.body && req.body.csv) || '');
   const objs = parsed.objs; let n = 0, mccIgnorados = 0; const gruposNoRenombrados = [];
   try {

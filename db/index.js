@@ -43,6 +43,13 @@ async function initDB() {
       kind: `postgres (supabase) · schema "${SCHEMA}"`,
       query: (t, p) => pool.query(t, p || []),
       exec: (sql) => pool.query(sql),
+      // Transacción: una conexión propia con begin/commit (rollback si algo falla). fn recibe { query }.
+      tx: async fn => {
+        const c = await pool.connect();
+        try { await c.query('begin'); const r = await fn({ query: (t, p) => c.query(t, p || []) }); await c.query('commit'); return r; }
+        catch (e) { try { await c.query('rollback'); } catch (_e) { /* la conexión ya cayó */ } throw e; }
+        finally { c.release(); }
+      },
     };
   } else {
     // BLINDAJE: en producción NUNCA arrancar pglite (Postgres en WASM, pesado → OOM en 512Mi).
@@ -58,6 +65,7 @@ async function initDB() {
       kind: `pglite (local ./.pgdata) · schema "${SCHEMA}"`,
       query: (t, p) => db.query(t, p || []),
       exec: (sql) => db.exec(sql),
+      tx: fn => db.transaction(async t => fn({ query: (q, p) => t.query(q, p || []) })),
     };
   }
   await migrate();
@@ -155,7 +163,11 @@ function query(text, params) {
   if (!backend) throw new Error('db_no_inicializada');
   return backend.query(text, params || []);
 }
+function tx(fn) {
+  if (!backend) throw new Error('db_no_inicializada');
+  return backend.tx(fn);
+}
 const isReady = () => ready;
 const kind = () => (backend ? backend.kind : '—');
 
-module.exports = { initDB, query, isReady, kind };
+module.exports = { initDB, query, tx, isReady, kind };
