@@ -127,6 +127,21 @@
       --shadow:0 8px 28px rgba(0,0,0,.35),0 1px 2px rgba(0,0,0,.30); --shadow-lg:0 28px 70px rgba(0,0,0,.55),0 2px 6px rgba(0,0,0,.35);
     }
 
+
+    /* Resumen de montos del fondeo: cotizado → depositado → se asigna */
+    .monto-resumen{margin:0 0 var(--sp-4);border:1px solid var(--line);border-radius:var(--radius);background:var(--glass-1);overflow:hidden}
+    .monto-resumen .mc-fila{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+    .monto-resumen .mc{padding:var(--sp-3) var(--sp-4);display:flex;flex-direction:column;gap:2px;border-left:1px solid var(--line)}
+    .monto-resumen .mc:first-child{border-left:0}
+    .monto-resumen .mc small{font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:var(--fw-semibold)}
+    .monto-resumen .mc b{font-size:var(--fs-xl);font-variant-numeric:tabular-nums;color:var(--ink)}
+    .monto-resumen .mc span{font-size:var(--fs-sm)}
+    .monto-resumen .mc.resultado{background:var(--accent-tint)}
+    .monto-resumen .mc.dif b{color:var(--warn)}
+    .monto-resumen .mc-aviso{padding:var(--sp-3) var(--sp-4);background:var(--warn-tint);border-top:1px solid var(--warn-edge);color:var(--ink);font-size:var(--fs-md);line-height:1.5}
+    .dif-sol{display:block;color:var(--warn)!important}
+    .segmentado{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 var(--sp-3)}
+    .segmentado .btn[aria-pressed="true"]{background:var(--accent-tint);border-color:var(--accent-edge);color:var(--accent-ink)}
     /* --- Paletas de acento (se combinan con claro/oscuro) --- */
     :root[data-palette="violeta"]{
       --accent:#7C5CE6; --accent2:#A78BFA; --accent-soft:#EFEAFB; --artico:#EFEAFB;
@@ -5624,11 +5639,13 @@ async function vCardsPanel(v){
 
 function tablaFondeos(rows){
   return tableWrap(['Folio','Destino',{t:'Monto'},{t:'Fondeo neto'},{t:'Comisión'},{t:'IVA'},'CEP','Estatus'],rows.map(r=>{
-    const monto=r.monto_recibido!=null?`${mxn(r.monto_recibido)}<small class="muted"> recibido</small>`:(r.monto_esperado!=null?`${mxn(r.monto_esperado)}<small class="muted"> a depositar</small>`:'—');
+    const dif=r.difiere?Math.round((r.fondeo-r.fondeo_solicitado)*100)/100:0;
+    const monto=(r.monto_recibido!=null?`${mxn(r.monto_recibido)}<small class="muted"> depositó</small>`:(r.monto_esperado!=null?`${mxn(r.monto_esperado)}<small class="muted"> a depositar</small>`:'—'))
+      +(r.difiere?`<small class="muted dif-sol">se cotizó ${mxn(r.fondeo_solicitado)} neto</small>`:'');
     const x=[`<div class="tt">${esc(r.folio)}<small>${r.fecha?fmtISO(r.fecha):'solicitado '+fmtISO(String(r.solicitado_at||r.creado_at).slice(0,10))}</small></div>`,
       `<div class="tt">${esc(r.entidad_nombre)}<small>${esc(r.solicitante_nombre?'Solicitó '+r.solicitante_nombre:(r.ruta||''))}</small></div>`,{num:monto},{num:mxn(r.fondeo)},{num:mxn(r.comision)},{num:mxn(r.iva)},
       r.n_ceps?`<span class="badge ok">${r.n_ceps} archivo${r.n_ceps>1?'s':''}</span>`:(r.asignado_sin_cep?'<span class="badge orange" title="Tesorería asignó el saldo sin CEP">Sin CEP</span>':(['SOLICITADO','RECHAZADO'].includes(r.estatus)?'<span class="badge danger">Falta CEP</span>':'—')),
-      badgeFondeo(r.estatus)+(r.difiere?' <span class="badge orange" title="El fondeo resultante es distinto de lo solicitado">≠ solicitado</span>':'')];
+      badgeFondeo(r.estatus)+(r.difiere?` <span class="badge orange" title="Se cotizó ${esc(mxn(r.fondeo_solicitado))} netos y el depósito dejó ${esc(mxn(r.fondeo))} netos. Abre el fondeo para ver el detalle.">${dif>0?'+':'−'}${mxn(Math.abs(dif))} vs solicitado</span>`:'')];
     x._onclick=()=>abrirFondeo(r.id);return x;}),{empty:'No hay fondeos con esos filtros.'});
 }
 
@@ -5671,25 +5688,36 @@ async function formularioSolicitud(){
   const sel=el('select',{id:'soEnt'},ents.length>1?el('option',{value:''},'— Elige la empresa —'):'',...ents.map(e=>el('option',{value:String(e.id)},etiquetaEnt(e))));
   if(ents.length===1)sel.value=String(ents[0].id);
   const monto=el('input',{id:'soMonto',inputmode:'decimal',placeholder:'300,000.00',autocomplete:'off'});
+  // Se puede pedir por el neto que quieren fondear o por lo que la empresa va a depositar: el sistema calcula el otro (nadie lo saca a mano).
+  let modo='neto';
+  const lblMonto=el('span',{},'Monto a fondear (neto)');
+  const nota=el('div',{class:'req-note'});
+  const rapido=el('div',{class:'segmentado',role:'group','aria-label':'Qué monto conoces'});
+  const pintaModo=()=>{
+    lblMonto.textContent=modo==='neto'?'Monto a fondear (neto)':'Total que depositará la empresa';
+    nota.textContent=modo==='neto'?'Es lo que se le abona a la empresa, sin comisión ni IVA. Abajo verás cuánto debe depositar en total.':'Escribe lo que la empresa te dijo que va a depositar (con comisión e IVA). El sistema calcula el neto que se le abonará: no lo saques a mano.';
+    rapido.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.m===modo)));};
+  [['neto','Conozco el neto a fondear'],['total','Conozco el total a depositar']].forEach(([m,t])=>rapido.append(el('button',{type:'button','data-m':m,class:'btn ghost sm',onclick:()=>{modo=m;pintaModo();calc();}},t)));
   const notas=el('textarea',{id:'soNotas',rows:'2',maxlength:'500',placeholder:'Opcional'});
   const info=el('div',{class:'banner clabe-info',style:'display:none'});
   const cot=el('div',{class:'desglose','aria-live':'polite'});
   const fila=(k,val,cls)=>`<tr${cls?` class="${cls}"`:''}><td>${k}</td><td class="num">${val}</td></tr>`;
   let tm;const calc=()=>{clearTimeout(tm);tm=setTimeout(async()=>{
     if(!sel.value){info.style.display='none';cot.innerHTML='';return;}
-    try{const r=await api('POST','/api/cards/calcular',{entidad_id:sel.value,fondeo:monto.value});
+    try{const r=await api('POST','/api/cards/calcular',modo==='neto'?{entidad_id:sel.value,fondeo:monto.value}:{entidad_id:sel.value,monto_recibido:monto.value});
       info.style.display='';info.innerHTML=`La empresa deposita a la CLABE <b class="mono">${esc(clabeFmt(r.entidad.clabe))}</b><br>${cuentaTxt(r.entidad,r.entidad.ruta+' · comisión '+pctTxt(r.comision_pct)+' + IVA '+pctTxt(r.iva_pct)+' sobre la comisión')}`;
-      const c=r.cotizacion;cot.innerHTML=c?`<table><tbody>${fila('Monto a fondear',mxn(c.fondeo),'tot')}${fila('Comisión ('+pctTxt(r.comision_pct)+')',mxn(c.comision))}${fila('IVA ('+pctTxt(r.iva_pct)+')',mxn(c.iva))}${fila('La empresa debe depositar',mxn(c.total),'tot')}</tbody></table>`:'';
+      const c=r.cotizacion||(r.desglose?{fondeo:r.desglose.fondeo,comision:r.desglose.comision,iva:r.desglose.iva,total:r.desglose.recibido}:null);cot.innerHTML=c?`<table><tbody>${fila('Monto a fondear',mxn(c.fondeo),'tot')}${fila('Comisión ('+pctTxt(r.comision_pct)+')',mxn(c.comision))}${fila('IVA ('+pctTxt(r.iva_pct)+')',mxn(c.iva))}${fila('La empresa debe depositar',mxn(c.total),'tot')}</tbody></table>`:'';
     }catch(e){info.style.display='';info.innerHTML=esc(errMsg(e));cot.innerHTML='';}},250);};
   [sel,monto].forEach(x=>{x.addEventListener('input',calc);x.addEventListener('change',calc);});
   const body=el('div',{},el('div',{class:'banner'},'Elige la empresa y cuánto quiere fondear. Te calculamos la comisión y el IVA; el total es lo que la empresa debe depositar. Después sube su CEP.'),
-    fld('Empresa',sel),info,fld('Monto a fondear (neto)',monto),cot,fld('Notas',notas));
+    fld('Empresa',sel),info,rapido,fld(lblMonto,monto),nota,cot,fld('Notas',notas));
   const guardar=el('button',{class:'btn',type:'button'},'Crear solicitud');
   const foot=el('div',{},el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),guardar);
   guardar.onclick=async()=>{guardar.disabled=true;try{
-    const r=await api('POST','/api/cards/solicitudes',{entidad_id:sel.value,fondeo:monto.value,notas:notas.value});
+    const r=await api('POST','/api/cards/solicitudes',modo==='neto'?{entidad_id:sel.value,fondeo:monto.value,notas:notas.value}:{entidad_id:sel.value,modo:'total',monto_depositar:monto.value,notas:notas.value});
     closeModal();render();instruccionesSolicitud(r);
   }catch(e){toast(errMsg(e),'err');guardar.disabled=false;}};
+  pintaModo();
   modal('Nueva solicitud de fondeo',body,foot);
   if(ents.length>1)sel.focus();else monto.focus();
   calc();
@@ -5804,6 +5832,18 @@ async function abrirFondeo(id,pasoIni){
   const ultimoCep=f.ceps[f.ceps.length-1];
   const compOk=(f.comprobantes||[]).some(c=>c.validado&&c.coincide_actual!==false);   // hay comprobante con el monto validado (candado para asignar)
 
+  /* ----- resumen de montos: lo cotizado, lo depositado y lo que se asigna, con nombre propio cada uno ----- */
+  const resumenMontos=()=>{
+    const haySol=sol&&f.fondeo_solicitado!=null,hayDep=f.monto_recibido!=null,d=dif!=null?Math.round(dif*100)/100:0,dist=Math.abs(d)>0.005;
+    const col=(t,v,sub,cls)=>el('div',{class:'mc'+(cls?' '+cls:'')},el('small',{},t),el('b',{},v),el('span',{class:'muted'},sub||''));
+    const cols=[];
+    if(haySol)cols.push(col('1 · Se cotizó (neto)',mxn(f.fondeo_solicitado),'La empresa debía depositar '+mxn(f.monto_esperado)));
+    cols.push(col((haySol?'2 · ':'')+'Depositó la empresa',hayDep?mxn(f.monto_recibido):'Aún sin CEP',hayDep?(f.clave_rastreo?'Rastreo '+f.clave_rastreo:'según CEP / registro'):(haySol?'Se asigna lo cotizado si no se carga CEP':'')));
+    cols.push(col((haySol?'3 · ':'')+'Se asigna (neto)',mxn(f.fondeo),'comisión '+mxn(f.comision)+' + IVA '+mxn(f.iva),dist?'resultado dif':'resultado'));
+    const nodo=el('div',{class:'monto-resumen'+(dist?' hay-dif':'')},el('div',{class:'mc-fila'},...cols));
+    if(dist)nodo.append(el('div',{class:'mc-aviso',html:`<b>El depósito no coincide con lo cotizado.</b> Se cotizaron <b>${mxn(f.fondeo_solicitado)}</b> netos y lo depositado deja <b>${mxn(f.fondeo)}</b> netos (${d>0?'+':'−'}${mxn(Math.abs(d))}). `+(d<0?`Si lo correcto era el monto cotizado, la empresa debe completar el depósito; si no, el fondeo se asigna por lo depositado.`:`La empresa depositó de más: se asigna lo depositado.`)}));
+    return nodo;};
+
   /* ----- piezas ----- */
   const dato=(k,v,cls)=>el('div',{class:cls||''},el('small',{},k),el('b',{html:v}));
   const sin=t=>`<span class="muted">${t}</span>`;
@@ -5879,7 +5919,7 @@ async function abrirFondeo(id,pasoIni){
   const botonRechazar=()=>el('button',{class:'btn ghost sm lk-peligro',type:'button',onclick:async()=>{
     const m=await pedir('Motivo por el que no se puede asignar '+f.folio+' (lo verá el comercial):',{titulo:'Rechazar fondeo',ok:'Rechazar'});if(m===null)return;
     try{await api('POST',`/api/cards/fondeos/${id}/rechazar`,{motivo:m});closeModal();toast('Rechazado: se avisó al comercial','ok');render();}catch(e){toast(errMsg(e),'err');}}},'Rechazar');
-  const cabecera=()=>el('div',{class:'detalle-head'},el('span',{html:badgeFondeo(f.estatus)}),el('span',{class:'badge soft'},sol?'Solicitud':'Registro manual'),f.difiere?el('span',{class:'badge orange',title:'El fondeo resultante es distinto de lo solicitado'},'≠ solicitado'):'',f.asignado_sin_cep?el('span',{class:'badge orange',title:'Tesorería asignó el saldo sin CEP: '+(f.sin_cep_motivo||'')},'Sin CEP'):'',el('span',{class:'muted'},f.fecha?fmtISO(f.fecha):''));
+  const cabecera=()=>el('div',{class:'detalle-head'},el('span',{html:badgeFondeo(f.estatus)}),el('span',{class:'badge soft'},sol?'Solicitud':'Registro manual'),f.difiere?el('span',{class:'badge orange',title:'Lo depositado no coincide con lo cotizado: ve el resumen de montos'},'Monto distinto del solicitado'):'',f.asignado_sin_cep?el('span',{class:'badge orange',title:'Tesorería asignó el saldo sin CEP: '+(f.sin_cep_motivo||'')},'Sin CEP'):'',el('span',{class:'muted'},f.fecha?fmtISO(f.fecha):''));
 
   /* ===== POR PASOS: tesorería con el fondeo por asignar ===== */
   if(tesoreria&&f.estatus==='POR_ASIGNAR'){
@@ -5896,7 +5936,7 @@ async function abrirFondeo(id,pasoIni){
     };
     const pintar=()=>{
       cuerpo.innerHTML='';pie.innerHTML='';pasoVivo=paso;
-      cuerpo.append(el('div',{class:'cab-paso'},cabecera()),barra());
+      cuerpo.append(el('div',{class:'cab-paso'},cabecera()),resumenMontos(),barra());
       if(paso===1){
         cuerpo.append(el('h4',{class:'paso-t'},'Solicitud'),datosSolicitud());
       }
@@ -5968,7 +6008,7 @@ async function abrirFondeo(id,pasoIni){
       ...(f.estatus==='RECHAZADO'&&f.motivo_rechazo?[r('Motivo',esc(f.motivo_rechazo))]:[]),
       ...(f.estatus==='CANCELADO'&&f.motivo_cancelacion?[r('Motivo',esc(f.motivo_cancelacion))]:[]),
       r('Comprobantes del saldo',nComp?nComp+(nComp>1?' archivos':' archivo')+((f.comprobantes||[]).every(c=>c.validado&&c.coincide_actual!==false)?' · monto validado ✓':' · revisar monto'):sin('—'))));
-  body.append(cabecera());
+  body.append(cabecera(),resumenMontos());
   body.append(tk);
   // Qué sigue, según el estatus
   const aviso=(cls,...ch)=>body.append(el('div',{class:'banner '+cls,style:'margin-top:12px'},...ch));
