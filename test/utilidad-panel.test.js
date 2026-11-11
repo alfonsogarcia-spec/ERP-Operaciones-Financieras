@@ -45,3 +45,30 @@ test('si el costo supera al ingreso la utilidad es negativa; sin ingreso no hay 
   assert.equal(vacio.utilidad, 0);
   assert.equal(vacio.margen_pct, null);
 });
+
+const { alertasCostos, costosIncompletos } = require('../lib/utilidad-panel.js');
+const G = { id_grupo: 1, nombre_cliente: 'X' };
+test('costos completos: sin motivos de revisión', () => {
+  assert.deepEqual(alertasCostos({ grupo: G, tasas: TASAS, costos: COSTOS, m: { tdd: 100, tdc: 100, amex: 0, int: 0 } }), []);
+});
+test('costo Broxel en 0 se marca (no cae a Parámetros); vacío sí cae y no se marca', () => {
+  assert.deepEqual(alertasCostos({ grupo: G, tasas: TASAS, costos: { ...COSTOS, fee_broxel: 0 }, m: { tdd: 1 } }), ['Costo Broxel en 0']);
+  assert.deepEqual(alertasCostos({ grupo: G, tasas: TASAS, costos: { ...COSTOS, fee_broxel: null }, m: { tdd: 1 } }), []);
+});
+test('intercambio de débito o crédito en 0 solo se marca si hubo ventas de ese producto', () => {
+  assert.deepEqual(alertasCostos({ grupo: G, tasas: TASAS, costos: { ...COSTOS, int_tdd: 0 }, m: { tdd: 500, tdc: 0 } }), ['Intercambio de débito en 0']);
+  assert.deepEqual(alertasCostos({ grupo: G, tasas: TASAS, costos: { ...COSTOS, int_tdd: 0 }, m: { tdd: 0, tdc: 500 } }), []);
+  assert.deepEqual(alertasCostos({ grupo: G, tasas: TASAS, costos: { ...COSTOS, int_tdc: null }, m: { tdc: 500 } }), ['Intercambio de crédito en 0']);
+});
+test('sin grupo, sin tasas o sin renglón de costos', () => {
+  assert.deepEqual(alertasCostos({ grupo: null, tasas: null, costos: null, m: {} }), ['Sin grupo en el catálogo', 'Sin renglón de costos']);
+  assert.deepEqual(alertasCostos({ grupo: G, tasas: null, costos: COSTOS, m: {} }), ['Sin tasas pactadas']);
+});
+test('costosIncompletos agrupa por afiliación, une motivos y ordena por monto', () => {
+  const l = costosIncompletos([
+    { afil: '2', razon: 'B', alertas: ['Costo Broxel en 0'], monto: 100 }, { afil: '2', razon: 'B', alertas: ['Costo Broxel en 0', 'Sin tasas pactadas'], monto: 50 },
+    { afil: '1', razon: 'A', alertas: ['Sin grupo en el catálogo'], monto: 900 }, { afil: '3', razon: 'C', alertas: [], monto: 5 }]);
+  assert.deepEqual(l.map(x => x.afil), ['1', '2']);
+  assert.deepEqual(l[1].motivos, ['Costo Broxel en 0', 'Sin tasas pactadas']);
+  assert.equal(l[1].monto, 150);
+});

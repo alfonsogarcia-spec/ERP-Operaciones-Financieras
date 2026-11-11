@@ -3253,7 +3253,10 @@ async function computeContable(desde, hasta, afilFiltro, clienteFiltro) {
       costos: co ? { int_tdd: Number(co.int_tdd), int_tdc: Number(co.int_tdc), int_amex: co.int_amex == null ? null : Number(co.int_amex), int_int: co.int_int == null ? null : Number(co.int_int), fee_broxel: co.fee_broxel == null ? null : Number(co.fee_broxel) } : {},
     };
     const r = E.calcularCompensacion(groups[k], cat, params, {});
+    const devs = groups[k].filter(x => x.monto < 0);   // devoluciones: monto en negativo (restan del monto, la comisión y el intercambio)
     rows.push({ fl, afil, cliente, grupo: g ? g.nombre_cliente : null, razon: razonDe(afil) || cliente, monto: r.m_tdd + r.m_tdc + r.m_amex + r.m_int, n_trx: r.num_trx,
+      devol_n: devs.length, devol_monto: devs.reduce((a, x) => a + x.monto, 0), com_trx_iva: r.com_trx + r.iva_com_trx,
+      alertas: UTIL.alertasCostos({ grupo: g, tasas, costos: co, m: { tdd: r.m_tdd, tdc: r.m_tdc, amex: r.m_amex, int: r.m_int } }),
       com_tdd: r.com_tdd, iva_tdd: r.iva_com_tdd, com_tdc: r.com_tdc, iva_tdc: r.iva_com_tdc,
       com_amex: r.com_amex, iva_amex: r.iva_com_amex, com_int: r.com_int, iva_int: r.iva_com_int,
       disp: r.disp_total, banca: r.banca, iva_banca: r.iva_banca,
@@ -3395,6 +3398,7 @@ app.get('/api/dashboard/resumen', auth, async (req, res) => {
     desde, hasta, afiliacion: afil === NO_IDENT ? 'ninguna' : (afil || null), grupo: sinGrupo ? 'ninguno' : (grupo ? grupo.id_grupo : null), n_trx: rows.reduce((a, r) => a + (r.n_trx || 0), 0),
     monto, comision, iva, banca: E.round2(S('banca') + S('iva_banca')), dispersado: S('disp'),
     costos: resultado.costos, utilidad: resultado.utilidad, margen_pct: resultado.margen_pct, utilidad_pct_monto: resultado.utilidad_pct_monto,
+    costos_incompletos: UTIL.costosIncompletos(rows).slice(0, 30),
     opciones, no_identificadas: { afiliacion: ni.afil, grupo: ni.grupo },
     opciones_grupos: grupos.filter(g => g.activo !== false).map(g => ({ id: g.id_grupo, nombre: g.nombre_cliente })).sort((x, y) => String(x.nombre).localeCompare(String(y.nombre), 'es')),
   });
@@ -3403,7 +3407,7 @@ app.get('/api/dashboard/resumen', auth, async (req, res) => {
 // Reporte de los KPIs del Panel en Excel: mismos filtros que el resumen (fechas de liquidación, grupo y afiliación) y un desglose
 // por día, semana contable (1-10, 11-17, 18-24, 25-fin), mes, grupo de cliente o afiliación.
 const PANEL_AGRUPAR = {
-  dia:        { titulo: 'Día',              hoja: 'Por día' },
+  dia:        { titulo: 'Fecha de liquidación', hoja: 'Por día' },
   semana:     { titulo: 'Semana contable',  hoja: 'Por semana contable' },
   mes:        { titulo: 'Mes',              hoja: 'Por mes' },
   grupo:      { titulo: 'Grupo de cliente', hoja: 'Por grupo de cliente' },
@@ -3428,7 +3432,7 @@ app.get('/api/dashboard/reporte.xlsx', auth, async (req, res) => {
   if (P.error) return res.status(P.error.status).json(P.error.body);
   const { desde, hasta, afil, sinGrupo, grupo, cliente } = P;
   const rows = await computeContable(desde, hasta, afil, cliente);
-  if (!rows.length) return res.status(404).json({ error: 'sin_datos', mensaje: 'No hay transacciones aprobadas con esos filtros en el periodo.' });
+  if (!rows.length) return res.status(404).json({ error: 'sin_datos', mensaje: 'No hay transacciones aprobadas con esos filtros en el periodo. Revisa que la ingesta de esas fechas ya esté cargada y que el rango sea por fecha de liquidación.' });
   const R2 = E.round2;
   const suma = (rs, k) => R2(rs.reduce((a, r) => a + (r[k] || 0), 0));
   const kpis = rs => {
@@ -3436,7 +3440,8 @@ app.get('/api/dashboard/reporte.xlsx', auth, async (req, res) => {
     const iva = R2(suma(rs, 'iva_tdd') + suma(rs, 'iva_tdc') + suma(rs, 'iva_amex') + suma(rs, 'iva_int'));
     const res = resultadoDe(rs);
     return { n: rs.reduce((a, r) => a + (r.n_trx || 0), 0), monto: suma(rs, 'monto'), comision, iva, banca: R2(suma(rs, 'banca') + suma(rs, 'iva_banca')), disp: suma(rs, 'disp'),
-      intercambio: res.costos.intercambio.total, broxel: res.costos.fee_broxel, utilidad: res.utilidad };
+      intercambio: res.costos.intercambio.total, broxel: res.costos.fee_broxel, utilidad: res.utilidad,
+      trx_iva: suma(rs, 'com_trx_iva'), devol_n: rs.reduce((a, r) => a + (r.devol_n || 0), 0), devol_monto: suma(rs, 'devol_monto') };
   };
   const T = kpis(rows);
   // Desglose
@@ -3445,38 +3450,59 @@ app.get('/api/dashboard/reporte.xlsx', auth, async (req, res) => {
   const lineas = [...cub.values()].map(e => ({ label: e.label, orden: e.orden, ...kpis(e.rs) }));
   if (['dia', 'semana', 'mes'].includes(modo)) lineas.sort((a, b) => a.orden < b.orden ? -1 : a.orden > b.orden ? 1 : 0);
   else lineas.sort((a, b) => b.monto - a.monto || String(a.label).localeCompare(String(b.label), 'es'));
+  // Además del desglose elegido, el reporte SIEMPRE trae una hoja por afiliación (número, razón social, grupo, costos y marca de costos completos), de mayor a menor monto.
+  const porAfil = new Map();
+  for (const r of rows) {
+    const e = porAfil.get(String(r.afil)) || { afil: String(r.afil), razon: r.razon || '', grupo: null, alertas: new Set(), rs: [] };
+    if (!e.grupo && r.grupo) e.grupo = r.grupo;
+    (r.alertas || []).forEach(x => e.alertas.add(x)); e.rs.push(r); porAfil.set(e.afil, e);
+  }
+  const lineasAfil = [...porAfil.values()].map(e => ({ ...e, ...kpis(e.rs) })).sort((x, y) => y.monto - x.monto || x.afil.localeCompare(y.afil, 'es', { numeric: true }));
   const filtroTxt = [
     sinGrupo ? 'Grupo: No identificado' : grupo ? `Grupo: ${grupo.nombre_cliente}` : 'Todos los grupos',
     afil === NO_IDENT ? 'Afiliación: No identificada' : afil ? `Afiliación: ${afil}` : 'Todas las afiliaciones',
   ].join(' · ');
-  const hoyStr = new Date().toLocaleDateString('es-MX', { timeZone: 'America/Mexico_City' });
+  const ahora = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
   const numCols = [
     { header: 'Transacciones', width: 15, numFmt: '#,##0' },
     { header: 'Monto transaccionado', width: 22, numFmt: 'mxn' },
     { header: 'Ingreso por comisión', width: 20, numFmt: 'mxn' },
-    { header: 'IVA', width: 16, numFmt: 'mxn' },
-    { header: 'Banca (Telematic) + IVA', width: 22, numFmt: 'mxn' },
-    { header: 'Monto dispersado (neto)', width: 24, numFmt: 'mxn' },
     { header: 'Costo de intercambio', width: 22, numFmt: 'mxn' },
     { header: 'Costo Broxel', width: 16, numFmt: 'mxn' },
     { header: 'Utilidad operativa', width: 21, numFmt: 'mxn' },
+    { header: 'Comisión / monto', width: 17, numFmt: '0.00%' },
+    { header: 'Margen operativo (utilidad / comisión)', width: 24, numFmt: '0.00%' },
+    { header: 'Utilidad / monto', width: 16, numFmt: '0.00%' },
+    { header: 'Ticket promedio', width: 17, numFmt: 'mxn' },
+    { header: 'IVA', width: 16, numFmt: 'mxn' },
+    { header: 'Costo por transacción + IVA', width: 22, numFmt: 'mxn' },
+    { header: 'Banca (Telematic) + IVA', width: 22, numFmt: 'mxn' },
+    { header: 'Monto a dispersar (antes de ajustes)', width: 26, numFmt: 'mxn' },
+    { header: 'Devoluciones (n)', width: 15, numFmt: '#,##0' },
+    { header: 'Monto devuelto', width: 17, numFmt: 'mxn' },
   ];
-  const vals = k => [k.n, k.monto, k.comision, k.iva, k.banca, k.disp, k.intercambio, k.broxel, k.utilidad];
+  const vals = k => [k.n, k.monto, k.comision, k.intercambio, k.broxel, k.utilidad,
+    k.monto ? k.comision / k.monto : 0, k.comision ? k.utilidad / k.comision : 0, k.monto ? k.utilidad / k.monto : 0, k.n ? k.monto / k.n : 0,
+    k.iva, k.trx_iva, k.banca, k.disp, k.devol_n, k.devol_monto];
+  const sheets = [
+    { name: 'Resumen',
+      columns: [{ header: 'Periodo (fecha de liquidación)', width: 30, align: 'left' }, { header: 'Grupo', width: 28, align: 'left' }, { header: 'Afiliación', width: 24, align: 'left' }, ...numCols],
+      rows: [[`${desde} a ${hasta}`, sinGrupo ? 'No identificado' : grupo ? grupo.nombre_cliente : 'Todos', afil === NO_IDENT ? 'No identificada' : afil || 'Todas', ...vals(T)]] },
+  ];
+  if (modo !== 'afiliacion') sheets.push({ name: PANEL_AGRUPAR[modo].hoja, autofilter: true,
+    columns: [{ header: PANEL_AGRUPAR[modo].titulo, width: modo === 'semana' ? 46 : 32, align: 'left' }, ...numCols],
+    rows: lineas.map(l => [l.label, ...vals(l)]), total: ['TOTAL', ...vals(T)] });
+  sheets.push({ name: PANEL_AGRUPAR.afiliacion.hoja, autofilter: true,
+    columns: [{ header: 'Núm. afiliación', width: 16, align: 'left' }, { header: 'Razón social', width: 38, align: 'left' }, { header: 'Grupo de cliente', width: 28, align: 'left' }, ...numCols, { header: 'Costos completos', width: 46, align: 'left' }],
+    rows: lineasAfil.map(l => [l.afil, l.razon, l.grupo || 'No identificado', ...vals(l), l.alertas.size ? 'Revisar: ' + [...l.alertas].join('; ') : 'Sí']),
+    total: ['TOTAL', '', '', ...vals(T), lineasAfil.filter(l => l.alertas.size).length ? `${lineasAfil.filter(l => l.alertas.size).length} afiliación(es) por revisar` : 'Sí'] });
   const buf = await X.buildPolipayXLSX({
     title: 'Panel POS · Indicadores del periodo',
-    meta: `Fecha de liquidación del ${desde} al ${hasta}   ·   ${filtroTxt}   ·   Desglose: ${PANEL_AGRUPAR[modo].titulo}   ·   Generado ${hoyStr} por ${req.user.nombre || '—'}`,
-    footer: 'Polipay POS Settlement · Solo transacciones aprobadas, por fecha de liquidación · Monto dispersado = monto − comisión − IVA − banca · Utilidad operativa = ingreso por comisión (sin IVA) − costo de intercambio − costo Broxel · Todas las cifras en MXN',
-    sheets: [
-      { name: 'Resumen',
-        columns: [{ header: 'Periodo (fecha de liquidación)', width: 30, align: 'left' }, { header: 'Grupo', width: 28, align: 'left' }, { header: 'Afiliación', width: 24, align: 'left' }, ...numCols, { header: 'Comisión / monto', width: 17, numFmt: '0.00%' }, { header: 'Margen operativo', width: 19, numFmt: '0.00%' }],
-        rows: [[`${desde} a ${hasta}`, sinGrupo ? 'No identificado' : grupo ? grupo.nombre_cliente : 'Todos', afil === NO_IDENT ? 'No identificada' : afil || 'Todas', ...vals(T), T.monto ? T.comision / T.monto : 0, T.comision ? T.utilidad / T.comision : 0]] },
-      { name: PANEL_AGRUPAR[modo].hoja,
-        columns: [{ header: PANEL_AGRUPAR[modo].titulo, width: modo === 'afiliacion' || modo === 'semana' ? 46 : 32, align: 'left' }, ...numCols],
-        rows: lineas.map(l => [l.label, ...vals(l)]),
-        total: ['TOTAL', ...vals(T)] },
-    ],
+    meta: `Fecha de liquidación del ${desde} al ${hasta}   ·   ${filtroTxt}   ·   Hojas: Resumen${modo !== 'afiliacion' ? ' · ' + PANEL_AGRUPAR[modo].hoja : ''} · Por afiliación   ·   Generado ${ahora} por ${req.user.nombre || '—'}`,
+    footer: 'Polipay POS Settlement · Solo transacciones aprobadas por fecha de liquidación (incluye fechas por liquidar y el día en curso); las devoluciones, con monto negativo, restan · Monto a dispersar (antes de ajustes) = monto − comisión − IVA − costo por transacción e IVA − banca e IVA; no resta financiamientos ni contracargos del corte · Utilidad operativa = ingreso por comisión (sin IVA) − costo de intercambio − costo Broxel; no incluye IVA, costo por transacción ni banca · Una afiliación con costos en 0 o sin tasas se marca «Revisar» porque su utilidad puede estar inflada · La suma de las líneas puede diferir del total por ±$0.02 de redondeo · Todas las cifras en MXN',
+    sheets,
   });
-  await bit(req, 'reporte', `exportó indicadores del panel ${desde}..${hasta} por ${modo}${grupo ? ' · ' + grupo.nombre_cliente : ''}${afil && afil !== NO_IDENT ? ' · afil ' + afil : ''}`);
+  await bit(req, 'reporte', `exportó indicadores del panel ${desde}..${hasta} por ${modo}${modo !== 'afiliacion' ? ' (+ hoja por afiliación)' : ''}${grupo ? ' · ' + grupo.nombre_cliente : ''}${afil && afil !== NO_IDENT ? ' · afil ' + afil : ''}`);
   enviarXLSX(res, `panel_indicadores_${desde}_a_${hasta}_por_${modo}.xlsx`, buf);
 });
 

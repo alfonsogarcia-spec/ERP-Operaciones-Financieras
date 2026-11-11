@@ -1656,22 +1656,21 @@ async function vDashboard(v){
       vDashboard._f={desde:inDesde.value,hasta:inHasta.value,afil:selAf.value,grupo:selGr.value};render();}},'Aplicar'),
     el('button',{class:'btn ghost',onclick:()=>{vDashboard._f={desde:'',hasta:'',afil:'',grupo:''};render();}},'Mes en curso'));
   // Reporte en Excel de estos indicadores, con los filtros que están en pantalla y un desglose por día, semana contable, mes, grupo o afiliación.
-  const selAgr=el('select',{id:'dashAgrupar',title:'Cómo se desglosa el reporte'},
+  const selAgr=el('select',{id:'dashAgrupar',title:'Cómo se desglosa el reporte (siempre incluye además una hoja por afiliación). Sale con los filtros aplicados.'},
     ...[['dia','Día'],['semana','Semana contable'],['mes','Mes'],['grupo','Grupo de cliente'],['afiliacion','Afiliación']].map(([k,t])=>el('option',{value:k},t)));
   selAgr.value=vDashboard._agr||'dia';selAgr.addEventListener('change',()=>{vDashboard._agr=selAgr.value;});
   barra.append(el('span',{style:'flex:1 1 0'}),
     el('label',{class:'field',style:'margin:0;min-width:170px'},'Desglosar reporte por',selAgr),
     el('button',{class:'btn secondary',onclick:async()=>{
-      if(inDesde.value&&inHasta.value&&inDesde.value>inHasta.value){toast('La fecha "desde" no puede ser posterior a "hasta"','err');return;}
-      const q={desde:inDesde.value,hasta:inHasta.value,afiliacion:selAf.value,grupo:selGr.value,agrupar:selAgr.value};
-      const d=inDesde.value||(rs&&rs.desde)||'',h=inHasta.value||(rs&&rs.hasta)||'';
+      // El reporte sale con los filtros APLICADOS (los que muestra el Panel), no con lo que haya escrito en los campos sin pulsar «Aplicar».
+      const d=(rs&&rs.desde)||F.desde||'',h=(rs&&rs.hasta)||F.hasta||'';
+      const q={desde:d,hasta:h,afiliacion:F.afil||'',grupo:F.grupo||'',agrupar:selAgr.value};
       try{await withBusy('Generando reporte…',()=>descargar('/api/dashboard/reporte.xlsx?'+new URLSearchParams(q).toString(),'panel_indicadores_'+d+'_a_'+h+'_por_'+selAgr.value+'.xlsx'));}
       catch(e){toast([404,413].includes(e.status)?((e.data&&e.data.mensaje)||'Sin datos para esos filtros'):errMsg(e),'err');}
     }},'⬇ Descargar reporte'),
     el('button',{class:'btn secondary',title:'Comercios, volumen mensual y anual, canales, marcas, contracargos y giros, con los filtros de arriba',onclick:async()=>{
-      if(inDesde.value&&inHasta.value&&inDesde.value>inHasta.value){toast('La fecha "desde" no puede ser posterior a "hasta"','err');return;}
-      const q={desde:inDesde.value,hasta:inHasta.value,afiliacion:selAf.value,grupo:selGr.value};
-      const d=inDesde.value||(rs&&rs.desde)||'',h=inHasta.value||(rs&&rs.hasta)||'';
+      const d=(rs&&rs.desde)||F.desde||'',h=(rs&&rs.hasta)||F.hasta||'';
+      const q={desde:d,hasta:h,afiliacion:F.afil||'',grupo:F.grupo||''};
       try{await withBusy('Generando Excel…',()=>descargar('/api/dashboard/negocio.xlsx?'+new URLSearchParams(q).toString(),'datos_negocio_'+d+'_a_'+h+'.xlsx'));}
       catch(e){toast((e.data&&e.data.mensaje)||errMsg(e),'err');}
     }},'⬇ Datos del negocio'));
@@ -1685,7 +1684,7 @@ async function vDashboard(v){
       ['Monto transaccionado',mxn(rs.monto),rs.n_trx+' transacciones aprobadas'],
       ['Comisión pactada',mxn(rs.comision),pct],
       ['IVA',mxn(rs.iva),'Sobre la comisión pactada'],
-      ['Monto dispersado (neto)',mxn(rs.dispersado),'Monto − comisión − IVA − banca'],
+      ['Monto a dispersar (antes de ajustes)',mxn(rs.dispersado),'Monto − comisión − IVA − banca; sin financiamientos ni contracargos'],
     ]));
     // Utilidad de mi ingreso: comisión (sin IVA) − costo de intercambio − fee Broxel, con los mismos filtros.
     if(rs.costos){
@@ -1700,6 +1699,8 @@ async function vDashboard(v){
         tarjeta('Costo Broxel','− '+mxn(c.fee_broxel),rs.monto?pcn(c.pct_fee_broxel*100)+' del monto':''),
         tarjeta('Utilidad operativa',mxn(util),hayIng&&rs.margen_pct!=null?'Margen operativo '+pcn(rs.margen_pct*100)+' · '+pcn(rs.utilidad_pct_monto*100)+' del monto':'',util<0?'alert':'ok'));
       sec.append(t);
+      const ci=rs.costos_incompletos||[];
+      if(ci.length)sec.append(el('div',{class:'banner warn',html:`<b>${ci.length} afiliación(es) con costos incompletos: la utilidad puede estar inflada.</b> `+ci.slice(0,6).map(x=>esc(x.afil+(x.razon?' · '+x.razon:''))+' ('+esc(x.motivos.join('; '))+')').join(' — ')+(ci.length>6?' — y '+(ci.length-6)+' más (están marcadas en el Excel, hoja «Por afiliación»).':'')}));
       sec.append(el('div',{class:'req-note'},'Costos con la tasa de intercambio de cada afiliación (si AMEX o Internacional no la tienen, la de Parámetros) y el fee Broxel sobre lo transaccionado. No incluye el IVA, el costo por transacción ni la banca. Es la misma utilidad que se calcula en cada corte.'));
       v.append(sec);
     }
