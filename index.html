@@ -1687,6 +1687,22 @@ async function vDashboard(v){
       ['IVA',mxn(rs.iva),'Sobre la comisión pactada'],
       ['Monto dispersado (neto)',mxn(rs.dispersado),'Monto − comisión − IVA − banca'],
     ]));
+    // Utilidad de mi ingreso: comisión (sin IVA) − costo de intercambio − fee Broxel, con los mismos filtros.
+    if(rs.costos){
+      const c=rs.costos,ic=c.intercambio,pcn=n=>Number(n||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2})+'%';
+      const util=rs.utilidad,hayIng=rs.comision>0;
+      const sec=el('div',{class:'panel util-panel'});
+      sec.append(el('h3',{},'Rentabilidad del periodo',el('span',{class:'right'},el('span',{class:'muted',style:'font-size:12px;font-weight:400'},'Ingreso por comisión (sin IVA) − intercambio − Broxel'))));
+      const t=el('div',{class:'cards util-cards'});
+      const tarjeta=(label,valor,hint,cls)=>el('div',{class:'card'+(cls?' '+cls:'')},el('div',{class:'label'},label),el('div',{class:'value'},valor),hint?el('div',{class:'hint'},hint):'');
+      t.append(tarjeta('Ingreso por comisión',mxn(rs.comision),pct||'Sin comisión en el periodo'),
+        tarjeta('Costo de intercambio','− '+mxn(ic.total),'TDD '+mxn(ic.tdd)+' · TDC '+mxn(ic.tdc)+' · AMEX '+mxn(ic.amex)+' · Int. '+mxn(ic.int)),
+        tarjeta('Costo Broxel','− '+mxn(c.fee_broxel),rs.monto?pcn(c.pct_fee_broxel*100)+' del monto':''),
+        tarjeta('Utilidad operativa',mxn(util),hayIng&&rs.margen_pct!=null?'Margen operativo '+pcn(rs.margen_pct*100)+' · '+pcn(rs.utilidad_pct_monto*100)+' del monto':'',util<0?'alert':'ok'));
+      sec.append(t);
+      sec.append(el('div',{class:'req-note'},'Costos con la tasa de intercambio de cada afiliación (si AMEX o Internacional no la tienen, la de Parámetros) y el fee Broxel sobre lo transaccionado. No incluye el IVA, el costo por transacción ni la banca. Es la misma utilidad que se calcula en cada corte.'));
+      v.append(sec);
+    }
     kpisNegocio(negocio).forEach(x=>v.append(x));   // datos del negocio: mismos filtros, dentro del mismo panel
     if(rs.afiliacion==='ninguna'||rs.grupo==='ninguno')v.append(el('div',{class:'banner warn',html:'Estas transacciones <b>no están ligadas al catálogo</b> '+(rs.afiliacion==='ninguna'?'(su afiliación no pertenece a ningún grupo)':'(su cliente no coincide con ningún grupo)')+': no tienen tasa pactada, por eso la comisión sale en $0. Para identificarlas, agrega la afiliación al grupo en Catálogos.'}));
   }
