@@ -25,7 +25,7 @@ const LINEAS = {
 const COLOR_ROL = {
   ceo:'#1e3a8a', cfo:'#0f766e', coo:'#b45309', 'cro-riesgos':'#b91c1c', cco:'#6d28d9', cto:'#0369a1',
   cpo:'#be185d', 'cdo-caio':'#4d7c0f', ciso:'#334155', clo:'#7c2d12', 'cro-ingresos':'#c2410c', cmo:'#db2777',
-  especialista:'#ca8a04', recepcion:'#3083F4',
+  especialista:'#ca8a04', recepcion:'#3083F4', design:'#e11d48',
 };
 const PIELES = ['#f5d0b5','#eab68f','#d39a6e','#b57a4f','#8d5a36','#f1c7a3'];
 const PELOS  = ['#2b1d14','#4a2f1d','#7a4a24','#c58b3c','#1f2937','#6b7280','#a0522d','#e7c27a','#3b2a4a'];
@@ -73,6 +73,9 @@ for (const k of Object.keys(LINEAS)) {
   });
   DESKS[`${k}-especialista`] = { room: k, lx: CORR - 1.4, ly: 12.0, seat: { ...P(r, CORR, 11.45), dir: 'down', sit: true, room: k, tipo: 'escritorio' }, facing: 'down', jefe: true };
 }
+
+// Agentes de nivel grupo: escritorio propio en Recepción (Dirección)
+DESKS['chief-design-officer'] = { room: 'recepcion', lx: 14.5, ly: 6.6, seat: { ...P(R.recepcion, 15.9, 8.35), dir: 'up', sit: true, room: 'recepcion', tipo: 'escritorio' }, facing: 'up', acento: '#e11d48' };
 
 // ---------------------------------------------------------------- rutas
 const roomOf = (x, y) => {
@@ -184,6 +187,7 @@ function pintarSala(g, r) {
     rect(1.4, 9.1, 4.4, 0.9, '#0B2E59'); rect(1.4, 8.8, 4.4, 0.4, '#123a6b'); rect(17.9, 9.1, 1.6, 0.9, '#0B2E59'); rect(17.9, 8.8, 1.6, 0.4, '#123a6b');
     rect(7.5, 9.2, 2.2, 1.1, '#cbd5e1'); planta(1.0, 6.5); planta(20.0, 6.5); garrafon(20.2, 2.4);
     rect(15.8, 1.2, 3.5, 0.3, '#1f2937');
+    pintarEscritorio(g, r, DESKS['chief-design-officer']);
   }
   if (r.id === 'comites') {
     sombra(5, 4, 11, 3.6); rect(5, 4, 11, 3.6, '#5b3a22'); rect(5.2, 4.2, 10.6, 3.2, '#7a5032');
@@ -219,6 +223,7 @@ function pintarEscritorio(g, r, d) {
   g.fillStyle = d.jefe ? '#7a5032' : '#f8fafc'; g.fillRect(x, y, w, T);
   g.fillStyle = d.jefe ? '#5b3a22' : '#cbd5e1'; g.fillRect(x, y + T - 3, w, 3);
   if (d.jefe) { g.fillStyle = '#ca8a04'; g.fillRect(x, y, w, 2); }
+  if (d.acento) { g.fillStyle = d.acento; g.fillRect(x, y, w, 2); }
   const cx = x + w / 2;
   // monitor (la pantalla se pinta en vivo)
   g.fillStyle = '#1f2633'; g.fillRect(cx - 7, y - 6, 14, 9); g.fillStyle = '#374151'; g.fillRect(cx - 1, y + 3, 2, 2);
@@ -427,7 +432,7 @@ function render(t) {
     }
   }
 }
-const nombreCorto = a => a.tipo === 'recepcion' ? 'Recepción (Claude)' : a.tipo === 'especialista' ? `Especialista · ${LINEAS[a.linea].nombre}` : `${a.rol} · ${LINEAS[a.linea].nombre.split(' · ')[0]}`;
+const nombreCorto = a => a.tipo === 'recepcion' ? 'Recepción (Claude)' : a.tipo === 'grupo' ? a.rol : a.tipo === 'especialista' ? `Especialista · ${LINEAS[a.linea].nombre}` : `${a.rol} · ${LINEAS[a.linea].nombre.split(' · ')[0]}`;
 
 // ---------------------------------------------------------------- cámara e interacción
 let arrastre = null;
@@ -483,7 +488,7 @@ function textoEstado(p, ahora) {
 function pintarLista() {
   const ahora = Date.now();
   if (tab === 'equipo') {
-    const grupos = [['oficina', 'Recepción', '#3083F4'], ...Object.entries(LINEAS).map(([k, l]) => [k, l.nombre, l.acento])];
+    const grupos = [['oficina', 'Dirección y Recepción', '#3083F4'], ...Object.entries(LINEAS).map(([k, l]) => [k, l.nombre, l.acento])];
     let html = '';
     const ses = SESIONES.filter(s => !filtro || `${s.proyecto} ${s.usuario} ${s.prompt}`.toLowerCase().includes(filtro));
     if (ses.length) {
@@ -614,6 +619,7 @@ const TRABAJOS = {
   emisor: ['Cálculo de comisión de fondeo', 'Revisión de depósitos por autorizar', 'BRD dispersión automática PA-07', 'Conciliación TAPI', 'Inventario de plásticos My Card', 'Límites operativos BSO-CARDS-POL'],
   agregador: ['Compensación diaria POL-OP-M01', 'Conciliación Broxel AMEX', 'Perfil TPV_Propina_restaurante', 'Análisis corte AMEX 20:00 h', 'Migración comercios NOVEK', 'Tasas Empresa → UN → Comercio'],
   banca: ['Auto-generación de UDN', 'Revisión API ASP Integra', 'Handoff POL-BAN-MO-001', 'Plan Grupo DEAL', 'Conciliación SPEI del día'],
+  oficina: ['Auditoría UX del Panel POS', 'Revisión del deck del roadshow', 'Accesibilidad del ERP', 'Auditoría de la app Polipay TPV'],
   credito: ['Cotizador CAT vía TIR', 'Tabla de amortización francesa', 'Contrato RECA dos columnas', 'Reserva NIF D-1 / B-6', 'Registro en herramienta de cartera'],
 };
 function tickDemo() {
