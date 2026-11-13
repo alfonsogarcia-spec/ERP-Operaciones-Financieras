@@ -108,12 +108,11 @@ test('terminal serializada: entra con su serie, se asigna a Empresa y Unidad del
   assert.equal((await ent(a.j.id, dia(19), ['SN0001'])).s, 409);                                        // serie repetida
   assert.equal((await call('admin', 'POST', '/movimientos', { articulo_id: a.j.id, tipo: 'salida', concepto: 'entrega', fecha: dia(5), series: 'SN0001', empresa: 'ACME SA' })).s, 422);   // sin Unidad
   assert.equal((await call('admin', 'POST', '/movimientos', { articulo_id: a.j.id, tipo: 'salida', concepto: 'entrega', fecha: dia(5), series: 'SN0001', empresa: 'No existe SA', unidad: 'X' })).s, 422);
-  assert.equal((await call('admin', 'POST', '/movimientos', { articulo_id: a.j.id, tipo: 'salida', concepto: 'entrega', fecha: dia(5), series: 'SN0001', empresa: 'ACME SA', unidad: 'Sucursal Norte', afiliacion: '2222222' })).s, 422);   // afiliación de otra Empresa
-  const s = await call('admin', 'POST', '/movimientos', { articulo_id: a.j.id, tipo: 'salida', concepto: 'entrega', fecha: dia(5), series: ['SN0001', 'SN0002'], empresa_id: 7, unidad: 'Sucursal Norte', afiliacion: '1111111' });
+  const s = await call('admin', 'POST', '/movimientos', { articulo_id: a.j.id, tipo: 'salida', concepto: 'entrega', fecha: dia(5), series: ['SN0001', 'SN0002'], empresa_id: 7, unidad: 'Sucursal Norte' });
   assert.equal(s.s, 200); assert.equal(s.j.costo_total, 2 * 1850);
   const sr = await call('consulta', 'GET', `/series?articulo_id=${a.j.id}`);
   const t1 = sr.j.series.find(x => x.serie === 'SN0001');
-  assert.equal(t1.estado, 'asignada'); assert.equal(t1.empresa, 'ACME SA'); assert.equal(t1.unidad, 'Sucursal Norte'); assert.equal(t1.afiliacion, '1111111');
+  assert.equal(t1.estado, 'asignada'); assert.equal(t1.empresa, 'ACME SA'); assert.equal(t1.unidad, 'Sucursal Norte'); assert.equal(t1.afiliacion, undefined);
   assert.equal(sr.j.series.find(x => x.serie === 'SN0003').estado, 'almacen');
   assert.equal((await call('admin', 'POST', '/movimientos', { articulo_id: a.j.id, tipo: 'salida', concepto: 'entrega', fecha: dia(1), series: ['SN0001'], empresa: 'BETA SA', unidad: 'Matriz' })).s, 409);   // ya está asignada
 });
@@ -143,10 +142,10 @@ test('devolución de cliente regresa la serie a almacén; anular la entrega la l
   assert.equal((await call('admin', 'GET', `/series?articulo_id=${a.j.id}`)).j.series[0].estado, 'almacen');
   assert.ok(e.j.ok);
 });
-test('catálogo de clientes: Empresas, afiliaciones y unidades (de transacciones y de entregas previas)', async () => {
+test('catálogo de clientes: Empresas y unidades (de transacciones y de entregas previas)', async () => {
   const r = await call('admin', 'GET', '/clientes');
   const acme = r.j.empresas.find(e => e.nombre === 'ACME SA');
-  assert.equal(acme.id, 7); assert.deepEqual(acme.afiliaciones, ['1111111']); assert.ok(acme.unidades.includes('Sucursal Norte'));
+  assert.equal(acme.id, 7); assert.equal(acme.afiliaciones, undefined); assert.ok(acme.unidades.includes('Sucursal Norte'));
 });
 
 /* ---------------------------- carga masiva ---------------------------- */
@@ -162,7 +161,7 @@ test('layout: simula sin escribir, muestra el plan; al confirmar aplica TODO (ar
       ['SALIDA', 'Entrega a cliente o área', dia(5), 'LAY-T', 'LT002', '', '', 'REM-1', '', 'acme sa', 'Sucursal Norte', '', ''], ['SALIDA', 'Consumo interno', dia(2), 'LAY-P', '', 3, '', '', '', '', '', '', 'Oficina']]);
   const sim = await lay(archivo);
   assert.equal(sim.s, 200); assert.equal(sim.j.ok, true); assert.equal(sim.j.aplicado, false);
-  assert.equal(sim.j.resumen.articulos_nuevos, 2); assert.equal(sim.j.resumen.movimientos, 5); assert.equal(sim.j.resumen.unidades, 5); assert.equal(sim.j.resumen.costo_salidas, 2 * 1500 + 3 * 95);
+  assert.equal(sim.j.resumen.articulos_nuevos, 2); assert.equal(sim.j.resumen.movimientos, 4); assert.equal(sim.j.resumen.unidades, 5); assert.equal(sim.j.resumen.costo_salidas, 2 * 1500 + 3 * 95);
   assert.equal((await call('admin', 'GET', '/articulos')).j.articulos.some(a => a.sku === 'LAY-T'), false);                    // todavía nada
   assert.equal((await lay(archivo, { aplicar: true })).s, 409);                                                                // sin huella no aplica
   const ap = await lay(archivo, { aplicar: true, huella: sim.j.huella });
@@ -173,7 +172,6 @@ test('layout: simula sin escribir, muestra el plan; al confirmar aplica TODO (ar
   assert.equal(p.existencia, 17); assert.equal(p.valor, 17 * 95);
   const se = (await call('admin', 'GET', `/series?articulo_id=${t.id}&estado=asignada`)).j.series;
   assert.deepEqual(se.map(s => [s.serie, s.empresa, s.unidad]).sort(), [['LT001', 'ACME SA', 'Sucursal Norte'], ['LT002', 'ACME SA', 'Sucursal Norte']]);
-  assert.equal(se.find(s => s.serie === 'LT001').afiliacion, '1111111');
   assert.ok(llamadas.some(x => x[0] === 'inv_layout'));
 });
 test('layout: todo o nada; los errores traen hoja y fila (serie repetida, Empresa inexistente, afiliación ajena, sin existencia, concepto raro)', async () => {
@@ -185,7 +183,7 @@ test('layout: todo o nada; los errores traen hoja y fila (serie repetida, Empres
   const r = await lay(archivo);
   assert.equal(r.s, 200); assert.equal(r.j.ok, false);
   const msgs = r.j.errores.map(e => `${e.hoja}:${e.fila}:${e.mensaje}`).join(' | ');
-  assert.match(msgs, /Movimientos:2:.*serie E1 viene repetida/i); assert.match(msgs, /Movimientos:4:.*Empresa «No existe SA»/); assert.match(msgs, /Movimientos:5:.*afiliación 2222222 no pertenece/);
+  assert.match(msgs, /Movimientos:2:.*serie E1 viene repetida/i); assert.match(msgs, /Movimientos:4:.*Empresa «No existe SA»/);
   assert.match(msgs, /Movimientos:6:.*Sin existencia suficiente de ERR-P/); assert.match(msgs, /Movimientos:7:.*concepto «Rarísimo»/); assert.match(msgs, /Movimientos:8:.*NOEXISTE no existe/);
   const ap = await lay(archivo, { aplicar: true, huella: 'x' });
   assert.equal(ap.s, 422); assert.ok(ap.j.errores.length >= 5);
@@ -203,4 +201,45 @@ test('layout: plantilla descargable y permisos (consulta no carga)', async () =>
   const t = await call('consulta', 'GET', '/layout.xlsx'); assert.equal(t.s, 200);
   assert.equal((await call('consulta', 'POST', '/layout', { archivo: 'AAAA' })).s, 403);
   assert.equal((await call('admin', 'POST', '/layout', { archivo: '' })).s, 400);
+});
+
+
+/* ---------------------------- layout SIMPLE: una hoja «Terminales», una fila por terminal ---------------------------- */
+const libroSimple = filas => { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(filas), 'Terminales'); return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }).toString('base64'); };
+const HS = ['sn', 'modelo', 'costo', 'fecha_compra', 'documento', 'proveedor', 'empresa', 'unidad', 'fecha_entrega'];
+
+test('layout simple: una fila por terminal crea el modelo, da de alta la terminal y, con Empresa y Unidad, la entrega; nada que ver con afiliación', async () => {
+  const archivo = libroSimple([HS, ['SM001', 'Terminal Simple', 1900, dia(12), 'F-31', 'Prov Z', '', '', ''], ['SM002', 'Terminal Simple', 1900, dia(12), 'F-31', 'Prov Z', 'ACME SA', 'Sucursal Norte', dia(3)], ['SM003', 'Terminal Simple', 1900, dia(12), 'F-31', 'Prov Z', 'BETA SA', 'Matriz', ''], ['SM004', 'Terminal Simple', 0, dia(12), '', '', '', '', '']]);
+  const sim = await lay(archivo, { nombre: 'terminales.xlsx' });
+  assert.equal(sim.j.ok, true, JSON.stringify(sim.j.errores));
+  assert.equal(sim.j.resumen.articulos_nuevos, 1); assert.equal(sim.j.resumen.unidades, 6);                      // 4 entradas + 2 entregas
+  const ap = await lay(archivo, { nombre: 'terminales.xlsx', aplicar: true, huella: sim.j.huella });
+  assert.equal(ap.s, 200);
+  const art = (await call('admin', 'GET', '/articulos')).j.articulos.find(a => a.nombre === 'Terminal Simple');
+  assert.equal(art.serializado, true); assert.equal(art.sku, 'TERMINAL-SIMPLE'); assert.equal(art.en_almacen, 2); assert.equal(art.asignadas, 2);
+  const se = (await call('admin', 'GET', `/series?articulo_id=${art.id}`)).j.series;
+  assert.deepEqual(se.map(s => [s.serie, s.estado, s.empresa, s.unidad]).sort(), [['SM001', 'almacen', '', ''], ['SM002', 'asignada', 'ACME SA', 'Sucursal Norte'], ['SM003', 'asignada', 'BETA SA', 'Matriz'], ['SM004', 'almacen', '', '']]);
+  // la fecha de entrega vacía toma la de compra; sin documento la carga es «Inventario inicial»
+  const kd = (await call('admin', 'GET', `/articulos/${art.id}/kardex`)).j.filas;
+  assert.ok(kd.some(f => f.concepto === 'inventario_inicial' && f.series.includes('SM004'))); assert.ok(kd.some(f => f.concepto === 'compra'));
+  // una segunda carga del mismo modelo reutiliza el artículo (por nombre)
+  const otra = libroSimple([HS, ['SM010', 'terminal simple', 1900, dia(2), 'F-40', 'Prov Z', '', '', '']]);
+  const s2 = await lay(otra, { nombre: 'otra.xlsx' }); assert.equal(s2.j.ok, true); assert.equal(s2.j.resumen.articulos_nuevos, 0);
+});
+test('layout simple: los errores señalan la fila del Excel (SN repetido o ya existente, sin costo, Empresa inexistente, Unidad sin Empresa, entrega antes de la compra)', async () => {
+  const antes = (await call('admin', 'GET', '/articulos')).j.articulos.length;
+  const archivo = libroSimple([HS, ['ER001', 'Terminal Err', 1000, dia(10), 'F-1', '', '', '', ''], ['ER001', 'Terminal Err', 1000, dia(10), 'F-1', '', '', '', ''], ['SM001', 'Terminal Simple', 1000, dia(10), 'F-1', '', '', '', ''],
+    ['ER003', 'Terminal Err', '', dia(10), 'F-1', '', '', '', ''], ['ER004', 'Terminal Err', 1000, dia(10), 'F-1', '', 'No Existe SA', 'Matriz', ''], ['ER005', 'Terminal Err', 1000, dia(10), 'F-1', '', '', 'Matriz', ''], ['ER006', 'Terminal Err', 1000, dia(5), 'F-1', '', 'ACME SA', 'Matriz', dia(9)], ['', 'Terminal Err', 1000, dia(5), '', '', '', '', '']]);
+  const r = await lay(archivo);
+  assert.equal(r.j.ok, false);
+  const msgs = r.j.errores.map(e => `${e.fila}:${e.mensaje}`).join(' | ');
+  assert.match(msgs, /2:.*serie ER001 viene repetida/); assert.match(msgs, /4:.*SM001 ya está en almacén|4:.*asignada/); assert.match(msgs, /5:.*costo/); assert.match(msgs, /6:.*Empresa «No Existe SA»/);
+  assert.match(msgs, /7:.*Trae Unidad pero falta la Empresa/); assert.match(msgs, /8:.*anterior a la de compra/); assert.match(msgs, /9:.*SN/);
+  assert.ok(r.j.errores.every(e => e.hoja === 'Terminales'));
+  assert.equal((await call('admin', 'GET', '/articulos')).j.articulos.length, antes);                           // todo o nada
+});
+test('layout simple: también en CSV; y las plantillas (simple y avanzada) se descargan', async () => {
+  const csv = Buffer.from(['sn,modelo,costo,fecha_compra,documento', `CS001,Terminal Csv,1500,${dia(4)},F-90`, `CS002,Terminal Csv,1500,${dia(4)},F-90`].join('\n')).toString('base64');
+  const r = await lay(csv, { nombre: 't.csv' }); assert.equal(r.j.ok, true, JSON.stringify(r.j.errores)); assert.equal(r.j.resumen.unidades, 2);
+  assert.equal((await call('consulta', 'GET', '/layout.xlsx')).s, 200); assert.equal((await call('consulta', 'GET', '/layout-avanzado.xlsx')).s, 200);
 });
