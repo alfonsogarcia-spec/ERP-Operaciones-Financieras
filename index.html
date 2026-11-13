@@ -822,6 +822,7 @@
 </div>
 <!-- Google Identity Services -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="/public/inventario-admin.js?v=20261113b"></script>
 
 <!-- APP -->
 <div class="layout" id="app" style="display:none">
@@ -1401,6 +1402,7 @@ const NAV_CONCILIACION=[
   {id:'disp_reports',t:'Reportes de disputas',ic:'ic_15',cap:'disputas_ver'},
   {sec:'Administración'},
   {id:'inventario',t:'Inventario de terminales',ic:'ic_14'},
+  {id:'inv_admin',t:'Inventario administrativo',ic:'ic_14'},
   {sec:'Catálogos',col:true},
   {id:'grupos',t:'Grupos y afiliaciones',ic:'ic_09'},
   {id:'cuentas',t:'Cuentas de liquidación',ic:'ic_11'},
@@ -1460,6 +1462,7 @@ function renderNav(){
   // catálogos, sin nada más que pueda dar pie a explorar otras pantallas.
   if(SES&&SES.rol==='inventario'){
     nav.append(el('a',{class:VIEW==='inventario'?'active':'',onclick:()=>go('inventario')},el('img',{src:'/public/brand-icons/ic_14.png',alt:''}),el('span',{},'Inventario de terminales')));
+    nav.append(el('a',{class:VIEW==='inv_admin'?'active':'',onclick:()=>go('inv_admin')},el('img',{src:'/public/brand-icons/ic_14.png',alt:''}),el('span',{},'Inventario administrativo')));
     return;
   }
   // Agrupar items por sección. IIFE por sección para capturar secDiv/secKey por closure.
@@ -1541,9 +1544,9 @@ async function render(){renderNav();if(WORKSPACE==='cards')cardsContadores();
     catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
     return;
   }
-  const[t,s]=TITLES[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
+  const[t,s]=TITLES[VIEW]||(window.INV_TITULOS||{})[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
   const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
-  try{await ({dashboard:vDashboard,ingesta:vIngesta,inventario:vInventario,contracargos:vContracargos,retenciones:vRetenciones,cortes:vCortes,contable:vContabilidadCortes,cumplimiento:vCumplimiento,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,umbrales:vUmbrales,destinatarios:vDestinatarios,bitacora:vBitacora,
+  try{await ({...(window.INV_VISTAS||{}),dashboard:vDashboard,ingesta:vIngesta,inventario:vInventario,contracargos:vContracargos,retenciones:vRetenciones,cortes:vCortes,contable:vContabilidadCortes,cumplimiento:vCumplimiento,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,umbrales:vUmbrales,destinatarios:vDestinatarios,bitacora:vBitacora,
     disp_dashboard:vDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC,disp_providers:vDispProviders,disp_reports:vDispReports,
     dest_liquidacion:vDestinatariosCorte,dest_liquidacion_cli:vDestinatariosCliente,dest_contabilidad:vDestinatariosContabilidad,dest_disputas:vDestDisputas,dest_alertas:vDestinatariosAlertas,
     cards_panel:vCardsPanel,cards_fondeos:vCardsFondeos,cards_bandeja:vCardsBandeja,cards_solicitudes:vCardsSolicitudes,cards_estructura:vCardsEstructura,cards_bancos:vCardsBancos,cards_destinatarios:vCardsDestinatarios,cards_contabilidad:vCardsContabilidad,adm_usuarios:vAdmUsuarios,

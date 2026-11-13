@@ -6023,6 +6023,10 @@ app.post('/api/disputa/providers/:id/regenerate-token', auth, requiereRol('admin
 });
 
 /* ---------- estáticos + SPA ---------- */
+// Inventario ADMINISTRATIVO (PEPS, captura manual y carga masiva): aparte del inventario de terminales, que sale de las transacciones.
+require('./lib/inventario-admin.js').montar(app, { auth, requiereRol, bit, db, enviarXLSX });
+// La pantalla del inventario administrativo cambia seguido: sin caché de 7 días (se revalida con ETag).
+app.use('/public/inventario-admin.js', express.static(path.join(__dirname, 'public', 'inventario-admin.js'), { maxAge: 0, etag: true, lastModified: true, setHeaders: res => res.setHeader('Cache-Control', 'no-cache') }));
 app.use('/public', express.static(path.join(__dirname, 'public'), { maxAge: '7d' }));
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'not_found' });
