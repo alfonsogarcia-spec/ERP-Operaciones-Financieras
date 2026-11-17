@@ -471,7 +471,7 @@ async function formMovimiento(tipo, articuloId) {
   modoEsc.addEventListener('change', alterna); porEquipo.addEventListener('change', () => { paso = 0; parcial.serie = parcial.imei = parcial.tid = ''; escaner.pinta(null, ''); escaner.enfocar(); });
   cajaSeries.prepend(el('label', { class: 'chk', for: 'invEsc', title: 'Para escáner de códigos de barras en modo teclado (USB, Bluetooth o 2.4 GHz)' }, modoEsc, ' Modo escáner'), cajaEsc);
   const cajaCant = el('div', { class: 'grid2' }, fld('Cantidad', cant), esE ? fld('Costo unitario (sin IVA)', costo) : el('div', {}));
-  const cajaDoc = esE ? el('div', { class: 'grid2' }, fld('Documento', doc), fld('Proveedor', prov)) : el('div', {}, fld('Documento o remisión (opcional)', doc));
+  const cajaDoc = esE ? el('div', { class: 'grid2' }, fld('Factura o documento (opcional)', doc), fld('Proveedor (opcional)', prov)) : el('div', {}, fld('Documento o remisión (opcional)', doc));
   let capas = [], libres = [];
   const art0 = () => ST.arts.find(x => String(x.id) === String(art.value));
   const lineas = () => series.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);

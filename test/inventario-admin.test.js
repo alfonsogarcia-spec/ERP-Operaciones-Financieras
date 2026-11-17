@@ -91,7 +91,7 @@ test('12 capturas simultáneas de salida sobre 10 piezas: solo entran 10 (candad
 test('validaciones de captura y descargas de Excel', async () => {
   const a = await call('admin', 'POST', '/articulos', { sku: 'TEST-V', nombre: 'Validación' });
   const mal = b => call('admin', 'POST', '/movimientos', { articulo_id: a.j.id, tipo: 'entrada', concepto: 'compra', fecha: hoy(), cantidad: 1, costo_unitario: 1, documento: 'F', ...b });
-  assert.equal((await mal({ cantidad: -1 })).s, 422); assert.equal((await mal({ costo_unitario: undefined })).s, 422); assert.equal((await mal({ fecha: '2099-01-01' })).s, 422); assert.equal((await mal({ documento: '' })).s, 422);
+  assert.equal((await mal({ cantidad: -1 })).s, 422); assert.equal((await mal({ costo_unitario: undefined })).s, 422); assert.equal((await mal({ fecha: '2099-01-01' })).s, 422); assert.equal((await mal({ documento: '' })).s, 200);               // la factura es opcional
   const x = await call('admin', 'GET', '/existencias.xlsx'); assert.equal(x.s, 200); assert.match(x.r.headers.get('content-disposition'), /existencias_peps_/);
   const k = await call('admin', 'GET', `/kardex.xlsx?articulo_id=${a.j.id}`); assert.equal(k.s, 200);
 });

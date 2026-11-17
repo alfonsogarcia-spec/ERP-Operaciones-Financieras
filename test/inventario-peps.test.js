@@ -62,7 +62,7 @@ test('validación de capturas manuales', () => {
   const v = o => P.validarMovimiento({ tipo: 'entrada', concepto: 'compra', fecha: hoy, cantidad: 5, costo_unitario: 10, documento: 'F-1', ...o });
   assert.deepEqual(v({}), []);
   assert.match(v({ cantidad: 0 }).join(), /cantidad/); assert.match(v({ costo_unitario: -1 }).join(), /costo/); assert.match(v({ costo_unitario: undefined }).join(), /costo/);
-  assert.match(v({ documento: '' }).join(), /documento/); assert.match(v({ fecha: '2099-01-01' }).join(), /futura/); assert.match(v({ fecha: '2026-02-31' }).join(), /fecha/);
+  assert.deepEqual(v({ documento: '' }), []);                                                                  // la factura es opcional; assert.match(v({ fecha: '2099-01-01' }).join(), /futura/); assert.match(v({ fecha: '2026-02-31' }).join(), /fecha/);
   assert.match(v({ concepto: 'merma' }).join(), /concepto/);                         // merma no es una entrada
   assert.match(P.validarMovimiento({ tipo: 'salida', concepto: 'merma', fecha: hoy, cantidad: 1 }).join(), /nota/);
   assert.match(P.validarMovimiento({ tipo: 'salida', concepto: 'entrega', fecha: hoy, cantidad: 1 }).join(), /Empresa y la Unidad/);

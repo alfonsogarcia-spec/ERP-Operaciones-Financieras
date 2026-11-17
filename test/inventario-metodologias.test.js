@@ -228,3 +228,13 @@ test('escáner: un código (S/N, IMEI o TID) se resuelve al equipo, sin importar
   assert.deepEqual(await por('NOEXISTE'), []); assert.deepEqual(await por(''), []);
   assert.equal((await call('nadie', 'GET', '/codigo?c=Q001')).s, 401);
 });
+
+test('la factura y el IMEI no son obligatorios: una compra sin documento y un equipo solo con S/N se registran', async () => {
+  const id = await art({ sku: 'TERM-O', nombre: 'Terminal opcional', serializado: true });
+  const sin = await mov({ articulo_id: id, tipo: 'entrada', concepto: 'compra', fecha: dia(2), costo_unitario: 700, series: 'O001' });
+  assert.equal(sin.s, 200, JSON.stringify(sin.j));
+  const k = (await call('admin', 'GET', `/articulos/${id}/kardex`)).j;
+  assert.equal(k.filas[0].concepto, 'compra'); assert.equal(k.series[0].serie, 'O001'); assert.equal(k.series[0].imei, ''); assert.equal(k.series[0].tid, '');
+  const pza = await art({ sku: 'CAB-O', nombre: 'Cable opcional' });
+  assert.equal((await mov({ articulo_id: pza, tipo: 'entrada', concepto: 'compra', fecha: dia(2), cantidad: 5, costo_unitario: 10 })).s, 200);
+});
