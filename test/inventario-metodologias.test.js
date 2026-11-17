@@ -216,3 +216,15 @@ test('layout simple con IMEI y TID: se guardan por equipo y no se pueden repetir
   assert.equal(ap.s, 409); assert.equal(ap.j.codigo, 'imei_tid');
   assert.equal((await call('admin', 'GET', '/series?q=L003')).j.series.length, 0);                                                                       // todo o nada
 });
+
+test('escáner: un código (S/N, IMEI o TID) se resuelve al equipo, sin importar mayúsculas ni espacios', async () => {
+  const id = await art({ sku: 'TERM-Q', nombre: 'Terminal Q', serializado: true });
+  await mov({ articulo_id: id, tipo: 'entrada', concepto: 'compra', fecha: dia(5), costo_unitario: 900, documento: 'Q-1', series: 'Q001,350000000020001,TIDQ01\nQ002' });
+  await mov({ articulo_id: id, tipo: 'salida', concepto: 'entrega', fecha: dia(1), series: 'Q001', empresa: 'ACME SA', unidad: 'Norte' });
+  const por = async c => (await call('consulta', 'GET', '/codigo?c=' + encodeURIComponent(c))).j.coincidencias;
+  for (const c of ['q001', '350000000020001', ' tidq01 ']) { const r = await por(c); assert.equal(r.length, 1); assert.equal(r[0].serie, 'Q001'); assert.equal(r[0].estado, 'asignada'); assert.equal(r[0].empresa, 'ACME SA'); }
+  assert.equal((await por('Q001'))[0].campo, 'serie'); assert.equal((await por('350000000020001'))[0].campo, 'imei'); assert.equal((await por('TIDQ01'))[0].campo, 'tid');
+  assert.equal((await por('Q002'))[0].estado, 'almacen'); assert.equal((await por('Q002'))[0].imei, '');
+  assert.deepEqual(await por('NOEXISTE'), []); assert.deepEqual(await por(''), []);
+  assert.equal((await call('nadie', 'GET', '/codigo?c=Q001')).s, 401);
+});

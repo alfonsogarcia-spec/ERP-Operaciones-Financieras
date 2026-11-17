@@ -29,6 +29,31 @@ const compacta = w => { const t = w.querySelector('table'); if (t) t.style.minWi
 const panel = (titulo, ...hijos) => el('div', { class: 'panel' }, el('h3', {}, titulo), ...hijos);
 const panelConLink = (titulo, linkTxt, tab, ...hijos) => el('div', { class: 'panel' }, el('h3', {}, titulo, el('span', { class: 'right' }, el('button', { class: 'btn ghost sm', type: 'button', onclick: () => ST.irA(tab) }, linkTxt))), ...hijos);
 
+/* ---------- escáner de códigos de barras (modo teclado: «escribe» el código y pulsa Enter) ---------- */
+let AUDIO = null;
+const pitido = ok => { try { AUDIO = AUDIO || new (window.AudioContext || window.webkitAudioContext)(); const o = AUDIO.createOscillator(), g = AUDIO.createGain(); o.frequency.value = ok ? 880 : 200; g.gain.value = 0.06; o.connect(g); g.connect(AUDIO.destination); o.start(); o.stop(AUDIO.currentTime + (ok ? 0.08 : 0.3)); } catch (_e) { /* sin audio */ } };
+const normCod = x => String(x || '').trim().toUpperCase().replace(/\s+/g, '');
+async function buscaCodigo(c) { return (await api('GET', BASE + '/codigo?c=' + encodeURIComponent(c))).coincidencias; }
+/* procesar(código) → {ok, msg}; pista() → qué escanear ahora. Las lecturas se atienden en fila: el escáner dispara varias seguidas. */
+function widgetEscaner(procesar, pista) {
+  const inp = el('input', { placeholder: 'Escanea aquí…', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Entrada del escáner', style: 'font-family:ui-monospace,monospace' });
+  const estado = el('div', { class: 'muted', role: 'status', 'aria-live': 'polite', style: 'margin-top:6px;min-height:20px' });
+  const caja = el('div', { style: 'border:1px dashed var(--line-strong);border-radius:10px;padding:10px;margin-top:6px' }, inp, estado);
+  const pinta = (ok, msg) => { estado.textContent = (msg ? msg + ' · ' : '') + pista(); estado.style.color = ok === false ? 'var(--danger)' : ''; };
+  let cola = Promise.resolve();
+  inp.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const c = normCod(inp.value); inp.value = ''; if (!c) return;
+    cola = cola.then(async () => { try { const r = await procesar(c); pitido(r.ok); pinta(r.ok, r.msg); } catch (_e) { pitido(false); pinta(false, 'No se pudo revisar el código'); } inp.focus(); });
+  });
+  caja.enfocar = () => inp.focus(); caja.pinta = pinta; pinta(null, '');
+  return caja;
+}
+const lineasDe = ta => ta.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+const codigosDe = ta => { const set = new Set(); lineasDe(ta).forEach(l => l.split(/[,;\t]/).forEach(x => { const c = normCod(x); if (c) set.add(c); })); return set; };
+const agregaLinea = (ta, linea) => { ta.value = (ta.value.trim() ? ta.value.trim() + '\n' : '') + linea; ta.dispatchEvent(new Event('input')); };
+
 /* ---------- carga ---------- */
 async function cargarArticulos() {
   const d = await api('GET', BASE + '/articulos');
@@ -150,6 +175,7 @@ async function tEquipos(c) {
     }), { empty: 'Sin equipos con ese filtro.' }));
     if (d.series.length > 300) cont.append(fila(`Se muestran 300 de ${d.series.length}. Afina el filtro o descarga el Excel.`));
   };
+  fq.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); fq.select(); } });                  // el escáner termina con Enter: el siguiente escaneo reemplaza al anterior
   [fq, fm].forEach(x => x.addEventListener('input', () => { clearTimeout(carga._t); carga._t = setTimeout(() => carga().catch(err), 250); })); [fa, fe, ff, fo].forEach(x => x.addEventListener('change', () => carga().catch(err)));
   const xls = el('button', { class: 'btn ghost sm', type: 'button', onclick: () => descargar(BASE + '/series.xlsx?' + qs(), 'equipos.xlsx').catch(err) }, '⬇ Excel');
   p.append(el('div', { class: 'filters' }, fld('Buscar', fq), fld('Modelo', fa), fld('Estado', fe), fld('Empresa', fm), el('label', { class: 'chk', for: 'invFallas' }, ff, ' Con fallas'), el('label', { class: 'chk', for: 'invEnvej' }, fo, ' Envejeciendo'), el('span', { class: 'spacer' }), xls), cont);
@@ -253,10 +279,20 @@ async function conteoAbierto(c, id) {
 }
 function capturaSeries(conteoId, l, recarga) {
   const ta = el('textarea', { rows: '10', placeholder: 'Un equipo por línea (S/N). Pega desde Excel.', style: 'font-family:ui-monospace,monospace', 'aria-label': 'Equipos contados' }); ta.value = (l.series_contadas || []).join('\n');
+  const procesa = async c => {
+    const ex = await buscaCodigo(c), propio = ex.find(x => x.articulo_id === l.articulo_id);
+    if (!propio && ex.length) return { ok: false, msg: `${c} es de otro modelo (${ex[0].articulo})` };
+    const sn = propio ? propio.serie : c;
+    if (codigosDe(ta).has(sn)) return { ok: false, msg: `${sn} ya está contado` };
+    agregaLinea(ta, sn);
+    return { ok: true, msg: propio ? `✓ ${sn} (${propio.estado === 'almacen' ? 'en almacén' : propio.estado === 'asignada' ? 'el sistema lo tiene asignado a ' + propio.empresa : 'de baja en el sistema'})` : `⚠ ${sn} no está registrado: contará como sobrante` };
+  };
+  const escaner = widgetEscaner(procesa, () => 'escanea el siguiente equipo');
   const cuenta = el('div', { class: 'muted' }); const act = () => { cuenta.textContent = `${ta.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean).length} equipo(s) contados`; }; ta.addEventListener('input', act); act();
   const g = el('button', { class: 'btn' }, 'Guardar conteo');
   g.onclick = async () => { g.disabled = true; try { const r = await api('POST', `${BASE}/conteos/${conteoId}/contar`, { articulo_id: l.articulo_id, series: ta.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean) }); closeModal(); recarga(); const x = r.resultado; toast(x.faltantes.length || x.sobrantes_conocidas.length || x.sobrantes_desconocidas.length ? `Faltan ${x.faltantes.length} · sobran ${x.sobrantes_conocidas.length + x.sobrantes_desconocidas.length}` : 'Cuadra con el sistema', 'ok'); } catch (e) { err(e); g.disabled = false; } };
-  modal(`Contar equipos · ${l.nombre}`, el('div', {}, fld('Equipos en el almacén (uno por línea)', ta), cuenta), el('div', {}, el('button', { class: 'btn secondary', onclick: closeModal }, 'Cancelar'), ' ', g), false);
+  modal(`Contar equipos · ${l.nombre}`, el('div', {}, escaner, fld('Equipos en el almacén (uno por línea)', ta), cuenta), el('div', {}, el('button', { class: 'btn secondary', onclick: closeModal }, 'Cancelar'), ' ', g), false);
+  setTimeout(() => escaner.enfocar(), 50);
 }
 function cerrarConteo(d) {
   const con = d.lineas.filter(l => l.contada != null && (l.serializado ? ((l.resultado.faltantes || []).length || (l.resultado.sobrantes_conocidas || []).length || (l.resultado.sobrantes_desconocidas || []).length) : l.diferencia));
@@ -397,6 +433,43 @@ async function formMovimiento(tipo, articuloId) {
   const info = el('div', { class: 'muted', style: 'min-height:20px;margin-top:4px' });
   const cajaCli = el('div', {}, el('div', { class: 'grid2' }, fld('Empresa', ST.clientes.length ? emp : empNombre), fld('Unidad del cliente', uni)), dlU);
   const cajaSeries = el('div', {}, fld(esE ? 'Equipos (S/N · IMEI · TID)' : 'Números de serie', series), cuentaSeries, chips);
+  /* modo escáner: en la entrada se escanean S/N, IMEI y TID de cada equipo; en la salida basta uno de los tres códigos del equipo */
+  const modoEsc = el('input', { type: 'checkbox', id: 'invEsc' }); try { modoEsc.checked = localStorage.getItem('invEscaner') === '1'; } catch (_e) { /* sin almacenamiento */ }
+  const porEquipo = el('select', { 'aria-label': 'Códigos por equipo' }, el('option', { value: '1' }, 'S/N'), el('option', { value: '2' }, 'S/N + IMEI'), el('option', { value: '3' }, 'S/N + IMEI + TID')); porEquipo.value = '3';
+  let paso = 0; const parcial = { serie: '', imei: '', tid: '' };
+  const NOMBRES = ['S/N', 'IMEI', 'TID'];
+  const camposN = () => Number(porEquipo.value);
+  const descarta = () => { paso = 0; parcial.serie = parcial.imei = parcial.tid = ''; escaner.pinta(null, 'Equipo en curso descartado'); escaner.enfocar(); };
+  const yaEsta = c => codigosDe(series).has(c);
+  const procesaEntrada = async c => {
+    const campo = NOMBRES[paso];
+    if (paso === 1 && !/^[0-9]{15}$/.test(c)) return { ok: false, msg: `«${c}» no parece un IMEI (15 dígitos)` };
+    if (paso === 2 && !/^[A-Z0-9][A-Z0-9._-]{0,19}$/.test(c)) return { ok: false, msg: `«${c}» no es un TID válido` };
+    if (paso === 0 && !/^[A-Z0-9][A-Z0-9._\-\/]{0,59}$/.test(c)) return { ok: false, msg: `«${c}» no es un S/N válido` };
+    if (yaEsta(c) || [parcial.serie, parcial.imei].includes(c)) return { ok: false, msg: `${campo} ${c} ya está en esta captura` };
+    const ex = await buscaCodigo(c);
+    if (ex.length) return { ok: false, msg: `${campo} ${c} ya existe en el inventario (equipo ${ex[0].serie})` };
+    parcial[['serie', 'imei', 'tid'][paso]] = c;
+    if (paso + 1 < camposN()) { paso++; return { ok: true, msg: `✓ ${campo} ${c}` }; }
+    const linea = camposN() === 1 ? parcial.serie : camposN() === 2 ? `${parcial.serie},${parcial.imei}` : `${parcial.serie},${parcial.imei},${parcial.tid}`;
+    agregaLinea(series, linea); const sn = parcial.serie; paso = 0; parcial.serie = parcial.imei = parcial.tid = '';
+    return { ok: true, msg: `✓ Equipo ${sn} agregado (${lineasDe(series).length})` };
+  };
+  const procesaSalida = async c => {
+    const ex = await buscaCodigo(c), aid = Number(art.value);
+    const m = ex.find(x => x.articulo_id === aid);
+    if (!m) return { ok: false, msg: ex.length ? `${c} es de otro modelo (${ex[0].articulo})` : `${c} no está registrado en el inventario` };
+    if (m.estado !== 'almacen') return { ok: false, msg: `${m.serie} no está en almacén (${m.estado === 'asignada' ? 'asignada a ' + m.empresa + ' / ' + m.unidad : m.estado || 'sin movimientos'})` };
+    if (yaEsta(m.serie)) return { ok: false, msg: `${m.serie} ya está en la lista` };
+    agregaLinea(series, m.serie);
+    return { ok: true, msg: `✓ ${m.serie}${m.campo !== 'serie' ? ' (por ' + m.campo.toUpperCase() + ')' : ''} agregado (${lineasDe(series).length})` };
+  };
+  const escaner = widgetEscaner(c => (esE ? procesaEntrada(c) : procesaSalida(c)), () => (esE ? `escanea ${NOMBRES[paso]}${paso ? ' del equipo ' + parcial.serie : ' del siguiente equipo'}` : 'escanea el siguiente equipo'));
+  const descartaBtn = el('button', { type: 'button', class: 'btn ghost sm', onclick: descarta }, 'Descartar equipo en curso');
+  const cajaEsc = el('div', {}, el('div', { class: 'filters', style: 'margin:6px 0 0' }, esE ? fld('Se escanea por equipo', porEquipo) : '', esE ? descartaBtn : ''), escaner);
+  const alterna = () => { cajaEsc.style.display = modoEsc.checked ? '' : 'none'; try { localStorage.setItem('invEscaner', modoEsc.checked ? '1' : '0'); } catch (_e) { /* sin almacenamiento */ } if (modoEsc.checked) escaner.enfocar(); };
+  modoEsc.addEventListener('change', alterna); porEquipo.addEventListener('change', () => { paso = 0; parcial.serie = parcial.imei = parcial.tid = ''; escaner.pinta(null, ''); escaner.enfocar(); });
+  cajaSeries.prepend(el('label', { class: 'chk', for: 'invEsc', title: 'Para escáner de códigos de barras en modo teclado (USB, Bluetooth o 2.4 GHz)' }, modoEsc, ' Modo escáner'), cajaEsc);
   const cajaCant = el('div', { class: 'grid2' }, fld('Cantidad', cant), esE ? fld('Costo unitario (sin IVA)', costo) : el('div', {}));
   const cajaDoc = esE ? el('div', { class: 'grid2' }, fld('Documento', doc), fld('Proveedor', prov)) : el('div', {}, fld('Documento o remisión (opcional)', doc));
   let capas = [], libres = [];
@@ -410,6 +483,7 @@ async function formMovimiento(tipo, articuloId) {
   const visible = () => {
     const a = art0(), entrega = !esE && conc.value === 'entrega', ser = !!(a && a.serializado);
     cajaSeries.style.display = ser ? '' : 'none';
+    if (ser && modoEsc.checked && cajaEsc.style.display !== 'none') setTimeout(() => escaner.enfocar(), 0);
     cajaCli.style.display = entrega ? '' : 'none';
     cajaCant.style.display = ser && !esE ? 'none' : '';                       // salida de serializados: la cantidad sale de las series
     cant.disabled = ser && esE;                                               // entrada de serializados: la cantidad es el número de equipos
@@ -456,7 +530,9 @@ async function formMovimiento(tipo, articuloId) {
     } catch (e) { err(e); g.disabled = false; }
   };
   modal(esE ? 'Registrar entrada' : 'Registrar salida', body, el('div', {}, el('button', { class: 'btn secondary', onclick: closeModal }, 'Cancelar'), ' ', g), false);
+  cajaEsc.style.display = modoEsc.checked ? '' : 'none';
   cambiaEmpresa(); visible(); refresca();
+  if (modoEsc.checked) setTimeout(() => escaner.enfocar(), 50);
 }
 
 /* ---------- carga masiva (layout Excel o CSV) ---------- */
