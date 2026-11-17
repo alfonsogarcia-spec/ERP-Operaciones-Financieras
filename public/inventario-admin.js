@@ -435,7 +435,7 @@ async function formMovimiento(tipo, articuloId) {
   const cajaSeries = el('div', {}, fld(esE ? 'Equipos (S/N · IMEI · TID)' : 'Números de serie', series), cuentaSeries, chips);
   /* modo escáner: en la entrada se escanean S/N, IMEI y TID de cada equipo; en la salida basta uno de los tres códigos del equipo */
   const modoEsc = el('input', { type: 'checkbox', id: 'invEsc' }); try { modoEsc.checked = localStorage.getItem('invEscaner') === '1'; } catch (_e) { /* sin almacenamiento */ }
-  const porEquipo = el('select', { 'aria-label': 'Códigos por equipo' }, el('option', { value: '1' }, 'S/N'), el('option', { value: '2' }, 'S/N + IMEI'), el('option', { value: '3' }, 'S/N + IMEI + TID')); porEquipo.value = '3';
+  const porEquipo = el('select', { 'aria-label': 'Códigos por equipo' }, el('option', { value: '1' }, 'S/N'), el('option', { value: '2' }, 'S/N + IMEI'), el('option', { value: '3' }, 'S/N + IMEI + TID')); porEquipo.value = '1';
   let paso = 0; const parcial = { serie: '', imei: '', tid: '' };
   const NOMBRES = ['S/N', 'IMEI', 'TID'];
   const camposN = () => Number(porEquipo.value);
@@ -464,7 +464,7 @@ async function formMovimiento(tipo, articuloId) {
     agregaLinea(series, m.serie);
     return { ok: true, msg: `✓ ${m.serie}${m.campo !== 'serie' ? ' (por ' + m.campo.toUpperCase() + ')' : ''} agregado (${lineasDe(series).length})` };
   };
-  const escaner = widgetEscaner(c => (esE ? procesaEntrada(c) : procesaSalida(c)), () => (esE ? `escanea ${NOMBRES[paso]}${paso ? ' del equipo ' + parcial.serie : ' del siguiente equipo'}` : 'escanea el siguiente equipo'));
+  const escaner = widgetEscaner(c => (esE ? procesaEntrada(c) : procesaSalida(c)), () => (esE ? `escanea ${NOMBRES[paso]}${paso ? ' del equipo ' + parcial.serie + ' (aún no se agrega a la lista)' : ' del siguiente equipo'}` : 'escanea el siguiente equipo'));
   const descartaBtn = el('button', { type: 'button', class: 'btn ghost sm', onclick: descarta }, 'Descartar equipo en curso');
   const cajaEsc = el('div', {}, el('div', { class: 'filters', style: 'margin:6px 0 0' }, esE ? fld('Se escanea por equipo', porEquipo) : '', esE ? descartaBtn : ''), escaner);
   const alterna = () => { cajaEsc.style.display = modoEsc.checked ? '' : 'none'; try { localStorage.setItem('invEscaner', modoEsc.checked ? '1' : '0'); } catch (_e) { /* sin almacenamiento */ } if (modoEsc.checked) escaner.enfocar(); };
@@ -518,6 +518,10 @@ async function formMovimiento(tipo, articuloId) {
   g.onclick = async () => {
     g.disabled = true;
     try {
+      if (esE && paso > 0 && parcial.serie) {                                            // equipo escaneado a medias: se agrega con lo que ya se leyó
+        agregaLinea(series, [parcial.serie, parcial.imei, parcial.tid].join(',').replace(/,+$/, ''));
+        toast(`El equipo ${parcial.serie} se agregó sin ${paso === 1 ? 'IMEI ni TID' : 'TID'}.`, 'ok'); paso = 0; parcial.serie = parcial.imei = parcial.tid = '';
+      }
       let r;
       try { r = await envia(); }
       catch (e) {
