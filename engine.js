@@ -83,7 +83,7 @@ const concepto=(af,idGrupo)=>`DISPERSION ${ult3(af)}CPPX00${idGrupo}`;
 // txs: transacciones APROBADAS de un CLIENTE+AFILIACION del corte
 // cat: {tasas:{pac_tdd,...,costo_x_trx,pct_banca}, costos:{int_tdd,int_tdc,int_amex,int_int,fee_broxel}}
 // ajustes: {financiamientos, contracargos_dom, contracargos_amex}
-function calcularCompensacion(txs,cat,params,ajustes){
+function calcularBase(txs,cat,params,ajustes){
   const IVA=params.IVA;
   const t=cat.tasas||{}, c=cat.costos||{}, aj=ajustes||{};
   const fin=+aj.financiamientos||0, cc_dom=+aj.contracargos_dom||0, cc_amex=+aj.contracargos_amex||0;
@@ -126,6 +126,33 @@ function calcularCompensacion(txs,cat,params,ajustes){
     base_dom,disp_dom,disp_amex,disp_total,comprobacion,diferencia,utilidad};
 }
 
+/* ---------- tasas por COMERCIO ----------
+   cat.comercios = [{ comercio, tasas:{pac_tdd?,pac_tdc?,pac_amex?,pac_int?,costo_x_trx?,pct_banca?} }]: un comercio del grupo con tasas propias. Lo que venga
+   definido sustituye a la tasa pactada de ese comercio; lo que no, sigue con la del grupo. Las transacciones de cada comercio se calculan con sus tasas y el
+   resultado del grupo es la SUMA (comisión, IVA, compensación, banca, utilidad); los cargos (financiamientos y contracargos) se aplican una sola vez al total.
+   Sin comercios con tasas propias el resultado es idéntico al de siempre. */
+const normComercio=s=>String(s==null?'':s).trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ');
+const SIN_CARGOS={financiamientos:0,contracargos_dom:0,contracargos_amex:0};
+const NO_SUMAR=new Set(['pct_banca','financiamientos','contracargos_dom','contracargos_amex','disp_dom','disp_amex','disp_total','comprobacion','diferencia']);
+function calcularCompensacion(txs,cat,params,ajustes){
+  const lista=((cat&&cat.comercios)||[]).filter(c=>c&&c.comercio&&c.tasas&&Object.keys(c.tasas).length);
+  if(!lista.length) return calcularBase(txs,cat,params,ajustes);
+  const porNombre=new Map(); for(const c of lista){const k=normComercio(c.comercio); if(k&&!porNombre.has(k))porNombre.set(k,c);}
+  const segs=new Map(), resto=[];
+  for(const x of txs){ const c=porNombre.get(normComercio(x.comercio)); if(c){ if(!segs.has(c))segs.set(c,[]); segs.get(c).push(x); } else resto.push(x); }
+  if(!segs.size) return calcularBase(txs,cat,params,ajustes);
+  const partes=[calcularBase(resto,cat,params,SIN_CARGOS)];
+  for(const [c,arr] of segs) partes.push(calcularBase(arr,{...cat,tasas:{...(cat.tasas||{}),...c.tasas}},params,SIN_CARGOS));
+  const r={}; for(const k of Object.keys(partes[0])) if(!NO_SUMAR.has(k)) r[k]=partes.reduce((a,p)=>a+(+p[k]||0),0);
+  const aj=ajustes||{}, fin=+aj.financiamientos||0, cc_dom=+aj.contracargos_dom||0, cc_amex=+aj.contracargos_amex||0;
+  const dispDom=partes.reduce((a,p)=>a+p.disp_dom,0)-fin-cc_dom, dispAmex=partes.reduce((a,p)=>a+p.disp_amex,0)-cc_amex;
+  const propiaBanca=lista.some(c=>c.tasas.pct_banca!=null);
+  r.pct_banca=propiaBanca&&r.comp_total? r.banca/r.comp_total : ((cat.tasas&&cat.tasas.pct_banca)||0);
+  r.financiamientos=fin; r.contracargos_dom=cc_dom; r.contracargos_amex=cc_amex;
+  r.disp_dom=dispDom; r.disp_amex=dispAmex; r.disp_total=dispDom+dispAmex; r.comprobacion=dispDom+dispAmex; r.diferencia=r.comprobacion-r.disp_total;
+  return r;
+}
+
 /* ---------- parámetros por defecto del ciclo ---------- */
 const PARAMS_DEF=()=>({IVA:0.16,tasa_int_amex:0.0247,tasa_int_int:0.0302,fee_broxel:0.0028,
   prodParams:{nacional:{n:1,corte:'23:00'},amex:{n:3,corte:'23:00'},internacional:{n:1,corte:'23:00'}}});
@@ -134,5 +161,5 @@ module.exports={
   round2, parseFecha, fmtFecha, isoFecha, addDays, parseHoraSeg, horaStr,
   parseMonto, normStr, prodKey, PROD,
   feriadoSet, esHabil, nEsimoDiaHabil, fechaLiquidacion,
-  ult3, concepto, calcularCompensacion, PARAMS_DEF,
+  ult3, concepto, calcularCompensacion, calcularBase, normComercio, PARAMS_DEF,
 };

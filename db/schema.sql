@@ -729,5 +729,13 @@ end $$;
 -- El cálculo sigue siendo por grupo de cliente + afiliación. Una cuenta con `comercio` (nombre como llega en la ingesta) es la CLABE propia de ese
 -- comercio: al generar el layout, su parte de la dispersión del grupo sale a esa cuenta. Sin `comercio`, es la cuenta general del grupo/afiliación.
 alter table cuentas add column if not exists comercio text;
+-- Tasas PROPIAS del comercio (solo en cuentas con `comercio`): sustituyen a la tasa pactada de ese comercio en el corte, el registro contable y el
+-- detalle transaccional. NULL = el comercio usa la tasa pactada del grupo/afiliación. Ver lib/tasas-comercio.js.
+alter table cuentas add column if not exists com_tasa_tdd     numeric;
+alter table cuentas add column if not exists com_tasa_tdc     numeric;
+alter table cuentas add column if not exists com_tasa_amex    numeric;
+alter table cuentas add column if not exists com_tasa_int     numeric;
+alter table cuentas add column if not exists com_costo_x_trx  numeric;
+alter table cuentas add column if not exists com_pct_banca    numeric;
 -- Cómo se repartió la dispersión de cada fila del corte entre los comercios (null = se paga a la cuenta del grupo, como siempre).
 alter table calculos add column if not exists reparto jsonb;

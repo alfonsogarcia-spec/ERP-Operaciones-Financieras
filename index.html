@@ -2442,8 +2442,8 @@ function detalleCalculo(cc,corte){const r=cc.calc;const body=el('div',{});
   const rep=typeof cc.reparto==='string'?JSON.parse(cc.reparto||'null'):cc.reparto;
   if(rep&&rep.partes&&rep.partes.length){
     const pr=el('div',{class:'panel',style:'margin:0 0 14px'});pr.append(el('h3',{style:'font-size:14px'},'Reparto por comercio · a qué CLABE sale cada parte'));
-    pr.append(tableWrap(['Comercio','CLABE',{t:'Trx'},{t:'DOM'},{t:'AMEX'}],rep.partes.map(p=>[`<div class="tt">${esc(p.es_resto?'Resto del grupo (cuenta general)':p.comercio)}<small>${esc(p.beneficiario||'')}${p.banco?' · '+esc(p.banco):''}</small></div>`,p.clabe?`<span class="mono">${esc(p.clabe)}</span>`:'<span class="badge danger">sin CLABE</span>',{num:p.n_trx},{num:mxn(p.disp_dom)},{num:mxn(p.disp_amex)}]),{empty:'Sin partes.'}));
-    pr.append(el('div',{class:'muted',style:'margin-top:6px'},'Los cargos (contracargos, retenciones) se aplican al grupo y se reparten entre los comercios en proporción a lo que le toca a cada uno.'));
+    pr.append(tableWrap(['Comercio','CLABE',{t:'Trx'},{t:'DOM'},{t:'AMEX'}],rep.partes.map(p=>[`<div class="tt">${esc(p.es_resto?'Resto del grupo (cuenta general)':p.comercio)}${p.tasa_propia?' <span class="badge info">tasa propia</span>':''}<small>${esc(p.beneficiario||'')}${p.banco?' · '+esc(p.banco):''}</small></div>`,p.clabe?`<span class="mono">${esc(p.clabe)}</span>`:'<span class="badge danger">sin CLABE</span>',{num:p.n_trx},{num:mxn(p.disp_dom)},{num:mxn(p.disp_amex)}]),{empty:'Sin partes.'}));
+    pr.append(el('div',{class:'muted',style:'margin-top:6px'},'Los cargos (contracargos, retenciones) se aplican al grupo y se reparten entre los comercios en proporción a lo que le toca a cada uno.'+(rep.partes.some(p=>p.tasa_propia)?' Los comercios con «tasa propia» se calcularon con sus tasas en lugar de las del grupo.':'')));
     body.append(pr);
   }
   body.append(el('div',{class:'banner '+(Math.abs(r.diferencia)<=0.01?'ok':'err'),html:`Comprobación: ${mxn(r.comprobacion)} · Diferencia: <b>${num(r.diferencia)}</b> · Utilidad: <b>${mxn(r.utilidad)}</b>`}));
@@ -2637,6 +2637,16 @@ function editGrupo(ag,af,co){const isNew=!ag;ag=ag||{};af=af||{};co=co||{};const
 }
 
 /* ---------- CUENTAS ---------- */
+// Tasas propias de un comercio con CLABE: en la base viven como fracción (0.025); en pantalla se capturan y se muestran en % (2.5).
+const TASAS_CUENTA=[['com_tasa_tdd','TDD (%)'],['com_tasa_tdc','TDC (%)'],['com_tasa_amex','AMEX (%)'],['com_tasa_int','Internacional (%)'],['com_costo_x_trx','Costo x trx (MXN)'],['com_pct_banca','% Banca']];
+const tasaAPct=v=>(v===''||v==null||isNaN(+v))?'':String(Math.round(+v*1e8)/1e6);
+const pctAFraccion=v=>{v=String(v).trim().replace('%','');return v===''?'':String(Math.round(+v*1e6)/1e8);};
+function resumenTasasCuenta(c){
+  const t=[];[['com_tasa_tdd','TDD'],['com_tasa_tdc','TDC'],['com_tasa_amex','AMEX'],['com_tasa_int','INT']].forEach(([k,n])=>{if(c[k]!=null&&c[k]!=='')t.push(n+' '+tasaAPct(c[k])+'%');});
+  if(c.com_costo_x_trx!=null&&c.com_costo_x_trx!=='')t.push('$'+c.com_costo_x_trx+'/trx');
+  if(c.com_pct_banca!=null&&c.com_pct_banca!=='')t.push('banca '+tasaAPct(c.com_pct_banca)+'%');
+  return t.length?` <span class="badge info">tasa propia</span><small class="muted" style="display:block">${esc(t.join(' · '))}</small>`:'';
+}
 async function vCuentas(v){
   if(can('catalogos'))$('#pageAction').append(
     el('button',{class:'btn secondary sm',onclick:async(ev)=>{
@@ -2656,9 +2666,9 @@ async function vCuentas(v){
   const gf=await api('GET','/api/catalogo/grupos-full');
   v.innerHTML='';const p=el('div',{class:'panel'});p.append(el('h3',{},'Cuentas de liquidación'));
   const rows=cuentas.map(c=>{const g=grupos.find(x=>String(x.id_grupo)===String(c.id_grupo));const clabeOk=/^\d{18}$/.test(String(c.clabe||''));
-    const r=[`<div class="tt">${esc(g?g.nombre_cliente:('grupo '+c.id_grupo))}<small>${esc(c.nombre_comercial||'')}</small></div>`,c.numero_afiliacion?`<span class="mono">${esc(c.numero_afiliacion)}</span>`:'<span class="pill">nivel grupo</span>',c.comercio?`<b>${esc(c.comercio)}</b>`:'<span class="muted">cuenta general</span>',esc(c.razon_social_beneficiario||''),esc(c.banco||''),`<span class="mono">${esc(c.clabe||'')}</span> ${clabeOk?'':'<span class="badge danger">18?</span>'}`,c.codigo_banco||'<span class="badge warn">?</span>'];
+    const r=[`<div class="tt">${esc(g?g.nombre_cliente:('grupo '+c.id_grupo))}<small>${esc(c.nombre_comercial||'')}</small></div>`,c.numero_afiliacion?`<span class="mono">${esc(c.numero_afiliacion)}</span>`:'<span class="pill">nivel grupo</span>',c.comercio?`<b>${esc(c.comercio)}</b>${resumenTasasCuenta(c)}`:'<span class="muted">cuenta general</span>',esc(c.razon_social_beneficiario||''),esc(c.banco||''),`<span class="mono">${esc(c.clabe||'')}</span> ${clabeOk?'':'<span class="badge danger">18?</span>'}`,c.codigo_banco||'<span class="badge warn">?</span>'];
     if(can('catalogos'))r._onclick=()=>editCuenta(c,grupos,bancos,gf);return r;});
-  p.append(el('div',{class:'muted',style:'margin:0 0 10px'},'La cuenta general recibe la dispersión del grupo. Un comercio con su propia CLABE recibe en ella su parte: el cálculo sigue siendo por grupo.'));
+  p.append(el('div',{class:'muted',style:'margin:0 0 10px'},'La cuenta general recibe la dispersión del grupo. Un comercio con su propia CLABE recibe en ella su parte y puede tener tasas propias; si no las define, usa las del grupo.'));
   p.append(tableWrap(['Grupo','Afiliación','Comercio','Beneficiario','Banco','CLABE','Cód. SPEI'],rows,{empty:'Sin cuentas. Cada afiliación con importe necesita su cuenta.'}));
   v.append(p);
 }
@@ -2679,12 +2689,20 @@ async function editCuenta(c,grupos,bancos,gf){const isNew=!c;c=c||{};
   const bsel=el('select');bsel.append(el('option',{value:''},'— banco —'));bancos.forEach(b=>bsel.append(el('option',{value:b.nombre},`${b.nombre} (${b.codigo_spei})`)));if(c.banco)bsel.value=c.banco;
   const clabe=el('input',{value:c.clabe||'',maxlength:'18',placeholder:'18 dígitos'});
   body.append(fld('Grupo',gsel),fld('Afiliación',asel),fld('Comercio con CLABE propia (opcional)',com),dl,ayudaCom,fld('Nombre comercial',nc),fld('Razón social del beneficiario',rz),fld('Banco (dispersor)',bsel),fld('CLABE (18 dígitos)',clabe));
+  // Tasas propias del comercio (solo si es cuenta de comercio): lo que se deje vacío usa la tasa pactada del grupo.
+  const tIn={};TASAS_CUENTA.forEach(([k])=>{tIn[k]=el('input',{type:'number',min:'0',step:k==='com_costo_x_trx'?'0.01':'0.0001',placeholder:'la del grupo',value:k==='com_costo_x_trx'?(c[k]==null?'':c[k]):tasaAPct(c[k])});});
+  const cajaTasas=el('div',{style:'margin-top:14px'},el('h3',{style:'font-size:14px;margin:6px 0 4px;color:var(--accent)'},'Tasas propias del comercio'),el('div',{class:'muted',style:'margin:0 0 10px'},'Sustituyen a la tasa pactada solo para las transacciones de este comercio. En %, ej. 2.5 = 2.5%. Lo que dejes vacío usa la del grupo.'),
+    (()=>{const g=el('div',{class:'form-grid c3'});TASAS_CUENTA.forEach(([k,t])=>g.append(fld(t,tIn[k])));return g;})());
+  const muestraTasas=()=>{cajaTasas.style.display=com.value.trim()?'':'none';};com.addEventListener('input',muestraTasas);muestraTasas();body.append(cajaTasas);
   cargaComercios();
   if(!bancos.length)body.append(el('div',{class:'banner warn'},'No hay bancos. Carga “Bancos SPEI” para resolver el código.'));
   const foot=el('div',{});
   if(!isNew)foot.append(el('button',{class:'btn danger',onclick:async()=>{if(await confirmar('¿Eliminar cuenta?')){await api('DELETE','/api/catalogo/cuenta/'+c.id);closeModal();render();}}},'Eliminar'),el('div',{style:'flex:1'}));
   foot.append(el('button',{class:'btn ghost',onclick:closeModal},'Cancelar'),el('button',{class:'btn',onclick:async()=>{
-    try{await api('POST','/api/catalogo/cuenta',{id:c.id,id_grupo:gsel.value,numero_afiliacion:asel.value,nombre_comercial:nc.value,razon_social_beneficiario:rz.value,banco:bsel.value,clabe:clabe.value,comercio:com.value});closeModal();toast('Guardado','ok');render();}
+    try{const r=await api('POST','/api/catalogo/cuenta',{id:c.id,id_grupo:gsel.value,numero_afiliacion:asel.value,nombre_comercial:nc.value,razon_social_beneficiario:rz.value,banco:bsel.value,clabe:clabe.value,comercio:com.value});
+      let avisos=[];
+      if(com.value.trim()&&r&&r.id){const t=await api('POST','/api/catalogo/cuenta-tasas',{id:r.id,tasa_tdd:pctAFraccion(tIn.com_tasa_tdd.value),tasa_tdc:pctAFraccion(tIn.com_tasa_tdc.value),tasa_amex:pctAFraccion(tIn.com_tasa_amex.value),tasa_int:pctAFraccion(tIn.com_tasa_int.value),costo_x_trx:tIn.com_costo_x_trx.value,pct_banca:pctAFraccion(tIn.com_pct_banca.value)});avisos=(t&&t.avisos)||[];}
+      closeModal();toast('Guardado','ok');avisos.forEach(a=>toast(a,'err'));render();}
     catch(e){toast(e.data&&e.data.error==='clabe_18'?'La CLABE debe tener 18 dígitos':(e.data&&e.data.mensaje)||errMsg(e),'err');}
   }},'Guardar'));
   modal(isNew?'Nueva cuenta de liquidación':'Editar cuenta',body,foot);

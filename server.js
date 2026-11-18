@@ -46,6 +46,7 @@ const mountDisputasRoutes = require('./lib/disputas-routes.js');
 const CCS = require('./lib/contracargos-sync.js');
 const L = require('./lib/ledger.js');
 const RC = require('./lib/reparto-comercio.js');
+const TC = require('./lib/tasas-comercio.js');
 const DN = require('./lib/datos-negocio.js');
 const DP = require('./lib/dispersion-pendiente.js');
 const UTIL = require('./lib/utilidad-panel.js');
@@ -880,26 +881,45 @@ app.post('/api/catalogo/cuenta', auth, requiereRol('admin'), async (req, res) =>
   const rzn = b.razon_social_beneficiario || '', bnc = b.banco || '';
   const clHash = cl ? C.hmac(cl) : null, clCif = cl ? C.encrypt(cl) : null;
   const rznCif = C.encrypt(rzn), bncCif = C.encrypt(bnc);
+  let cuentaId = b.id ? Number(b.id) : null;
   if (b.id) {
     await db.query('update cuentas set id_grupo=$1,numero_afiliacion=$2,nombre_comercial=$3,razon_social_beneficiario=$4,banco=$5,clabe=$6,codigo_banco=$7,clabe_hash=$8,clabe_cifrada=$9,razon_social_beneficiario_cifrada=$10,banco_cifrado=$11,comercio=$13 where id=$12',
       [parseInt(b.id_grupo, 10), afil, b.nombre_comercial || '', rzn, bnc, cl, codigo, clHash, clCif, rznCif, bncCif, b.id, comercio || null]);
   } else {
     // dedupe por grupo+afiliación+comercio (la cuenta general del grupo no lleva comercio)
     const dup = (await db.query('select id from cuentas where id_grupo=$1 and coalesce(numero_afiliacion,\'\')=$2 and lower(btrim(coalesce(comercio,\'\')))=lower($3)', [parseInt(b.id_grupo, 10), afil, comercio])).rows[0];
-    if (dup) await db.query('update cuentas set nombre_comercial=$1,razon_social_beneficiario=$2,banco=$3,clabe=$4,codigo_banco=$5,clabe_hash=$6,clabe_cifrada=$7,razon_social_beneficiario_cifrada=$8,banco_cifrado=$9 where id=$10', [b.nombre_comercial || '', rzn, bnc, cl, codigo, clHash, clCif, rznCif, bncCif, dup.id]);
-    else await db.query('insert into cuentas(id_grupo,numero_afiliacion,nombre_comercial,razon_social_beneficiario,banco,clabe,codigo_banco,clabe_hash,clabe_cifrada,razon_social_beneficiario_cifrada,banco_cifrado,comercio) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
-      [parseInt(b.id_grupo, 10), afil, b.nombre_comercial || '', rzn, bnc, cl, codigo, clHash, clCif, rznCif, bncCif, comercio || null]);
+    if (dup) { await db.query('update cuentas set nombre_comercial=$1,razon_social_beneficiario=$2,banco=$3,clabe=$4,codigo_banco=$5,clabe_hash=$6,clabe_cifrada=$7,razon_social_beneficiario_cifrada=$8,banco_cifrado=$9 where id=$10', [b.nombre_comercial || '', rzn, bnc, cl, codigo, clHash, clCif, rznCif, bncCif, dup.id]); cuentaId = dup.id; }
+    else cuentaId = (await db.query('insert into cuentas(id_grupo,numero_afiliacion,nombre_comercial,razon_social_beneficiario,banco,clabe,codigo_banco,clabe_hash,clabe_cifrada,razon_social_beneficiario_cifrada,banco_cifrado,comercio) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning id',
+      [parseInt(b.id_grupo, 10), afil, b.nombre_comercial || '', rzn, bnc, cl, codigo, clHash, clCif, rznCif, bncCif, comercio || null])).rows[0].id;
   }
+  if (!comercio && cuentaId) await db.query('update cuentas set ' + Object.keys(TC.COLUMNAS).map(k => k + '=null').join(',') + ' where id=$1', [cuentaId]);   // una cuenta general no lleva tasas propias
   await bit(req, b.id ? 'cuenta_editar' : 'cuenta_alta', `grupo ${b.id_grupo} afil ${afil || 'nivel-grupo'}${comercio ? ' comercio ' + comercio : ''} clabe ${cl ? cl.slice(-4).padStart(cl.length, '*') : '—'}`, { resource_type: 'cuenta', resource_id: b.id });
-  res.json({ ok: true });
+  res.json({ ok: true, id: cuentaId });
 });
 app.delete('/api/catalogo/cuenta/:id', auth, requiereRol('admin'), async (req, res) => {
   if (!dbReady(res)) return; await db.query('delete from cuentas where id=$1', [parseInt(req.params.id, 10)]);
   await bit(req, 'cuenta_baja', '', { resource_type: 'cuenta', resource_id: req.params.id }); res.json({ ok: true });
 });
 
+// Tasas PROPIAS de un comercio con CLABE (admin): sustituyen a la tasa pactada de ese comercio; vacío = usa la pactada. Ver lib/tasas-comercio.js.
+app.post('/api/catalogo/cuenta-tasas', auth, requiereRol('admin'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const b = req.body || {}; const id = parseInt(b.id, 10);
+  if (!id) return res.status(400).json({ error: 'faltan_datos', mensaje: 'Falta la cuenta.' });
+  const v = TC.normalizar(b);
+  if (!v.ok) return res.status(400).json({ error: 'tasas_invalidas', mensaje: v.errores[0], errores: v.errores });
+  let c;
+  try { c = await TC.guardarEnCuenta((t, p) => db.query(t, p), id, v.valores); }
+  catch (e) { if (e instanceof TC.ErrorTasas) return res.status(e.status).json({ error: e.codigo, mensaje: e.message }); throw e; }
+  const definidas = Object.entries(v.valores).filter(([, x]) => x !== null).map(([k, x]) => `${k.replace('com_', '')}=${x}`);
+  await bit(req, 'cuenta_tasas', `grupo ${c.id_grupo} afil ${c.numero_afiliacion || 'nivel-grupo'} comercio ${c.comercio}: ${definidas.length ? definidas.join(' · ') : 'sin tasas propias (usa la pactada)'}`, { resource_type: 'cuenta', resource_id: id });
+  // Aviso (no bloquea): una tasa propia por debajo del costo (intercambio + fee Broxel) deja pérdida en ese comercio.
+  const costos = c.numero_afiliacion ? (await getCostos()).find(x => String(x.numero_afiliacion) === String(c.numero_afiliacion)) : null;
+  res.json({ ok: true, avisos: TC.avisosCosto(v.valores, costos, await getParams()) });
+});
+
 // Bancos (admin)
-app.post('/api/catalogo/banco', auth, requiereRol('admin'), async (req, res) => {
+app.post('/api/catalogo/banco',auth, requiereRol('admin'), async (req, res) => {
   if (!dbReady(res)) return; const b = req.body || {};
   if (!String(b.nombre || '').trim() || b.codigo_spei == null) return res.status(400).json({ error: 'faltan_datos' });
   await db.query('insert into bancos(nombre,codigo_spei) values($1,$2) on conflict(nombre) do update set codigo_spei=excluded.codigo_spei', [String(b.nombre).trim(), parseInt(b.codigo_spei, 10)]);
@@ -1403,6 +1423,9 @@ async function computeCorte(fechaLiqIso) {
       tasas: tasas ? { pac_tdd: Number(tasas.tasa_pac_tdd), pac_tdc: Number(tasas.tasa_pac_tdc), pac_amex: Number(tasas.tasa_pac_amex), pac_int: Number(tasas.tasa_pac_int), costo_x_trx: Number(tasas.costo_x_trx), pct_banca: Number(tasas.pct_banca) } : {},
       costos: co ? { int_tdd: Number(co.int_tdd), int_tdc: Number(co.int_tdc), int_amex: co.int_amex == null ? null : Number(co.int_amex), int_int: co.int_int == null ? null : Number(co.int_int), fee_broxel: co.fee_broxel == null ? null : Number(co.fee_broxel) } : {},
     };
+    // TASAS POR COMERCIO: un comercio con CLABE propia puede tener tasas propias que sustituyen a la pactada (ver lib/tasas-comercio.js).
+    const ctaCom = idGrupo ? RC.cuentasDeFila(cuentas, idGrupo, afil) : [];
+    cat.comercios = TC.comerciosDeFila(ctaCom);
     // 1ª pasada: SIN ajustes, para saber cuánto hay disponible en cada bolsa
     // (DOM/AMEX) antes de cobrar nada — esto es lo máximo que se puede aplicar.
     const bruto = E.calcularCompensacion(arr, cat, params, { financiamientos: 0, contracargos_dom: 0, contracargos_amex: 0 });
@@ -1431,12 +1454,11 @@ async function computeCorte(fechaLiqIso) {
     const r = E.calcularCompensacion(arr, cat, params, ajustes);
     // REPARTO POR COMERCIO: el cálculo es del grupo; si algún comercio de la fila tiene CLABE propia, su parte sale a esa cuenta.
     let reparto = null;
-    const ctaCom = idGrupo ? RC.cuentasDeFila(cuentas, idGrupo, afil) : [];
     if (ctaCom.length) {
       const bancoDe = c => c.codigo_banco || bancoCod(c.banco);
       reparto = RC.repartir({
         txs: arr,
-        cuentasComercio: ctaCom.map(c => ({ comercio: c.comercio, clabe: c.clabe, codigo_banco: bancoDe(c), banco: c.banco, beneficiario: c.razon_social_beneficiario || c.nombre_comercial || c.comercio })),
+        cuentasComercio: ctaCom.map(c => ({ comercio: c.comercio, clabe: c.clabe, codigo_banco: bancoDe(c), banco: c.banco, beneficiario: c.razon_social_beneficiario || c.nombre_comercial || c.comercio, tasa_propia: cat.comercios.some(x => RC.norm(x.comercio) === RC.norm(c.comercio)) })),
         calcular: sub => E.calcularCompensacion(sub, cat, params, {}),
         final: r,
         general: cuenta ? { clabe: cuenta.clabe, codigo_banco: cuenta.codigo_banco || bancoCod(cuenta.banco), banco: cuenta.banco, beneficiario: cuenta.razon_social_beneficiario || cuenta.nombre_comercial } : null,
@@ -2366,7 +2388,7 @@ app.get('/api/cortes/detalle-transaccional.xlsx', auth, async (req, res) => {
   const n = (await db.query('select count(*)::int n ' + sel, vals)).rows[0].n;
   if (n > DETALLE_MAX_TX) return res.status(413).json({ error: 'periodo_muy_grande', total: n, maximo: DETALLE_MAX_TX, mensaje: `El detalle tiene ${n} transacciones y el máximo por descarga es ${DETALLE_MAX_TX}. Acota las fechas o elige un cliente.` });
   const txs = (await db.query('select fecha_liq::text as fl, fecha,hora,cliente,comercio,numero_afiliacion as afil,producto,monto,folio,referencia,autorizacion,terminal ' + sel + ' order by fecha_liq, fecha, hora, id', vals)).rows;
-  const cat = { params: await getParams(), grupos: await getGrupos(), afilGrupo: await getAfilGrupo(), costos: await getCostos() };
+  const cat = { params: await getParams(), grupos: await getGrupos(), afilGrupo: await getAfilGrupo(), costos: await getCostos(), cuentas: await getCuentas() };
   if (usados.length === 1) {
     const c = usados[0];
     await bit(req, 'reporte', `exportó detalle transaccional corte #${c.id_corte}${cliente ? ' · ' + cliente : ''}`);
@@ -2940,9 +2962,9 @@ app.get('/api/cortes/:id/detalle-transaccional.xlsx', auth, async (req, res) => 
     "select fecha,hora,cliente,comercio,numero_afiliacion as afil,producto,monto,folio,referencia,autorizacion,terminal from transacciones where fecha_liq=$1 and upper(estatus)='APROBADO' order by fecha,hora,id",
     [c.fli]
   )).rows;
-  const [params, grupos, afilGrupo, costos] = [await getParams(), await getGrupos(), await getAfilGrupo(), await getCostos()];
+  const [params, grupos, afilGrupo, costos, cuentas] = [await getParams(), await getGrupos(), await getAfilGrupo(), await getCostos(), await getCuentas()];
   await bit(req, 'reporte', `exportó detalle transaccional corte #${c.id_corte}`);
-  const buf = await buildDetalleTransaccionalXLSX(c, cal, txs, { params, grupos, afilGrupo, costos });
+  const buf = await buildDetalleTransaccionalXLSX(c, cal, txs, { params, grupos, afilGrupo, costos, cuentas });
   enviarXLSX(res, `detalle_transaccional_corte_${c.id_corte}_${c.fli}.xlsx`, buf);
 });
 
@@ -2952,13 +2974,18 @@ app.get('/api/cortes/:id/detalle-transaccional.xlsx', auth, async (req, res) => 
 const DETALLE_MAX_TX = 50000;   // tope de transacciones por descarga de detalle (se leen a memoria; el libro sale por flujo)
 // Tasas pactadas por grupo/afiliación/producto, para calcular comisión, IVA y monto a dispersar de cada transacción.
 function ayudaDetalleTx(cat) {
-  const { params, grupos, afilGrupo } = cat;
+  const { params, grupos, afilGrupo, cuentas } = cat;
   const IVA = Number(params.iva) || 0.16;
   const grupoPorNombre = nombre => grupos.find(g => nrm(g.nombre_cliente) === nrm(nombre));
   const tasasDe = (idg, afil) => afilGrupo.find(a => String(a.id_grupo) === String(idg) && String(a.numero_afiliacion) === String(afil));
-  const tasaPACPorProducto = (idg, afil, producto) => {
+  // Comercios con tasas propias de cada grupo+afiliación (se calculan una vez por fila del corte).
+  const propiasCache = new Map();
+  const propiasDe = (idg, afil) => { const k = idg + '||' + afil; if (!propiasCache.has(k)) propiasCache.set(k, cuentas ? TC.comerciosDeFila(RC.cuentasDeFila(cuentas, idg, afil)) : []); return propiasCache.get(k); };
+  const tasaPACPorProducto = (idg, afil, producto, comercio) => {
     const t = idg ? tasasDe(idg, afil) : null; if (!t) return 0;
     const k = E.prodKey(producto);
+    const propia = comercio && idg && ['tdd', 'tdc', 'amex', 'int'].includes(k) ? TC.tasaDeProducto(propiasDe(idg, afil), comercio, k) : null;
+    if (propia !== null) return propia;                                                      // tasa propia del comercio (si la definieron para este producto)
     if (k === 'tdd') return Number(t.tasa_pac_tdd) || 0;
     if (k === 'tdc') return Number(t.tasa_pac_tdc) || 0;
     if (k === 'amex') return Number(t.tasa_pac_amex) || 0;
@@ -3019,7 +3046,7 @@ async function buildDetalleTransaccionalXLSX(corte, calculos, txs, cat) {
     const rowsTx = []; let sMonto = 0, sCom = 0, sIVA = 0, sDisp = 0;
     for (const t of rawTx) {
       const monto = Number(t.monto) || 0;
-      const tasa = tasaPACPorProducto(cc.id_grupo, cc.afil, t.producto);
+      const tasa = tasaPACPorProducto(cc.id_grupo, cc.afil, t.producto, t.comercio);
       const com = E.round2(monto * tasa);
       const iva = E.round2(com * IVA);
       const disp = E.round2(monto - com - iva);
@@ -3101,7 +3128,7 @@ async function buildDetalleTransaccionalHistoricoXLSX({ cortes, cal, txs, cat, c
       const nombreGrupo = cc.razon || cc.cliente || 'Sin grupo';
       for (const t of (txPor.get(`${cc._fli}||${nombreGrupo}||${cc.afil}`) || [])) {
         const monto = Number(t.monto) || 0;
-        const com = E.round2(monto * tasaPACPorProducto(cc.id_grupo, cc.afil, t.producto));
+        const com = E.round2(monto * tasaPACPorProducto(cc.id_grupo, cc.afil, t.producto, t.comercio));
         const iva = E.round2(com * IVA);
         yield llenar(cc, nombreGrupo, t, monto, com, iva, E.round2(monto - com - iva));
       }
@@ -3112,7 +3139,7 @@ async function buildDetalleTransaccionalHistoricoXLSX({ cortes, cal, txs, cat, c
     let n = 0, sMonto = 0, sCom = 0, sIVA = 0, sDisp = 0;
     for (const t of (txPor.get(`${cc._fli}||${nombreGrupo}||${cc.afil}`) || [])) {
       const monto = Number(t.monto) || 0;
-      const com = E.round2(monto * tasaPACPorProducto(cc.id_grupo, cc.afil, t.producto));
+      const com = E.round2(monto * tasaPACPorProducto(cc.id_grupo, cc.afil, t.producto, t.comercio));
       const iva = E.round2(com * IVA);
       n++; sMonto += monto; sCom += com; sIVA += iva; sDisp += E.round2(monto - com - iva);
     }
@@ -3318,14 +3345,14 @@ function filtroTx(afilFiltro, clienteFiltro, vals) {
 async function computeContable(desde, hasta, afilFiltro, clienteFiltro) {
   const vals = [desde, hasta];
   const extra = filtroTx(afilFiltro, clienteFiltro, vals);
-  const txs = (await db.query("select fecha_liq::text as fl, cliente, numero_afiliacion, producto, monto from transacciones where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'" + extra + ' order by fecha_liq', vals)).rows;
-  const [params, grupos, afilGrupo, costos, afiliaciones] = [await getParams(), await getGrupos(), await getAfilGrupo(), await getCostos(), await getAfiliaciones()];
+  const txs = (await db.query("select fecha_liq::text as fl, cliente, numero_afiliacion, comercio, producto, monto from transacciones where fecha_liq between $1 and $2 and upper(estatus)='APROBADO'" + extra + ' order by fecha_liq', vals)).rows;
+  const [params, grupos, afilGrupo, costos, afiliaciones, cuentas] = [await getParams(), await getGrupos(), await getAfilGrupo(), await getCostos(), await getAfiliaciones(), await getCuentas()];
   const grupoPorNombre = nombre => grupos.find(g => nrm(g.nombre_cliente) === nrm(nombre));
   const tasasDe = (idg, afil) => afilGrupo.find(a => String(a.id_grupo) === String(idg) && String(a.numero_afiliacion) === String(afil));
   const costosDe = afil => costos.find(c => String(c.numero_afiliacion) === String(afil));
   const razonDe = afil => { const a = afiliaciones.find(x => String(x.numero_afiliacion) === String(afil)); return a ? (a.razon_social || '') : ''; };
   const groups = {};
-  for (const t of txs) { const k = `${t.fl}||${t.cliente}||${t.numero_afiliacion}`; (groups[k] = groups[k] || []).push({ producto: t.producto, monto: Number(t.monto) }); }
+  for (const t of txs) { const k = `${t.fl}||${t.cliente}||${t.numero_afiliacion}`; (groups[k] = groups[k] || []).push({ producto: t.producto, monto: Number(t.monto), comercio: t.comercio }); }
   const rows = [];
   for (const k of Object.keys(groups)) {
     const sep = k.split('||'); const fl = sep[0], cliente = sep[1], afil = sep[2];
@@ -3335,6 +3362,7 @@ async function computeContable(desde, hasta, afilFiltro, clienteFiltro) {
       tasas: tasas ? { pac_tdd: Number(tasas.tasa_pac_tdd), pac_tdc: Number(tasas.tasa_pac_tdc), pac_amex: Number(tasas.tasa_pac_amex), pac_int: Number(tasas.tasa_pac_int), costo_x_trx: Number(tasas.costo_x_trx), pct_banca: Number(tasas.pct_banca) } : {},
       costos: co ? { int_tdd: Number(co.int_tdd), int_tdc: Number(co.int_tdc), int_amex: co.int_amex == null ? null : Number(co.int_amex), int_int: co.int_int == null ? null : Number(co.int_int), fee_broxel: co.fee_broxel == null ? null : Number(co.fee_broxel) } : {},
     };
+    cat.comercios = idGrupo ? TC.comerciosDeFila(RC.cuentasDeFila(cuentas, idGrupo, afil)) : [];     // tasas propias de los comercios con CLABE (igual que el corte)
     const r = E.calcularCompensacion(groups[k], cat, params, {});
     const devs = groups[k].filter(x => x.monto < 0);   // devoluciones: monto en negativo (restan del monto, la comisión y el intercambio)
     rows.push({ fl, afil, cliente, grupo: g ? g.nombre_cliente : null, razon: razonDe(afil) || cliente, monto: r.m_tdd + r.m_tdc + r.m_amex + r.m_int, n_trx: r.num_trx,
@@ -5746,7 +5774,7 @@ app.post('/api/cortes/:id/notificar-clientes', auth, requiereRol('admin', 'tesor
     "select fecha,hora,cliente,comercio,numero_afiliacion as afil,producto,monto,referencia,autorizacion from transacciones where fecha_liq=$1 and upper(estatus)='APROBADO' order by fecha,hora,id",
     [corte.fli]
   )).rows;
-  const [params, grupos, afilGrupo, costos] = [await getParams(), await getGrupos(), await getAfilGrupo(), await getCostos()];
+  const [params, grupos, afilGrupo, costos, cuentas] = [await getParams(), await getGrupos(), await getAfilGrupo(), await getCostos(), await getCuentas()];
   const destPorGrupo = (await db.query('select id,id_grupo,email,email_cifrado,nombre,nombre_cifrado,tipo from destinatarios_cliente where activo=true')).rows
     .map(d => ({ ...d, email: descifraTexto(d.email_cifrado, d.email), nombre: descifraTexto(d.nombre_cifrado, d.nombre) }));
   const mapDest = new Map();
@@ -5769,7 +5797,7 @@ app.post('/api/cortes/:id/notificar-clientes', auth, requiereRol('admin', 'tesor
     // XLSX filtrado a las afiliaciones de este grupo
     const afiles = new Set(calGrupo.map(c => String(c.afil)));
     const txsGrupo = txs.filter(t => afiles.has(String(t.afil)));
-    const buf = await buildDetalleTransaccionalXLSX(corte, calGrupo, txsGrupo, { params, grupos, afilGrupo, costos });
+    const buf = await buildDetalleTransaccionalXLSX(corte, calGrupo, txsGrupo, { params, grupos, afilGrupo, costos, cuentas });
     const nombreGrupo = calGrupo[0].razon;
     const subject = `Detalle de liquidación · ${nombreGrupo} · corte ${corte.fecha_liq}`;
     const html = armarDetalleClienteHTML({ nombreGrupo, corte, calGrupo, logoSrc: 'cid:polipay-logo' });
