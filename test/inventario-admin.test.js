@@ -233,7 +233,7 @@ test('layout simple: los errores señalan la fila del Excel (SN repetido o ya ex
   const r = await lay(archivo);
   assert.equal(r.j.ok, false);
   const msgs = r.j.errores.map(e => `${e.fila}:${e.mensaje}`).join(' | ');
-  assert.match(msgs, /2:.*serie ER001 viene repetida/); assert.match(msgs, /4:.*SM001 ya está en almacén|4:.*asignada/); assert.match(msgs, /5:.*costo/); assert.match(msgs, /6:.*Empresa «No Existe SA»/);
+  assert.match(msgs, /2:.*serie ER001 viene repetida/); assert.match(msgs, /4:.*SM001 ya está en almacén|4:.*asignada/); assert.doesNotMatch(msgs, /5:/);                                                       // sin costo ya no es error: se carga en $0; assert.match(msgs, /6:.*Empresa «No Existe SA»/);
   assert.match(msgs, /7:.*Trae Unidad pero falta la Empresa/); assert.match(msgs, /8:.*anterior a la de compra/); assert.match(msgs, /9:.*SN/);
   assert.ok(r.j.errores.every(e => e.hoja === 'Terminales'));
   assert.equal((await call('admin', 'GET', '/articulos')).j.articulos.length, antes);                           // todo o nada

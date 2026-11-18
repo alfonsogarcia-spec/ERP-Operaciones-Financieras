@@ -238,3 +238,29 @@ test('la factura y el IMEI no son obligatorios: una compra sin documento y un eq
   const pza = await art({ sku: 'CAB-O', nombre: 'Cable opcional' });
   assert.equal((await mov({ articulo_id: pza, tipo: 'entrada', concepto: 'compra', fecha: dia(2), cantidad: 5, costo_unitario: 10 })).s, 200);
 });
+
+test('layout de solo S/N: el modelo, costo, fecha y factura se eligen al subir; también una lista sin encabezado', async () => {
+  const libro = filas => { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(filas), 'Terminales'); return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }).toString('base64'); };
+  const lay = (archivo, extra) => call('admin', 'POST', '/layout', { archivo, nombre: 'sn.xlsx', ...(extra || {}) });
+  const solo = libro([['sn', 'imei', 'tid'], ['ONLY-1', '350000000050001', ''], ['ONLY-2', '', ''], ['ONLY-3', '', '']]);
+  // sin elegir modelo no se sabe de qué equipo son
+  const sinModelo = await lay(solo); assert.equal(sinModelo.j.ok, false); assert.match(sinModelo.j.errores[0].mensaje, /modelo/);
+  // con el modelo elegido basta
+  const d = { modelo: 'Terminal Solo SN', costo: '1500', fecha: dia(3), documento: 'F-55' };
+  const sim = await lay(solo, { defaults: d }); assert.equal(sim.j.ok, true, JSON.stringify(sim.j.errores)); assert.equal(sim.j.resumen.unidades, 3); assert.equal(sim.j.resumen.articulos_nuevos, 1);
+  assert.equal((await lay(solo, { defaults: d, aplicar: true, huella: sim.j.huella })).s, 200);
+  const a = (await arts()).find(x => x.nombre === 'Terminal Solo SN');
+  assert.equal(a.serializado, true); assert.equal(a.en_almacen, 3); assert.equal(a.valor, 4500);
+  const k = (await call('admin', 'GET', `/articulos/${a.id}/kardex`)).j;
+  assert.equal(k.filas[0].fecha, dia(3)); assert.equal(k.filas[0].documento, 'F-55'); assert.equal(k.series.find(s => s.serie === 'ONLY-1').imei, '350000000050001');
+  // lista simple de S/N sin encabezado (CSV o TXT) al mismo modelo; sin costo ni fecha: $0 y hoy, con aviso
+  const txt = Buffer.from('LISTA-1\nLISTA-2\r\nLISTA-3,350000000050003').toString('base64');
+  const s2 = await lay(txt, { nombre: 'lista.txt', defaults: { modelo: 'Terminal Solo SN' } });
+  assert.equal(s2.j.ok, true, JSON.stringify(s2.j.errores)); assert.equal(s2.j.resumen.unidades, 3); assert.equal(s2.j.resumen.articulos_nuevos, 0);
+  assert.ok(s2.j.avisos.some(x => /costo \$0/.test(x)));
+  assert.equal((await lay(txt, { nombre: 'lista.txt', defaults: { modelo: 'Terminal Solo SN' }, aplicar: true, huella: s2.j.huella })).s, 200);
+  const a2 = (await arts()).find(x => x.id === a.id); assert.equal(a2.en_almacen, 6); assert.equal(a2.valor, 4500);
+  // un S/N repetido en el inventario se señala por fila
+  const rep = await lay(Buffer.from('LISTA-1').toString('base64'), { nombre: 'x.txt', defaults: { modelo: 'Terminal Solo SN' } });
+  assert.equal(rep.j.ok, false); assert.match(rep.j.errores[0].mensaje, /LISTA-1/);
+});

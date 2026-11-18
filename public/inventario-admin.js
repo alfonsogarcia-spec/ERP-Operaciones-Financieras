@@ -556,19 +556,37 @@ function cargaMasiva() {
     }
     (d.avisos || []).forEach(a => res.append(fila(a)));
   };
-  const zf = zonaArchivos({ accept: '.xlsx,.csv,.txt', titulo: 'Arrastra aquí tu layout', ayuda: 'Excel (.xlsx) o CSV · o haz clic para elegirlo', onFiles: () => revisa() });
+  const zf = zonaArchivos({ accept: '.xlsx,.csv,.txt', titulo: 'Arrastra aquí tu archivo con los S/N', ayuda: 'Excel (.xlsx), CSV o TXT · o haz clic para elegirlo', onFiles: () => revisa() });
   const f = zf.input;
+  /* lo que aplica a todos los equipos del archivo: modelo, costo, fecha de compra y factura */
+  const modelos = [...new Set(ST.arts.filter(a => a.serializado && a.activo).map(a => a.nombre))];
+  const selModelo = el('select', { 'aria-label': 'Modelo' }, ...modelos.map(m => el('option', { value: m }, m)), el('option', { value: '__nuevo' }, '+ Modelo nuevo…'));
+  const nuevoModelo = el('input', { maxlength: '140', placeholder: 'Nombre del modelo', 'aria-label': 'Nombre del modelo nuevo', style: modelos.length ? 'display:none' : '' }); if (!modelos.length) selModelo.value = '__nuevo';
+  const dCosto = el('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', placeholder: '0.00', 'aria-label': 'Costo unitario' });
+  const dFecha = el('input', { type: 'date', value: hoyISO(), max: hoyISO(), 'aria-label': 'Fecha de compra' });
+  const dDoc = el('input', { maxlength: '80', placeholder: 'Opcional', 'aria-label': 'Factura o documento' });
+  const defaults = () => ({ modelo: selModelo.value === '__nuevo' ? nuevoModelo.value : selModelo.value, costo: dCosto.value, fecha: dFecha.value, documento: dDoc.value });
+  const params = el('div', {}, el('div', { class: 'grid2' }, fld('Modelo de los equipos', selModelo), fld('Costo unitario sin IVA (opcional)', dCosto)), nuevoModelo, el('div', { class: 'grid2', style: 'margin-top:8px' }, fld('Fecha de compra', dFecha), fld('Factura o documento (opcional)', dDoc)));
+  async function evalua() {
+    if (!archivo) return;
+    aplicar.disabled = true; res.innerHTML = ''; res.append(el('div', { class: 'muted' }, 'Revisando…'));
+    try { const d = await api('POST', BASE + '/layout', { archivo, nombre, aplicar: false, defaults: defaults() }); huella = d.huella; pinta(d); aplicar.disabled = !d.ok; } catch (e) { res.innerHTML = ''; err(e); }
+  }
+  let t = null; const reeval = () => { clearTimeout(t); t = setTimeout(evalua, 350); };
+  selModelo.addEventListener('change', () => { nuevoModelo.style.display = selModelo.value === '__nuevo' ? '' : 'none'; reeval(); });
+  [nuevoModelo, dCosto, dFecha, dDoc].forEach(x => x.addEventListener('input', reeval));
   async function revisa() {
     const a = f.files[0]; if (!a) return;
-    nombre = a.name; aplicar.disabled = true; res.innerHTML = ''; res.append(el('div', { class: 'muted' }, 'Revisando…'));
-    try { archivo = aBase64(await a.arrayBuffer()); const d = await api('POST', BASE + '/layout', { archivo, nombre, aplicar: false }); huella = d.huella; pinta(d); aplicar.disabled = !d.ok; } catch (e) { res.innerHTML = ''; err(e); }
+    nombre = a.name;
+    try { archivo = aBase64(await a.arrayBuffer()); } catch (e) { return err(e); }
+    await evalua();
   }
   aplicar.onclick = async () => {
     aplicar.disabled = true;
-    try { const d = await api('POST', BASE + '/layout', { archivo, nombre, aplicar: true, huella }); closeModal(); toast(`Carga aplicada: ${d.resumen.unidades || d.resumen.movimientos} ${d.resumen.unidades ? 'equipo(s)' : 'movimiento(s)'}`, 'ok'); ST.arts = []; render(); }
+    try { const d = await api('POST', BASE + '/layout', { archivo, nombre, aplicar: true, huella, defaults: defaults() }); closeModal(); toast(`Carga aplicada: ${d.resumen.unidades || d.resumen.movimientos} ${d.resumen.unidades ? 'equipo(s)' : 'movimiento(s)'}`, 'ok'); ST.arts = []; render(); }
     catch (e) { if (e && e.data && e.data.n_errores) pinta(e.data); err(e); aplicar.disabled = false; }
   };
-  const body = el('div', {}, el('div', {}, 'Una fila por terminal: ', el('b', {}, 'SN, IMEI, TID, modelo, costo y fecha de compra'), '. IMEI y TID son opcionales. Si ya está con un cliente, agrega Empresa y Unidad.'),
+  const body = el('div', {}, el('div', {}, 'Sube solo los ', el('b', {}, 'S/N'), ' (uno por fila; IMEI y TID son opcionales). Eliges el modelo aquí y se dan de alta en el inventario.'), params,
     el('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:8px' }, el('button', { class: 'btn ghost sm', type: 'button', onclick: () => descargar(BASE + '/layout.xlsx', 'layout_terminales_inventario.xlsx').catch(err) }, '⬇ Plantilla'), el('a', { href: '#', class: 'muted', onclick: e => { e.preventDefault(); descargar(BASE + '/layout-avanzado.xlsx', 'layout_avanzado_inventario.xlsx').catch(err); } }, 'Layout avanzado (artículos sin número de serie)')),
     zf, res);
   modal('Subir layout de inventario', body, el('div', {}, el('button', { class: 'btn secondary', onclick: closeModal }, 'Cerrar'), ' ', aplicar), true);
