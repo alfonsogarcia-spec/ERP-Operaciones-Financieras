@@ -314,6 +314,14 @@
     .btn:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none;filter:none}
     .btn.secondary{background:var(--glass-2);color:var(--ink);box-shadow:none;border:1px solid var(--glass-border);backdrop-filter:blur(10px)}
     .btn.secondary:hover{background:var(--glass-3)}
+    /* Menú flotante de acciones (descargas de un corte, «⋯»): se abre junto al botón y se cierra al hacer clic fuera, con Esc o al desplazar */
+    .popmenu{position:fixed;z-index:2000;min-width:210px;padding:6px;background:var(--panel-strong);border:1px solid var(--glass-border);border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);backdrop-filter:blur(var(--blur)) saturate(180%);-webkit-backdrop-filter:blur(var(--blur)) saturate(180%)}
+    .popmenu .pm-item{display:flex;width:100%;align-items:center;gap:8px;padding:8px 10px;border:0;border-radius:calc(var(--radius-sm) - 2px);background:transparent;color:var(--ink);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+    .popmenu .pm-item:hover,.popmenu .pm-item:focus-visible{background:var(--glass-3);outline:none}
+    .popmenu .pm-item[disabled]{opacity:.45;cursor:not-allowed;background:transparent}
+    .popmenu .pm-item.danger{color:var(--danger-ink)}
+    .popmenu .pm-item.danger:hover{background:var(--danger-tint)}
+    .popmenu .pm-sep{height:1px;margin:5px 4px;background:var(--glass-border)}
     .btn.ghost{background:var(--glass-1);border:1px solid var(--line);color:var(--ink);box-shadow:none}
     .btn.ghost:hover{border-color:var(--accent);color:var(--accent-ink);background:var(--glass-2)}
     .btn.sm{padding:var(--sp-2) 14px;font-size:var(--fs-sm)}
@@ -1323,6 +1331,26 @@ function filtroFechas(o){
   return caja;
 }
 if(!window.__dzGuard){window.__dzGuard=true;const con=e=>e.dataTransfer&&[...(e.dataTransfer.types||[])].includes('Files');['dragover','drop'].forEach(ev=>window.addEventListener(ev,e=>{if(con(e))e.preventDefault();}));}
+/* Menú flotante junto a un botón. items: [{t:'Texto', fn, off:'motivo si está desactivado', peligro:true}] o 'sep' para una línea. */
+function menuFlotante(ancla,items){
+  const previo=document.querySelector('.popmenu'); if(previo){previo._cerrar();if(previo._ancla===ancla)return;}
+  const m=el('div',{class:'popmenu',role:'menu'}); m._ancla=ancla;
+  const cerrar=()=>{m.remove();document.removeEventListener('mousedown',fuera,true);document.removeEventListener('keydown',tecla,true);window.removeEventListener('scroll',cerrar,true);window.removeEventListener('resize',cerrar);ancla.setAttribute('aria-expanded','false');};
+  const fuera=e=>{if(!m.contains(e.target)&&!ancla.contains(e.target))cerrar();};
+  const tecla=e=>{if(e.key==='Escape'){cerrar();ancla.focus();}};
+  m._cerrar=cerrar;
+  for(const it of items){
+    if(it==='sep'){m.append(el('div',{class:'pm-sep'}));continue;}
+    const b=el('button',{type:'button',role:'menuitem',class:'pm-item'+(it.peligro?' danger':''),title:it.off||null,disabled:it.off?'true':null,onclick:e=>{e.stopPropagation();cerrar();it.fn&&it.fn();}},it.t);
+    m.append(b);
+  }
+  document.body.append(m); ancla.setAttribute('aria-expanded','true');
+  const r=ancla.getBoundingClientRect(), w=m.offsetWidth, h=m.offsetHeight;
+  m.style.left=Math.max(8,Math.min(r.right-w,window.innerWidth-w-8))+'px';
+  m.style.top=(r.bottom+6+h>window.innerHeight-8?Math.max(8,r.top-6-h):r.bottom+6)+'px';
+  document.addEventListener('mousedown',fuera,true);document.addEventListener('keydown',tecla,true);window.addEventListener('scroll',cerrar,true);window.addEventListener('resize',cerrar);
+  const primero=m.querySelector('.pm-item:not([disabled])'); if(primero)primero.focus();
+}
 function tableWrap(head,rows,opts){const w=el('div',{class:'tablewrap'});const t=el('table');const thead=el('thead');const htr=el('tr');
   head.forEach(h=>{const isNum=typeof h==='object';htr.append(el('th',{class:(isNum?'num':'')},isNum?h.t:h));});thead.append(htr);t.append(thead);
   const tb=el('tbody');
@@ -2182,33 +2210,56 @@ async function vCortes(v){
   const fFechas=filtroFechas({desde:F.desde,hasta:F.hasta,placeholder:'Fecha de liquidación',titulo:'Fecha de liquidación'});const fDesde=fFechas.desde,fHasta=fFechas.hasta;
   const cuenta=el('span',{class:'muted',style:'font-size:12px'});
   const filtrar=()=>cortes.filter(c=>(!F.q||String(c.id_corte).includes(F.q.replace('#','').trim()))&&(!F.estado||c.estado===F.estado)&&(!F.cliente||(c.grupos||[]).includes(F.cliente))&&(!F.desde||c.fli>=F.desde)&&(!F.hasta||c.fli<=F.hasta));
-  const tabla=el('div',{});
-  const pintar=()=>{
+  const tabla=el('div',{}), pager=el('div',{style:'display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap;margin-top:10px'});
+  const POR_PAG=10;   // cortes por página
+  // pintar(true) conserva la página (volver al listado, cambiar de página); cualquier otro llamado (filtros, Limpiar) vuelve a la primera.
+  const pintar=(conservar)=>{
     Object.assign(F,{q:fBuscar.value,estado:fEstado.value,cliente:fCliente.value,desde:fDesde.value,hasta:fHasta.value});
     const lista=filtrar();
     const sum=k=>lista.reduce((s,c)=>s+Number(c[k]||0),0);
+    const paginas=Math.max(1,Math.ceil(lista.length/POR_PAG));
+    F.pag=conservar===true?Math.min(Math.max(0,F.pag||0),paginas-1):0;
+    const ini=F.pag*POR_PAG, visibles=lista.slice(ini,ini+POR_PAG);
     cuenta.innerHTML=`${lista.length} de ${cortes.length} corte(s) · a dispersar <b>${mxn(sum('total_disp'))}</b>`;
-    const head=['Corte','Fecha liq.','Estado',{t:'Trx'},'Grupos',{t:'Monto'},{t:'A compensar'},{t:'A dispersar'},'Cuadre',''];
+    pager.innerHTML='';
+    if(lista.length>POR_PAG){
+      const ir=n=>{F.pag=n;pintar(true);};
+      pager.append(el('span',{class:'muted',style:'font-size:12px'},`Cortes ${ini+1}–${ini+visibles.length} de ${lista.length}`),
+        el('button',{class:'btn ghost sm',type:'button',disabled:F.pag===0?'true':null,onclick:()=>ir(F.pag-1)},'← Anterior'),
+        el('span',{class:'muted',style:'font-size:12px'},`Página ${F.pag+1} de ${paginas}`),
+        el('button',{class:'btn ghost sm',type:'button',disabled:F.pag>=paginas-1?'true':null,onclick:()=>ir(F.pag+1)},'Siguiente →'));
+    }
+    const head=['Corte','Fecha liq.','Estado',{t:'Trx'},'Grupos',{t:'Monto'},{t:'Comisión'},{t:'IVA'},{t:'A compensar'},{t:'A dispersar'},'Cuadre',''];
     tabla.innerHTML='';
-    tabla.append(tableWrap(head,lista.map(c=>{
+    tabla.append(tableWrap(head,visibles.map(c=>{
       const n=(c.grupos||[]).length;
       const acc=el('span',{style:'display:inline-flex;gap:6px'});
-      if(c.estado!=='Rechazado')acc.append(el('button',{class:'btn secondary sm',title:'Layout SPEI de este corte (copia, tal como se calculó)',onclick:e=>{e.stopPropagation();descargarReporteCliente({corte:c.id_corte,cliente:F.cliente},c,'layout');}},'⬇ Layout'),
-        el('button',{class:'btn secondary sm',title:'Layout de recuperación de este corte',onclick:e=>{e.stopPropagation();descargarReporteCliente({corte:c.id_corte,cliente:F.cliente},c,'recuperacion');}},'⬇ Recup.'));
-      acc.append(el('button',{class:'btn secondary sm',title:'Reporte por cliente de este corte',onclick:e=>{e.stopPropagation();descargarReporteCliente({corte:c.id_corte,cliente:F.cliente},c);}},'⬇ Reporte'),
-        el('button',{class:'btn secondary sm',title:'Detalle transaccional de este corte',onclick:e=>{e.stopPropagation();descargarReporteCliente({corte:c.id_corte,cliente:F.cliente},c,'detalle');}},'⬇ Detalle'));
-      if(puedeCorte)acc.append(el('button',{class:'btn danger sm',onclick:async(e)=>{e.stopPropagation();if(await confirmar(`¿Eliminar el corte #${c.id_corte} (${c.fecha_liq})? No se puede deshacer.`)){try{await api('DELETE','/api/cortes/'+c.id_corte);toast('Corte eliminado','ok');render();}catch(err){toast(errMsg(err),'err');}}}},'Eliminar'));
-      const r=[`#${c.id_corte}`,c.fecha_liq,badgeEstado(c.estado),{num:c.n_trx},n?`<span title="${esc((c.grupos||[]).join(', '))}">${n}</span>`:'—',{num:mxn(c.total_monto)},{num:mxn(c.total_comp)},{num:mxn(c.total_disp)},c.cuadra?'<span class="flagok">✓</span>':'<span class="flagbad">✗</span>',acc];
+      // Una fila = un menú «Descargar» (las cuatro copias del corte) + «⋯» con Eliminar aparte. Un corte rechazado no tiene layouts.
+      const rech=c.estado==='Rechazado', q1={corte:c.id_corte,cliente:F.cliente};
+      acc.append(el('button',{class:'btn secondary sm','aria-haspopup':'menu','aria-expanded':'false',title:'Descargar archivos de este corte',onclick:e=>{e.stopPropagation();menuFlotante(e.currentTarget,[
+        {t:'Layout SPEI',off:rech?'Corte rechazado: no genera layout':null,fn:()=>descargarReporteCliente(q1,c,'layout')},
+        {t:'Layout de recuperación',off:rech?'Corte rechazado: no genera layout':null,fn:()=>descargarReporteCliente(q1,c,'recuperacion')},
+        'sep',
+        {t:'Reporte por cliente',fn:()=>descargarReporteCliente(q1,c)},
+        {t:'Detalle transaccional',fn:()=>descargarReporteCliente(q1,c,'detalle')}]);}},'⬇ Descargar ▾'));
+      if(puedeCorte)acc.append(el('button',{class:'btn secondary sm','aria-haspopup':'menu','aria-expanded':'false','aria-label':'Más acciones del corte #'+c.id_corte,title:'Más acciones',style:'padding-inline:10px',onclick:e=>{e.stopPropagation();menuFlotante(e.currentTarget,[
+        {t:'Eliminar corte…',peligro:true,fn:async()=>{if(await confirmar(`¿Eliminar el corte #${c.id_corte} (${c.fecha_liq})? No se puede deshacer.`)){try{await api('DELETE','/api/cortes/'+c.id_corte);toast('Corte eliminado','ok');render();}catch(err){toast(errMsg(err),'err');}}}}]);}},'⋯'));
+      const r=[`#${c.id_corte}`,c.fecha_liq,badgeEstado(c.estado),{num:c.n_trx},n?`<span title="${esc((c.grupos||[]).join(', '))}">${n}</span>`:'—',{num:mxn(c.total_monto)},{num:mxn(c.comision||0)},{num:mxn(c.iva||0)},{num:mxn(c.total_comp)},{num:mxn(c.total_disp)},c.cuadra?'<span class="flagok">✓</span>':'<span class="flagbad">✗</span>',acc];
       r._onclick=()=>abrirCorte(c.id_corte);return r;}),{empty:cortes.length?'Ningún corte coincide con los filtros.':'Aún no hay cortes. Crea uno con “+ Nuevo corte”.'}));
   };
   [fBuscar,fEstado,fCliente,fDesde,fHasta].forEach(x=>x.addEventListener('input',pintar));
   const limpiar=el('button',{class:'btn ghost sm',onclick:()=>{fBuscar.value=fEstado.value=fCliente.value=fDesde.value=fHasta.value='';pintar();}},'Limpiar');
-  p.append(el('h3',{},'Cortes',el('span',{class:'right'},el('button',{class:'btn secondary sm',onclick:()=>openReporteCliente(cortes,clientes,'layout')},'⬇ Layout SPEI'),' ',el('button',{class:'btn secondary sm',onclick:()=>openReporteCliente(cortes,clientes,'recuperacion')},'⬇ Layout recuperación'),' ',el('button',{class:'btn secondary sm',onclick:()=>openReporteCliente(cortes,clientes)},'⬇ Reporte por cliente'),' ',el('button',{class:'btn secondary sm',onclick:()=>openReporteCliente(cortes,clientes,'detalle')},'⬇ Detalle transaccional'))));
+  p.append(el('h3',{},'Cortes',el('span',{class:'right'},el('button',{class:'btn secondary sm','aria-haspopup':'menu','aria-expanded':'false',title:'Descargar varios cortes (histórico o un corte)',onclick:e=>menuFlotante(e.currentTarget,[
+    {t:'Layout SPEI',fn:()=>openReporteCliente(cortes,clientes,'layout')},
+    {t:'Layout de recuperación',fn:()=>openReporteCliente(cortes,clientes,'recuperacion')},
+    'sep',
+    {t:'Reporte por cliente',fn:()=>openReporteCliente(cortes,clientes)},
+    {t:'Detalle transaccional',fn:()=>openReporteCliente(cortes,clientes,'detalle')}])},'⬇ Descargas ▾'))));
   p.append(el('div',{class:'filters'},fBuscar,fEstado,fCliente,fFechas,limpiar,el('span',{class:'spacer'}),cuenta));
-  p.append(tabla);pintar();
+  p.append(tabla,pager);pintar(true);
   v.append(p);
 }
-const CORTES_FILTRO={q:'',estado:'',cliente:'',desde:'',hasta:''};
+const CORTES_FILTRO={q:'',estado:'',cliente:'',desde:'',hasta:'',pag:0};
 // Dos descargas con las mismas opciones: el reporte por cliente (una fila por grupo y afiliación) y el detalle transaccional (cada transacción).
 const REP_CORTES={
   layout:{titulo:'Layout SPEI',url:'/api/cortes/layout-spei.xlsx',pref:'layout_spei',busy:'Generando layout…',

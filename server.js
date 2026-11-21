@@ -2322,9 +2322,17 @@ app.post('/api/cortes', auth, requiereRol('admin', 'operador'), async (req, res)
 
 app.get('/api/cortes', auth, async (req, res) => {
   if (!dbReady(res)) return;
-  const grp = (await db.query('select corte_id, array_agg(distinct razon order by razon) as grupos from calculos group by corte_id')).rows;
-  const gruposDe = new Map(grp.map(g => [g.corte_id, (g.grupos || []).filter(Boolean)]));
-  const rows = (await db.query('select *, fecha_liq_iso::text as fli from cortes order by id_corte desc')).rows.map(c => ({ ...c, total_monto: Number(c.total_monto), total_comp: Number(c.total_comp), total_disp: Number(c.total_disp), grupos: gruposDe.get(c.id_corte) || [] }));
+  // Por corte: grupos, comisión (pactada + costo por trx) e IVA de la comisión, sumados de sus cálculos. Monto − comisión − IVA = a compensar.
+  const num = k => `coalesce((calc->>'${k}')::numeric,0)`;
+  const grp = (await db.query(`select corte_id, array_agg(distinct razon order by razon) as grupos,
+      sum(${['com_tdd', 'com_tdc', 'com_amex', 'com_int', 'com_trx'].map(num).join('+')}) as comision,
+      sum(${['iva_com_tdd', 'iva_com_tdc', 'iva_com_amex', 'iva_com_int', 'iva_com_trx'].map(num).join('+')}) as iva
+    from calculos group by corte_id`)).rows;
+  const gruposDe = new Map(grp.map(g => [g.corte_id, g]));
+  const rows = (await db.query('select *, fecha_liq_iso::text as fli from cortes order by id_corte desc')).rows.map(c => {
+    const g = gruposDe.get(c.id_corte) || {};
+    return { ...c, total_monto: Number(c.total_monto), total_comp: Number(c.total_comp), total_disp: Number(c.total_disp), grupos: (g.grupos || []).filter(Boolean), comision: E.round2(Number(g.comision) || 0), iva: E.round2(Number(g.iva) || 0) };
+  });
   res.json(rows);
 });
 // Reporte por cliente de UN corte (?corte=) o HISTÓRICO (?desde=&hasta=&estado=), opcionalmente de un solo
