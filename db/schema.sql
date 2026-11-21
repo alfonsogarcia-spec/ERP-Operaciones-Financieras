@@ -221,6 +221,8 @@ create index if not exists idx_disppend_afil on dispersiones_pendientes(numero_a
 -- Abonos por liberación de contracargos ganados (Disputas): ligan la pendiente a su folio para no duplicarla.
 alter table dispersiones_pendientes add column if not exists origen     text;
 alter table dispersiones_pendientes add column if not exists origen_ref text;
+-- Comercio al que corresponde el pendiente (reparto por comercio): la recuperación se paga a la CLABE de ese comercio. Vacío = cuenta general del grupo.
+alter table dispersiones_pendientes add column if not exists comercio text;
 create unique index if not exists uq_disppend_origen_bloque on dispersiones_pendientes(origen, origen_ref, bloque) where origen is not null and estatus <> 'Cancelado';
 
 create table if not exists contracargos (

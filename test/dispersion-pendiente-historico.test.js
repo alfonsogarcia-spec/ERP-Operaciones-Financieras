@@ -8,7 +8,7 @@ test('pendientesORecuperadasEnCorte: soloAplicadas ignora los pendientes que sig
   const { PGlite } = require('@electric-sql/pglite');
   const pg = new PGlite();
   await pg.exec(`create table dispersiones_pendientes (id serial primary key, origen_corte_id int, numero_afiliacion text, grupo_cliente text, id_grupo int,
-      bloque text, monto numeric, motivo text, estatus text default 'Pendiente', aplicado_en_corte_id int, creado_at timestamptz default now());
+      bloque text, monto numeric, motivo text, estatus text default 'Pendiente', aplicado_en_corte_id int, creado_at timestamptz default now(), origen_calculo_id int, comercio text);
     insert into dispersiones_pendientes (origen_corte_id, numero_afiliacion, id_grupo, bloque, monto, estatus, aplicado_en_corte_id) values
       (10, '357', 3, 'DOM', 100.5, 'Aplicado', 12),   -- recuperado en el corte 12
       (10, '357', 3, 'AMEX', 40,   'Pendiente', null), -- sigue abierto hoy

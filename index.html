@@ -2348,6 +2348,13 @@ async function abrirCorte(id){
   if(falt.pendientes_anteriores && falt.pendientes_anteriores.length){
     const sumaPend=falt.pendientes_anteriores.reduce((s,p)=>s+Number(p.monto||0),0);
     acc.append(el('button',{class:'btn sm violet',onclick:()=>descargar('/api/cortes/'+id+'/layout-pendientes.xlsx','layout_RECUPERACION_corte_'+id+'.xlsx').catch(e=>toast(e.status===409?'Layout bloqueado: hay órdenes sin CLABE/banco':errMsg(e),'err'))},`↺ Layout recuperación (${mxn(sumaPend)})`));
+    // Pendientes guardados por el total del grupo en un corte que pagó por cuenta (reparto por comercio): se dividen por cuenta para que la recuperación pague a cada una lo suyo.
+    const divid=falt.pendientes_anteriores.filter(p=>p.dividible);
+    if(divid.length&&can('dispersar')) acc.append(el('button',{class:'btn secondary sm',style:'color:var(--t-m)',onclick:async()=>{
+      const tot=divid.reduce((s,p)=>s+Number(p.monto||0),0);
+      if(!await confirmar(`¿Dividir por cuenta ${divid.length} pendiente(s) por ${mxn(tot)}? Hoy están guardados por el total del grupo; se separan en una recuperación por comercio con su CLABE (el pendiente original queda cancelado en el historial). El monto total no cambia.`,{ok:'Dividir',titulo:'Dividir pendientes por cuenta'})) return;
+      try{const r=await api('POST','/api/dispersiones-pendientes/dividir',{ids:divid.map(p=>p.id)});toast(`${r.divididos} pendiente(s) divididos en ${r.creados} por cuenta`,'ok');abrirCorte(id);}catch(e){toast(errMsg(e),'err');}
+    }},`⚙ Dividir pendientes por cuenta (${divid.length})`));
   }
   const trans=async(a,label)=>{try{await api('POST','/api/cortes/'+id+'/'+a);toast(label,'ok');abrirCorte(id);}catch(e){toast(errMsg(e),'err');}};
   if(c.estado==='Borrador'&&can('validar'))acc.append(el('button',{class:'btn ok sm',disabled:(!c.cuadra||c.bloqueos)?true:null,onclick:()=>trans('validar','Corte validado')},'Validar corte'));
@@ -2402,31 +2409,71 @@ async function abrirCorte(id){
 function openMarcarDispersion(id,cal,pendientesAnteriores){
   const body=el('div',{});
   body.append(el('div',{class:'banner',html:'Revisa qué se dispersó realmente. Desmarca los bloques que <b>NO</b> se pagaron (ej. SPEI rechazado) — el monto queda pendiente y se recupera automáticamente en el siguiente corte de esa afiliación, en un layout separado.'}));
-  const filas=[]; // {chk, motivoInp, tipo, id, bloque}
+  const filas=[]; // {chk, motivoInp, tipo, id, bloque, parte}
   const tbl=el('div',{});
-  const addFila=(label,monto,tipo,refId,bloque)=>{
+  // Conciliar con el layout ya dispersado: se sube el layout con lo que SÍ se pagó y lo que falta se desmarca (queda como pendiente). Solo sugiere: se revisa aquí antes de confirmar.
+  const resLay=el('div',{style:'margin:10px 0'});
+  const inpLay=el('input',{type:'file',accept:'.xlsx,.xls,.csv',style:'display:none',id:'lay-disp-file'});
+  const btnLay=el('button',{class:'btn secondary sm',type:'button',onclick:()=>inpLay.click()},'⬆ Subir layout dispersado');
+  inpLay.addEventListener('change',async()=>{
+    const f=inpLay.files&&inpLay.files[0]; if(!f) return;
+    const fd=new FormData(); fd.append('archivo',f);
+    btnLay.disabled=true;
+    try{
+      const r=await api('POST','/api/cortes/'+id+'/layout-dispersado',fd);
+      const k=x=>(x.parte==null?'':x.parte)+'|'+x.bloque+'|'+x.tipo+'|'+x.id;
+      const porClave=new Map(r.items.map(x=>[k({parte:x.parte,bloque:x.bloque||'',tipo:x.tipo,id:x.id}),x]));
+      for(const fl of filas){
+        const it=porClave.get(k({parte:fl.parte,bloque:fl.tipo==='pendiente'?'':fl.bloque,tipo:fl.tipo,id:fl.id}));
+        if(!it) continue;
+        fl.chk.checked=it.dispersado; fl.chk.dispatchEvent(new Event('change'));
+        if(!it.dispersado&&!fl.motivoInp.value) fl.motivoInp.value='No aparece en el layout dispersado';
+        else if(it.dispersado&&fl.motivoInp.value==='No aparece en el layout dispersado') fl.motivoInp.value='';
+      }
+      const s=r.resumen;
+      resLay.innerHTML='';
+      resLay.append(el('div',{class:'banner',html:`<b>${esc(f.name)}</b>: se encontraron <b>${s.dispersadas}</b> de ${s.ordenes} órdenes (${mxn(s.monto_dispersado)}). <b>${s.no_dispersadas}</b> sin pago por <b>${mxn(s.monto_no_dispersado)}</b>${s.no_dispersadas?' — quedan desmarcadas y pasarán a recuperación':''}. Revisa y confirma.`}));
+      const av=[...(r.avisos||[])];
+      for(const d of (r.distintas||[])) av.push(`${d.etiqueta||'Orden'}: el corte manda ${mxn(d.esperado)} y el archivo trae ${d.en_archivo.map(mxn).join(', ')} a la misma CLABE (se tomó como NO dispersado).`);
+      if((r.sobrantes||[]).length) av.push(`${r.sobrantes.length} fila(s) del archivo no corresponden a ninguna orden de este corte: ${r.sobrantes.slice(0,5).map(x=>mxn(x.cantidad)+' '+(x.nombre||x.clabe)).join(' · ')}${r.sobrantes.length>5?' …':''}`);
+      if(av.length) resLay.append(el('div',{class:'banner warn',style:'margin-top:6px',html:av.map(esc).join('<br>')}));
+    }catch(e){ resLay.innerHTML=''; toast(errMsg(e),'err'); }
+    btnLay.disabled=false; inpLay.value='';
+  });
+  body.append(el('div',{style:'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px'},btnLay,inpLay,el('span',{style:'color:var(--muted);font-size:12px'},'Sube el layout con lo que sí se dispersó; lo que falte se marca como no dispersado.')),resLay);
+  const addFila=(label,monto,tipo,refId,bloque,parte)=>{
     const chk=el('input',{type:'checkbox'}); chk.checked=true;
     const motivoInp=el('input',{placeholder:'Motivo (opcional)',style:'display:none;margin-top:4px;width:100%'});
     chk.addEventListener('change',()=>{ motivoInp.style.display=chk.checked?'none':'block'; });
     const row=el('div',{style:'display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)'});
     row.append(chk,el('div',{style:'flex:1'},el('div',{},label),motivoInp),el('div',{style:'font-variant-numeric:tabular-nums;font-weight:600'},mxn(monto)));
     tbl.append(row);
-    filas.push({chk,motivoInp,tipo,id:refId,bloque});
+    filas.push({chk,motivoInp,tipo,id:refId,bloque,parte});
   };
   for(const cc of cal){
     const r=cc.calc;
+    const rep=typeof cc.reparto==='string'?JSON.parse(cc.reparto||'null'):cc.reparto;
+    if(rep&&Array.isArray(rep.partes)&&rep.partes.length){
+      // Reparto por comercio: el layout salió una orden por cuenta, así que se marca cuenta por cuenta (cada una con su CLABE y su importe).
+      rep.partes.forEach((p,i)=>{
+        const quien=p.es_resto?'cuenta general':p.comercio;
+        if(Math.abs(p.disp_dom)>0.005) addFila(`${cc.razon} · Afil ${cc.afil} · DOM · ${quien}`, p.disp_dom, 'calculo', cc.id, 'DOM', i);
+        if(Math.abs(p.disp_amex)>0.005) addFila(`${cc.razon} · Afil ${cc.afil} · AMEX · ${quien}`, p.disp_amex, 'calculo', cc.id, 'AMEX', i);
+      });
+      continue;
+    }
     if(Math.abs(r.disp_dom)>0.005) addFila(`${cc.razon} · Afil ${cc.afil} · DOM`, r.disp_dom, 'calculo', cc.id, 'DOM');
     if(Math.abs(r.disp_amex)>0.005) addFila(`${cc.razon} · Afil ${cc.afil} · AMEX`, r.disp_amex, 'calculo', cc.id, 'AMEX');
   }
   if(pendientesAnteriores.length){
     tbl.append(el('h3',{style:'font-size:13px;color:var(--brand);margin:14px 0 6px'},'Pendientes de cortes anteriores (recuperación)'));
-    for(const p of pendientesAnteriores) addFila(`${p.grupo_cliente||''} · Afil ${p.numero_afiliacion} · ${p.bloque} · desde corte #${p.origen_corte_id||'—'}`, p.monto, 'pendiente', p.id, p.bloque);
+    for(const p of pendientesAnteriores) addFila(`${p.grupo_cliente||''} · Afil ${p.numero_afiliacion} · ${p.bloque}${p.comercio?' · '+p.comercio:''} · desde corte #${p.origen_corte_id||'—'}`, p.monto, 'pendiente', p.id, p.bloque);
   }
   body.append(tbl);
   const foot=el('div',{});
   const btnConfirmar=el('button',{class:'btn violet',onclick:async()=>{
     btnConfirmar.disabled=true;
-    const items=filas.map(f=>({tipo:f.tipo,id:f.id,bloque:f.bloque,dispersado:f.chk.checked,motivo:f.motivoInp.value.trim()||undefined}));
+    const items=filas.map(f=>({tipo:f.tipo,id:f.id,bloque:f.bloque,parte:f.parte,dispersado:f.chk.checked,motivo:f.motivoInp.value.trim()||undefined}));
     try{
       const r=await api('POST','/api/cortes/'+id+'/dispersar',{items});
       closeModal();

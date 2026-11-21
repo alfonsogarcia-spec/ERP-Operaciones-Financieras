@@ -46,6 +46,7 @@ const mountDisputasRoutes = require('./lib/disputas-routes.js');
 const CCS = require('./lib/contracargos-sync.js');
 const L = require('./lib/ledger.js');
 const RC = require('./lib/reparto-comercio.js');
+const LD = require('./lib/layout-dispersado.js');
 const TC = require('./lib/tasas-comercio.js');
 const DN = require('./lib/datos-negocio.js');
 const DP = require('./lib/dispersion-pendiente.js');
@@ -2723,6 +2724,49 @@ app.post('/api/cortes/:id/rechazar', auth, requiereRol('admin', 'tesoreria'), as
   res.json({ ok: true, id_nuevo: idNuevo, error_nuevo: errNuevo, correo });
 });
 
+// Conciliar contra un layout ya dispersado: se sube el layout con lo que SÍ se pagó; lo que el corte mandaba pagar y no aparece es lo que NO se dispersó.
+// Solo sugiere (no escribe nada): devuelve, por cada orden del corte y de la recuperación, si apareció en el archivo, y el usuario lo revisa en
+// «Marcar dispersado» antes de confirmar. Debe definirse antes de la ruta genérica /api/cortes/:id/:accion.
+app.post('/api/cortes/:id/layout-dispersado', auth, requiereRol('admin', 'bancos'), upload.single('archivo'), validaArchivo, async (req, res) => {
+  if (!dbReady(res)) return;
+  const c = (await db.query('select id_corte, estado from cortes where id_corte=$1', [parseInt(req.params.id, 10)])).rows[0];
+  if (!c) return res.status(404).json({ error: 'no_existe' });
+  if (c.estado !== 'Validado') return res.status(409).json({ error: 'transicion_invalida', estado: c.estado, mensaje: 'Solo se concilia un corte Validado (antes de marcarlo dispersado).' });
+  if (!req.file) return res.status(400).json({ error: 'sin_archivo', mensaje: 'Sube el layout con lo que sí se dispersó (.xlsx).' });
+  let filas;
+  try {
+    const XLSX = require('xlsx');
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+    // La hoja del layout: la primera que traiga el encabezado (el layout histórico trae además una hoja ORIGEN).
+    for (const nombre of wb.SheetNames) {
+      const aoa = XLSX.utils.sheet_to_json(wb.Sheets[nombre], { header: 1, raw: true, defval: '' });
+      filas = LD.filasDeHoja(aoa);
+      if (filas) break;
+    }
+  } catch (e) { return res.status(400).json({ error: 'archivo_ilegible', mensaje: 'No se pudo leer el archivo. Sube el .xlsx del layout.' }); }
+  if (!filas) return res.status(400).json({ error: 'sin_encabezado', mensaje: 'No encontré las columnas del layout (Concepto, Cuenta clabe del beneficiario, Cantidad).' });
+  const cal = (await db.query('select * from calculos where corte_id=$1', [c.id_corte])).rows
+    .map(x => ({ ...x, calc: typeof x.calc === 'string' ? JSON.parse(x.calc) : x.calc }));
+  const esperadas = [];
+  for (const x of cal) {
+    const o = ordenesDeFila(x);
+    for (const q of [...o.dom, ...o.amex]) esperadas.push({ clave: { tipo: 'calculo', id: x.id, bloque: q.bloque, parte: q.parte }, clabe: q.clabe, cant: q.cant, concepto: q.concepto, etiqueta: `${q.razon} · Afil ${q.afil} · ${q.bloque}` });
+  }
+  const rec = await ordenesRecuperacion(c.id_corte);
+  const avisos = [];
+  if (rec.bloqueado) avisos.push('La recuperación tiene órdenes sin CLABE/banco; no se pudo cruzar con el archivo.');
+  for (const q of (rec.orders || [])) esperadas.push({ clave: { tipo: 'pendiente', id: q.id }, clabe: q.clabe, cant: q.cant, concepto: q.concepto, etiqueta: `${q.razon} · Afil ${q.afil} · recuperación` });
+  const { resultado, sobrantes, distintas } = LD.conciliar(esperadas, filas);
+  const items = resultado.map((r, i) => ({ ...r.clave, dispersado: r.dispersado, etiqueta: esperadas[i].etiqueta, cantidad: esperadas[i].cant }));
+  const nd = items.filter(i => !i.dispersado);
+  const resumen = {
+    filas_archivo: filas.length, ordenes: items.length, dispersadas: items.length - nd.length, no_dispersadas: nd.length,
+    monto_dispersado: E.round2(items.filter(i => i.dispersado).reduce((s, i) => s + i.cantidad, 0)), monto_no_dispersado: E.round2(nd.reduce((s, i) => s + i.cantidad, 0)),
+  };
+  await bit(req, 'corte_conciliar_layout', `conciliación contra layout dispersado corte #${c.id_corte}: ${resumen.dispersadas}/${resumen.ordenes} órdenes encontradas, ${resumen.no_dispersadas} sin pago`, { resource_type: 'corte', resource_id: c.id_corte });
+  res.json({ ok: true, items, resumen, sobrantes, distintas: distintas.map(d => ({ ...d, etiqueta: (esperadas.find(e => e.clave === d.clave) || {}).etiqueta })), avisos });
+});
+
 function transicionValida(estado, accion) {
   return (accion === 'validar' && estado === 'Borrador') || (accion === 'dispersar' && estado === 'Validado') || (accion === 'cerrar' && estado === 'Dispersado');
 }
@@ -2765,6 +2809,27 @@ app.post('/api/cortes/:id/:accion', auth, async (req, res, next) => {
       if (!(Math.abs(monto) > 0.005)) continue; // nada que registrar si no había monto en ese bloque
       const col = bloque === 'AMEX' ? 'dispersado_amex' : 'dispersado_dom';
       await db.query(`update calculos set ${col}=false, motivo_no_dispersado=$1 where id=$2`, [it.motivo || null, fila.id]);
+      // Con reparto por comercio el layout salió por cuenta (una orden por parte): el pendiente se guarda POR PARTE, con su comercio, para que la
+      // recuperación pague a la misma cuenta y por el mismo importe. `it.parte` = índice de la parte; sin él (cliente viejo) se registran todas las partes.
+      const rep = fila.reparto ? (typeof fila.reparto === 'string' ? JSON.parse(fila.reparto) : fila.reparto) : null;
+      const campo = bloque === 'AMEX' ? 'disp_amex' : 'disp_dom', marca = bloque === 'AMEX' ? 'nd_amex' : 'nd_dom';
+      if (rep && Array.isArray(rep.partes) && rep.partes.length) {
+        const idx = it.parte != null && it.parte !== '' ? [parseInt(it.parte, 10)] : rep.partes.map((_, i) => i);
+        for (const i of idx) {
+          const p = rep.partes[i];
+          if (!p || !(Math.abs(p[campo]) > 0.005)) continue;
+          p[marca] = true;
+          await DP.registrar(db, {
+            origen_corte_id: c.id_corte, origen_calculo_id: fila.id,
+            numero_afiliacion: fila.afil, grupo_cliente: fila.cliente, id_grupo: fila.id_grupo,
+            bloque, monto: E.round2(p[campo]), motivo: it.motivo || null, creado_por: req.user.nombre, comercio: p.es_resto ? null : p.comercio,
+          });
+          noDispersados++;
+        }
+        await db.query('update calculos set reparto=$1 where id=$2', [JSON.stringify(rep), fila.id]);
+        fila.reparto = rep; // la siguiente parte de la misma fila parte de lo ya marcado
+        continue;
+      }
       await DP.registrar(db, {
         origen_corte_id: c.id_corte, origen_calculo_id: fila.id,
         numero_afiliacion: fila.afil, grupo_cliente: fila.cliente, id_grupo: fila.id_grupo,
@@ -2818,16 +2883,19 @@ function ordenesDeFila(x, { prefijo = '', soloNoDispersado = false } = {}) {
   const rep = x.reparto ? (typeof x.reparto === 'string' ? JSON.parse(x.reparto) : x.reparto) : null;
   const quiereDom = !soloNoDispersado || !x.dispersado_dom, quiereAmex = !soloNoDispersado || !x.dispersado_amex;
   if (rep && Array.isArray(rep.partes)) {
-    for (const p of rep.partes) {
-      const base = { clabe: p.clabe, cod: p.codigo_banco, benef: p.beneficiario, razon: p.es_resto ? x.razon : p.comercio, afil: x.afil, comercio: p.es_resto ? null : p.comercio };
-      if (quiereDom && Math.abs(p.disp_dom) > 0.005) dom.push({ ...base, concepto: concDom, cant: E.round2(p.disp_dom) });
-      if (quiereAmex && Math.abs(p.disp_amex) > 0.005) amex.push({ ...base, concepto: concAmex, cant: E.round2(p.disp_amex) });
-    }
+    // Cortes dispersados con el marcado por cuenta: cada parte lleva su propia marca (nd_dom/nd_amex). Sin marcas por parte (cortes anteriores) vale la de la fila.
+    const porParte = rep.partes.some(p => p.nd_dom || p.nd_amex);
+    rep.partes.forEach((p, i) => {
+      const base = { clabe: p.clabe, cod: p.codigo_banco, benef: p.beneficiario, razon: p.es_resto ? x.razon : p.comercio, afil: x.afil, comercio: p.es_resto ? null : p.comercio, calculo_id: x.id, parte: i };
+      const qDom = soloNoDispersado && porParte ? !!p.nd_dom : quiereDom, qAmex = soloNoDispersado && porParte ? !!p.nd_amex : quiereAmex;
+      if (qDom && Math.abs(p.disp_dom) > 0.005) dom.push({ ...base, bloque: 'DOM', concepto: concDom, cant: E.round2(p.disp_dom) });
+      if (qAmex && Math.abs(p.disp_amex) > 0.005) amex.push({ ...base, bloque: 'AMEX', concepto: concAmex, cant: E.round2(p.disp_amex) });
+    });
     return { dom, amex };
   }
-  const r = x.calc, base = { clabe: x.clabe, cod: x.codigo_banco, benef: x.beneficiario, razon: x.razon, afil: x.afil };
-  if (quiereDom && Math.abs(r.disp_dom) > 0.005) dom.push({ ...base, concepto: concDom, cant: E.round2(r.disp_dom) });
-  if (quiereAmex && Math.abs(r.disp_amex) > 0.005) amex.push({ ...base, concepto: concAmex, cant: E.round2(r.disp_amex) });
+  const r = x.calc, base = { clabe: x.clabe, cod: x.codigo_banco, benef: x.beneficiario, razon: x.razon, afil: x.afil, calculo_id: x.id, parte: null };
+  if (quiereDom && Math.abs(r.disp_dom) > 0.005) dom.push({ ...base, bloque: 'DOM', concepto: concDom, cant: E.round2(r.disp_dom) });
+  if (quiereAmex && Math.abs(r.disp_amex) > 0.005) amex.push({ ...base, bloque: 'AMEX', concepto: concAmex, cant: E.round2(r.disp_amex) });
   return { dom, amex };
 }
 
@@ -2898,7 +2966,47 @@ app.get('/api/cortes/:id/faltantes', auth, async (req, res) => {
   }
   const afiliaciones = [...new Set(cal.map(x => x.afil))];
   const pendientesAnteriores = (await DP.pendientesDeAfiliaciones(db, afiliaciones)).filter(p => p.origen_corte_id !== idCorte);
+  // `dividible`: pendiente guardado por el total del grupo cuyo corte de origen pagó por cuenta (reparto por comercio) → se puede dividir por cuenta.
+  for (const p of pendientesAnteriores) p.dividible = !!(await partesParaDividir(p));
   res.json({ propios, pendientes_anteriores: pendientesAnteriores });
+});
+
+// Partes (por cuenta) en que se divide un pendiente registrado por el total del grupo, o null si no aplica: ya es de un comercio, no tiene
+// corte de origen con reparto, o las partes no suman el pendiente (p. ej. hubo una retención): en ese caso no se adivina.
+async function partesParaDividir(p) {
+  if (p.comercio || !p.origen_calculo_id) return null;
+  const f = (await db.query('select reparto from calculos where id=$1', [p.origen_calculo_id])).rows[0];
+  const rep = f && f.reparto ? (typeof f.reparto === 'string' ? JSON.parse(f.reparto) : f.reparto) : null;
+  if (!rep || !Array.isArray(rep.partes)) return null;
+  const campo = p.bloque === 'AMEX' ? 'disp_amex' : 'disp_dom';
+  const partes = rep.partes.filter(x => x[campo] > 0.005);
+  if (partes.length < 2 || !partes.some(x => !x.es_resto)) return null;
+  if (Math.abs(partes.reduce((s, x) => s + E.round2(x[campo]), 0) - Number(p.monto)) > 0.02) return null;
+  return partes.map(x => ({ comercio: x.es_resto ? null : x.comercio, monto: E.round2(x[campo]) }));
+}
+// Divide por cuenta pendientes guardados por el total del grupo: cada uno se cancela (queda en el historial) y se crean sus partes, una por
+// comercio, a nombre de su cuenta. No toca lo ya recuperado.
+app.post('/api/dispersiones-pendientes/dividir', auth, requiereRol('admin', 'bancos'), async (req, res) => {
+  if (!dbReady(res)) return;
+  const ids = Array.isArray((req.body || {}).ids) ? req.body.ids.map(x => parseInt(x, 10)).filter(Number.isFinite) : [];
+  if (!ids.length) return res.status(400).json({ error: 'ids' });
+  const rows = (await db.query("select * from dispersiones_pendientes where id = any($1::int[]) and estatus='Pendiente'", [ids])).rows.map(r => ({ ...r, monto: Number(r.monto) }));
+  const plan = [];
+  for (const p of rows) { const partes = await partesParaDividir(p); if (partes) plan.push({ p, partes }); }
+  if (!plan.length) return res.status(409).json({ error: 'nada_que_dividir', mensaje: 'Esos pendientes no se pueden dividir por cuenta (ya están por comercio o no coinciden con el reparto).' });
+  let creados = 0;
+  for (const { p, partes } of plan) {
+    for (const x of partes) {
+      await db.query(
+        `insert into dispersiones_pendientes(origen_corte_id, origen_calculo_id, numero_afiliacion, grupo_cliente, id_grupo, bloque, monto, motivo, creado_por, creado_at, comercio)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [p.origen_corte_id, p.origen_calculo_id, p.numero_afiliacion, p.grupo_cliente, p.id_grupo, p.bloque, x.monto, p.motivo, p.creado_por, p.creado_at, x.comercio]);
+      creados++;
+    }
+    await db.query("update dispersiones_pendientes set estatus='Cancelado', motivo=coalesce(motivo||' · ','')||'Dividido por cuenta de comercio' where id=$1 and estatus='Pendiente'", [p.id]);
+  }
+  await bit(req, 'dispersion_pendiente_dividir', `dividió ${plan.length} pendiente(s) por cuenta de comercio (${creados} nuevos): ${plan.map(x => '#' + x.p.id).join(', ')}`);
+  res.json({ ok: true, divididos: plan.length, creados });
 });
 
 // Layout de REGISTRO/AUDITORÍA de lo que se marcó NO dispersado en este
@@ -2980,13 +3088,23 @@ async function ordenesRecuperacion(idCorte, opts) {
   // Fallback (solo para pendientes antiguas registradas sin id_grupo): el
   // comportamiento previo, ambiguo si la afiliación es compartida.
   const cuentaDeAfil = afil => cal.find(x => x.afil === afil);
+  // Pendiente de un comercio con CLABE propia (reparto): se paga a ESA cuenta, la misma del layout original (con la CLABE vigente en catálogo).
+  // Si ya no existe la cuenta del comercio NO se manda a la general: queda bloqueado para corregirlo.
+  const cuentaComercio = (idg, nombre) => cuentas.find(c => c.comercio && String(c.id_grupo) === String(idg) && RC.norm(c.comercio) === RC.norm(nombre));
   const orders = pendientes.map(p => {
+    if (p.comercio) {
+      const cc = cuentaComercio(p.id_grupo, p.comercio);
+      const idg = p.id_grupo || '';
+      const concepto = p.bloque === 'AMEX' ? `DISPERSION ${E.ult3(p.numero_afiliacion)}CPPXAMEX00${idg}` : E.concepto(p.numero_afiliacion, idg);
+      const cod = cc ? (cc.codigo_banco || bancoCod(cc.banco)) : null;
+      return { concepto, clabe: cc ? cc.clabe : null, cod, benef: p.comercio, cant: p.monto, razon: p.comercio, razon_grupo: DP.razonDePendiente(p, cal) || p.grupo_cliente || '', afil: p.numero_afiliacion, id: p.id, origen: p.origen_corte_id, comercio: p.comercio };
+    }
     const cuenta = cuentaDe(p.id_grupo, p.numero_afiliacion);
     const legacy = cuenta ? null : (cuentaDeAfil(p.numero_afiliacion) || {});
     const idGrupo = p.id_grupo || (legacy && legacy.id_grupo) || '';
     const concepto = p.bloque === 'AMEX'
-      ? `RECUPERACION ${E.ult3(p.numero_afiliacion)}CPPXAMEX00${idGrupo}`
-      : 'RECUPERACION ' + (idGrupo ? E.concepto(p.numero_afiliacion, idGrupo) : ((legacy && legacy.concepto) || ''));
+      ? `DISPERSION ${E.ult3(p.numero_afiliacion)}CPPXAMEX00${idGrupo}`
+      : (idGrupo ? E.concepto(p.numero_afiliacion, idGrupo) : ((legacy && legacy.concepto) || ''));
     const clabe = cuenta ? cuenta.clabe : (legacy && legacy.clabe);
     const cod = cuenta ? (cuenta.codigo_banco || bancoCod(cuenta.banco)) : (legacy && legacy.codigo_banco);
     const benef = cuenta ? (cuenta.razon_social_beneficiario || cuenta.nombre_comercial) : (legacy && legacy.beneficiario);
