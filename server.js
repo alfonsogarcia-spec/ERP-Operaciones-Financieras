@@ -2400,6 +2400,82 @@ app.get('/api/cortes/detalle-transaccional.xlsx', auth, async (req, res) => {
   const buf = await buildDetalleTransaccionalHistoricoXLSX({ cortes: usados, cal, txs, cat, cliente, desde, hasta, creado_por: req.user.nombre });
   enviarXLSX(res, `detalle_transaccional_historico_${desde}_a_${hasta}${slug}.xlsx`, buf);
 });
+// Layouts históricos (SPEI y recuperación) de UN corte (?corte=) o de un rango (?desde=&hasta=&estado=), opcionalmente de un solo cliente (?cliente=).
+// Misma consulta y filtros que el reporte por cliente y el detalle transaccional. Un corte trae el mismo libro que /api/cortes/:id/layout.xlsx
+// (o layout-pendientes.xlsx); el rango trae esas órdenes juntas y una hoja ORIGEN que dice de qué corte sale cada una. Un corte rechazado nunca
+// genera layout (su reemplazo sí). Es una copia de lo calculado: no se vuelve a calcular nada ni se cambia el estado de ningún pendiente.
+async function cortesParaLayout(q) {
+  const r = await cortesYCalculos(q);
+  if (r.error) return r;
+  const cortes = r.cortes.filter(c => c.estado !== 'Rechazado');
+  if (!cortes.length) return { error: { status: 409, body: { error: 'corte_rechazado', mensaje: 'Corte rechazado: no se genera layout de dispersión. Usa el corte nuevo.' } } };
+  const ids = new Set(cortes.map(c => c.id_corte));
+  const cal = r.cal.filter(x => ids.has(x._corte));
+  if (!cal.length) return { error: { status: 404, body: { error: 'sin_datos', mensaje: 'Esos cortes no tienen grupos para el filtro elegido.' } } };
+  return { cortes, cal, cliente: r.cliente };
+}
+function libroLayoutHistorico(nombreHoja, orders, historico) {
+  const referencia = referenciaHoy();
+  const hojas = [{ name: nombreHoja, aoa: [HEAD_LAYOUT, ...orders.map(o => [o.concepto, String(o.clabe || ''), Number(o.cod) || o.cod, o.razon, '', o.cant, referencia, ''])], cols: COLS_LAYOUT }];
+  if (historico) {
+    const total = E.round2(orders.reduce((s, o) => s + Number(o.cant || 0), 0));
+    hojas.push({ name: 'ORIGEN', aoa: [['Corte', 'Fecha liq.', 'Corte de origen', 'Concepto', 'Beneficiario', 'Cuenta clabe', 'Cantidad'],
+      ...orders.map(o => [o.corte, o.fli, o.origen == null ? '' : o.origen, o.concepto, o.razon, String(o.clabe || ''), o.cant]),
+      [], ['', '', '', '', '', 'Total', total]], cols: [{ wch: 8 }, { wch: 12 }, { wch: 16 }, { wch: 28 }, { wch: 32 }, { wch: 24 }, { wch: 16 }] });
+  }
+  return X.buildXLSX(hojas);
+}
+const detalleBloqueo = o => ({ razon: o.razon, afil: o.afil, importe: o.cant, falta: !o.clabe ? 'CLABE' : 'codigo_banco', corte: o.corte });
+app.get('/api/cortes/layout-spei.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const r = await cortesParaLayout(req.query || {});
+  if (r.error) return res.status(r.error.status).json(r.error.body);
+  const { cortes, cal, cliente } = r;
+  const orders = [];
+  for (const c of cortes) {
+    const dom = [], amex = [];
+    for (const x of cal.filter(z => z._corte === c.id_corte)) { const o = ordenesDeFila(x); dom.push(...o.dom); amex.push(...o.amex); }
+    for (const o of [...dom, ...amex]) orders.push({ ...o, corte: c.id_corte, fli: c.fli });
+  }
+  if (!orders.length) return res.status(404).json({ error: 'sin_datos', mensaje: 'Esos cortes no tienen órdenes de dispersión.' });
+  const bloq = orders.filter(o => !o.clabe || !o.cod);
+  if (bloq.length) return res.status(409).json({ error: 'bloqueado', detalle: bloq.map(detalleBloqueo) });
+  const slug = cliente ? '_' + cliente.replace(/[^\w]+/g, '_').slice(0, 40) : '';
+  const usados = cortes.filter(c => cal.some(x => x._corte === c.id_corte));
+  if (usados.length === 1) {
+    const c = usados[0];
+    await bit(req, 'layout', `exportó layout corte #${c.id_corte} (${orders.length} órdenes)${cliente ? ' · ' + cliente : ''}`);
+    return enviarXLSX(res, `layout_spei_corte_${c.id_corte}_${c.fli}${slug}.xlsx`, libroLayoutHistorico('LAYOUT', orders, false));
+  }
+  const desde = usados[0].fli, hasta = usados[usados.length - 1].fli;
+  await bit(req, 'layout', `exportó layout histórico ${desde} a ${hasta} (${usados.length} cortes, ${orders.length} órdenes)${cliente ? ' · ' + cliente : ''}`);
+  enviarXLSX(res, `layout_spei_historico_${desde}_a_${hasta}${slug}.xlsx`, libroLayoutHistorico('LAYOUT', orders, true));
+});
+app.get('/api/cortes/layout-recuperacion.xlsx', auth, async (req, res) => {
+  if (!dbReady(res)) return;
+  const r = await cortesParaLayout(req.query || {});
+  if (r.error) return res.status(r.error.status).json(r.error.body);
+  const { cortes, cliente } = r;
+  const vistos = new Set(); let orders = [];
+  for (const c of cortes) {
+    // Corte ya dispersado: solo lo que se recuperó en él; los pendientes que siguen abiertos hoy no son de ese corte.
+    const o = await ordenesRecuperacion(c.id_corte, { soloAplicadas: ['Dispersado', 'Cerrado'].includes(c.estado) });
+    if (o.bloqueado) return res.status(409).json({ error: 'bloqueado', detalle: o.detalle.map(d => ({ ...d, corte: c.id_corte })) });
+    for (const x of o.orders) { if (vistos.has(x.id)) continue; vistos.add(x.id); orders.push({ ...x, corte: c.id_corte, fli: c.fli }); }
+  }
+  if (cliente) orders = orders.filter(o => nrm(o.razon_grupo) === nrm(cliente) || nrm(o.razon) === nrm(cliente));
+  if (!orders.length) return res.status(404).json({ error: 'sin_pendientes', mensaje: 'Esos cortes no recuperaron montos pendientes de cortes anteriores.' });
+  const slug = cliente ? '_' + cliente.replace(/[^\w]+/g, '_').slice(0, 40) : '';
+  const usados = cortes.filter(c => orders.some(o => o.corte === c.id_corte));
+  if (usados.length === 1) {
+    const c = usados[0];
+    await bit(req, 'layout_pendientes', `exportó layout de recuperación corte #${c.id_corte} (${orders.length} órdenes)${cliente ? ' · ' + cliente : ''}`);
+    return enviarXLSX(res, `layout_RECUPERACION_corte_${c.id_corte}_${c.fli}${slug}.xlsx`, libroLayoutHistorico('RECUPERACION', orders, false));
+  }
+  const desde = usados[0].fli, hasta = usados[usados.length - 1].fli;
+  await bit(req, 'layout_pendientes', `exportó layout de recuperación histórico ${desde} a ${hasta} (${usados.length} cortes, ${orders.length} órdenes)${cliente ? ' · ' + cliente : ''}`);
+  enviarXLSX(res, `layout_RECUPERACION_historico_${desde}_a_${hasta}${slug}.xlsx`, libroLayoutHistorico('RECUPERACION', orders, true));
+});
 // Auditoría (solo lectura): cortes donde se retuvo de más por afiliaciones compartidas por varios grupos.
 app.get('/api/cortes/auditoria-retenciones', auth, requiereRol('admin', 'tesoreria', 'bancos'), async (req, res) => {
   if (!dbReady(res)) return;
@@ -2880,11 +2956,13 @@ app.delete('/api/dispersiones-pendientes/:id', auth, requiereRol('admin', 'banco
 // cortes ANTERIORES (Pendiente) para las afiliaciones con actividad en este
 // corte. Reusado por el endpoint de descarga y por el adjunto del correo.
 // Devuelve null si no hay pendientes o bloqueado:true si falta CLABE/banco.
-async function construirLayoutPendientes(idCorte) {
+// Órdenes de recuperación de un corte → { orders } (vacío si no hay) o { bloqueado, detalle } si falta CLABE/banco.
+// opts.soloAplicadas: solo lo recuperado en ese corte (histórico de cortes ya dispersados).
+async function ordenesRecuperacion(idCorte, opts) {
   const cal = (await db.query('select * from calculos where corte_id=$1', [idCorte])).rows;
   const afiliaciones = [...new Set(cal.map(x => x.afil))];
-  const pendientes = await DP.pendientesORecuperadasEnCorte(db, afiliaciones, idCorte);
-  if (!pendientes.length) return null;
+  const pendientes = await DP.pendientesORecuperadasEnCorte(db, afiliaciones, idCorte, opts);
+  if (!pendientes.length) return { orders: [] };
   // La cuenta de liquidación (CLABE/banco/beneficiario) depende del par
   // (id_grupo, numero_afiliacion), NO solo de la afiliación: un mismo
   // numero_afiliacion puede estar compartido por varios grupos (comercios),
@@ -2913,10 +2991,17 @@ async function construirLayoutPendientes(idCorte) {
     const cod = cuenta ? (cuenta.codigo_banco || bancoCod(cuenta.banco)) : (legacy && legacy.codigo_banco);
     const benef = cuenta ? (cuenta.razon_social_beneficiario || cuenta.nombre_comercial) : (legacy && legacy.beneficiario);
     const razon = p.grupo_cliente || benef || (legacy && legacy.razon) || '';
-    return { concepto, clabe, cod, benef, cant: p.monto, razon, afil: p.numero_afiliacion, id: p.id };
+    return { concepto, clabe, cod, benef, cant: p.monto, razon, razon_grupo: DP.razonDePendiente(p, cal) || razon, afil: p.numero_afiliacion, id: p.id, origen: p.origen_corte_id };
   });
   const bloqueadas = orders.filter(o => !o.clabe || !o.cod);
   if (bloqueadas.length) return { bloqueado: true, detalle: bloqueadas.map(o => ({ razon: o.razon, afil: o.afil, importe: o.cant, falta: !o.clabe ? 'CLABE' : 'codigo_banco' })) };
+  return { orders };
+}
+async function construirLayoutPendientes(idCorte) {
+  const r = await ordenesRecuperacion(idCorte);
+  if (r.bloqueado) return r;
+  if (!r.orders.length) return null;
+  const orders = r.orders;
   const referencia = referenciaHoy();
   const rowsL = orders.map(o => [o.concepto, String(o.clabe || ''), Number(o.cod) || o.cod, o.razon, '', o.cant, referencia, '']);
   const buf = X.buildXLSX([{

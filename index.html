@@ -2193,6 +2193,8 @@ async function vCortes(v){
     tabla.append(tableWrap(head,lista.map(c=>{
       const n=(c.grupos||[]).length;
       const acc=el('span',{style:'display:inline-flex;gap:6px'});
+      if(c.estado!=='Rechazado')acc.append(el('button',{class:'btn secondary sm',title:'Layout SPEI de este corte (copia, tal como se calculó)',onclick:e=>{e.stopPropagation();descargarReporteCliente({corte:c.id_corte,cliente:F.cliente},c,'layout');}},'⬇ Layout'),
+        el('button',{class:'btn secondary sm',title:'Layout de recuperación de este corte',onclick:e=>{e.stopPropagation();descargarReporteCliente({corte:c.id_corte,cliente:F.cliente},c,'recuperacion');}},'⬇ Recup.'));
       acc.append(el('button',{class:'btn secondary sm',title:'Reporte por cliente de este corte',onclick:e=>{e.stopPropagation();descargarReporteCliente({corte:c.id_corte,cliente:F.cliente},c);}},'⬇ Reporte'),
         el('button',{class:'btn secondary sm',title:'Detalle transaccional de este corte',onclick:e=>{e.stopPropagation();descargarReporteCliente({corte:c.id_corte,cliente:F.cliente},c,'detalle');}},'⬇ Detalle'));
       if(puedeCorte)acc.append(el('button',{class:'btn danger sm',onclick:async(e)=>{e.stopPropagation();if(await confirmar(`¿Eliminar el corte #${c.id_corte} (${c.fecha_liq})? No se puede deshacer.`)){try{await api('DELETE','/api/cortes/'+c.id_corte);toast('Corte eliminado','ok');render();}catch(err){toast(errMsg(err),'err');}}}},'Eliminar'));
@@ -2201,7 +2203,7 @@ async function vCortes(v){
   };
   [fBuscar,fEstado,fCliente,fDesde,fHasta].forEach(x=>x.addEventListener('input',pintar));
   const limpiar=el('button',{class:'btn ghost sm',onclick:()=>{fBuscar.value=fEstado.value=fCliente.value=fDesde.value=fHasta.value='';pintar();}},'Limpiar');
-  p.append(el('h3',{},'Cortes',el('span',{class:'right'},el('button',{class:'btn secondary sm',onclick:()=>openReporteCliente(cortes,clientes)},'⬇ Reporte por cliente'),' ',el('button',{class:'btn secondary sm',onclick:()=>openReporteCliente(cortes,clientes,'detalle')},'⬇ Detalle transaccional'))));
+  p.append(el('h3',{},'Cortes',el('span',{class:'right'},el('button',{class:'btn secondary sm',onclick:()=>openReporteCliente(cortes,clientes,'layout')},'⬇ Layout SPEI'),' ',el('button',{class:'btn secondary sm',onclick:()=>openReporteCliente(cortes,clientes,'recuperacion')},'⬇ Layout recuperación'),' ',el('button',{class:'btn secondary sm',onclick:()=>openReporteCliente(cortes,clientes)},'⬇ Reporte por cliente'),' ',el('button',{class:'btn secondary sm',onclick:()=>openReporteCliente(cortes,clientes,'detalle')},'⬇ Detalle transaccional'))));
   p.append(el('div',{class:'filters'},fBuscar,fEstado,fCliente,fFechas,limpiar,el('span',{class:'spacer'}),cuenta));
   p.append(tabla);pintar();
   v.append(p);
@@ -2209,6 +2211,12 @@ async function vCortes(v){
 const CORTES_FILTRO={q:'',estado:'',cliente:'',desde:'',hasta:''};
 // Dos descargas con las mismas opciones: el reporte por cliente (una fila por grupo y afiliación) y el detalle transaccional (cada transacción).
 const REP_CORTES={
+  layout:{titulo:'Layout SPEI',url:'/api/cortes/layout-spei.xlsx',pref:'layout_spei',busy:'Generando layout…',
+    notaCorte:'Mismo layout SPEI que el del detalle del corte, tal como se calculó. Si eliges un cliente, solo trae sus órdenes. <b>Es una copia para consulta: si el corte ya se dispersó, no lo subas otra vez al banco.</b>',
+    notaHist:'Las órdenes SPEI de los cortes del rango en una hoja <b>LAYOUT</b> (formato del banco) y una hoja <b>ORIGEN</b> con el corte y la fecha de cada orden. Deja las fechas vacías para traer todo el histórico. <b>Es una copia para consulta: no lo subas al banco si esos cortes ya se dispersaron.</b>'},
+  recuperacion:{titulo:'Layout de recuperación',url:'/api/cortes/layout-recuperacion.xlsx',pref:'layout_RECUPERACION',busy:'Generando layout de recuperación…',
+    notaCorte:'Lo que ese corte recuperó de cortes anteriores, con el monto guardado al momento de recuperarlo (no se recalcula). Si el corte aún no se dispersa, trae los pendientes abiertos de sus afiliaciones.',
+    notaHist:'Los montos recuperados en los cortes del rango, en una hoja <b>RECUPERACION</b> (formato del banco) y una hoja <b>ORIGEN</b> con el corte donde se recuperó y el corte donde se originó cada monto. <b>Es una copia para consulta: no lo subas al banco si ya se pagó.</b>'},
   reporte:{titulo:'Reporte por cliente',url:'/api/cortes/reporte-cliente.xlsx',pref:'reporte_cliente',busy:'Generando reporte…',
     notaCorte:'Mismo formato que el reporte del detalle del corte. Si eliges un cliente, solo trae sus afiliaciones y el total se recalcula.',
     notaHist:'Una sola hoja con todas las filas de los cortes del rango, con columnas <b>Corte</b> y <b>Fecha liq.</b> y el total del periodo. Deja las fechas vacías para traer todo el histórico.'},
@@ -2223,7 +2231,11 @@ async function descargarReporteCliente(q,c,tipo){
   const sufijo=q.cliente?'_'+q.cliente.replace(/\W+/g,'_').slice(0,40):'';
   const nombre=q.corte?`${T.pref}_corte_${q.corte}_${(c&&c.fli)||''}${sufijo}.xlsx`:`${T.pref}_historico_${q.desde||'inicio'}_a_${q.hasta||'hoy'}${sufijo}.xlsx`;
   try{await withBusy(T.busy,()=>descargar(T.url+'?'+qs,nombre));}
-  catch(e){toast([404,413].includes(e.status)?((e.data&&e.data.mensaje)||'Sin datos para esos filtros'):errMsg(e),'err');}
+  catch(e){
+    const d=e.data||{};
+    if(e.status===409&&d.error==='bloqueado'){const n=(d.detalle||[]).length;toast(`Layout bloqueado: ${n} orden(es) sin CLABE/banco${d.detalle&&d.detalle[0]?` (p. ej. ${d.detalle[0].razon||'—'}, afil. ${d.detalle[0].afil}${d.detalle[0].corte?', corte #'+d.detalle[0].corte:''})`:''}. Corrige en Cuentas.`,'err');}
+    else toast([404,409,413].includes(e.status)?(d.mensaje||'Sin datos para esos filtros'):errMsg(e),'err');
+  }
 }
 function openReporteCliente(cortes,clientes,tipo){
   const T=REP_CORTES[tipo||'reporte'];
