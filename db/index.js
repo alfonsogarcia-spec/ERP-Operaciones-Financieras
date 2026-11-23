@@ -97,6 +97,11 @@ async function migrate() {
     // Catálogo de bancos de Cards: copia de "Bancos SPEI" (tabla `bancos` del sistema) + participantes SPEI.
     await require('../lib/cards-bancos').sembrarBancos((sql, params) => backend.query(sql, params), { origen: `${SCHEMA}.bancos` });
   } catch (e) { console.warn('⚠ schema-cards migrate:', e.message); }
+  // Credit Solvendom · Mesa de control (tablas mc_*, schema credit_solvendom).
+  try {
+    await backend.exec(fs.readFileSync(path.join(__dirname, 'schema-mesa.sql'), 'utf8'));
+    await backend.query(`set search_path to ${SCHEMA}`);
+  } catch (e) { console.warn('⚠ schema-mesa migrate:', e.message); }
   await seedUsuarios();
   await seedReasonCodes();
 }

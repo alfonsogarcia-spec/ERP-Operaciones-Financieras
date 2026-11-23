@@ -727,6 +727,15 @@ begin
   end if;
 end $$;
 
+-- Rol dentro de Cartera (crédito simple y revolvente), independiente de los demás: 'admin' o el id de un rol de Cartera
+-- (cartera_solvendom.cartera_roles). NULL = sin acceso a Cartera. Quien solo entra a Cartera tiene rol = 'cartera'.
+do $$
+begin
+  if not exists (select 1 from information_schema.columns where table_schema = current_schema() and table_name = 'usuarios' and column_name = 'rol_cartera') then
+    alter table usuarios add column rol_cartera text;
+  end if;
+end $$;
+
 -- ===== Dispersión por COMERCIO =====
 -- El cálculo sigue siendo por grupo de cliente + afiliación. Una cuenta con `comercio` (nombre como llega en la ingesta) es la CLABE propia de ese
 -- comercio: al generar el layout, su parte de la dispersión del grupo sale a esa cuenta. Sin `comercio`, es la cuenta general del grupo/afiliación.

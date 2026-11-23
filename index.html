@@ -8,6 +8,7 @@
     (function(){try{var m=localStorage.getItem("_modoPreview");if(m==="dark"||m==="light")document.documentElement.setAttribute("data-theme",m);var p=localStorage.getItem("_paletaPreview");if(p&&p!=="azul")document.documentElement.setAttribute("data-palette",p);var e=localStorage.getItem("_estiloPreview");if(e==="fintech")document.documentElement.setAttribute("data-estilo",e);}catch(e){}})();
   </script>
   <link rel="icon" type="image/png" href="/public/logo-symbol.png" />
+  <link rel="stylesheet" href="/public/cartera/marca.css" />
   <title>Polipay POS Settlement</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -732,6 +733,8 @@
     <button class="opt" data-p="grafito" onclick="setPaleta('grafito',this)" type="button"><span class="dot grafito"></span>Grafito<span class="check">✓</span></button>
   </div>
 </div>
+<script src="/public/mesa/ui.js"></script>
+<script src="/public/mesa/ui2.js"></script>
 <script>
   function toggleThemeMenu(force){
     const d = document.getElementById('themeDev');
@@ -836,6 +839,7 @@
 <div class="layout" id="app" style="display:none">
   <aside class="sidebar">
     <img class="brand-logo" src="/public/logo.png" alt="Polipay" />
+    <div class="brand-solvendom" role="img" aria-label="Solvendom SOFOM E.N.R."><div class="iso" aria-hidden="true">S</div><div class="nom"><b>Solvendom</b><small>SOFOM E.N.R.</small></div></div>
     <div class="sub" id="wsSubtitle">Polipay POS Settlement</div>
     <div class="ws" id="wsSwitch" role="button" tabindex="0" aria-haspopup="menu" aria-label="Cambiar de espacio de trabajo" onclick="toggleWorkspace()">
       <div class="ws-ic" id="wsIcon">CS</div>
@@ -892,14 +896,14 @@ async function withBusy(msg,fn){showBusy(msg);await new Promise(r=>setTimeout(r,
 /* ---------- capa API ---------- */
 let SES=null; // {id,email,nombre,rol}
 const TOKEN=()=>localStorage.getItem('cl_token');
-async function api(method,path,body){
-  const headers={}; const tok=TOKEN(); if(tok)headers.authorization='Bearer '+tok; let b;
+async function api(method,path,body,extra){
+  const headers=Object.assign({},extra||{}); const tok=TOKEN(); if(tok)headers.authorization='Bearer '+tok; let b;
   if(body instanceof FormData){b=body;} else if(body!=null){headers['content-type']='application/json';b=JSON.stringify(body);}
   const r=await fetch(path,{method,headers,body:b});
   if(r.status===401){forzarLogout();throw new Error('sesión expirada');}
   // El servidor manda el rol vigente: si cambió (lo editó un administrador), se actualiza el menú sin cerrar sesión.
-  const xr=r.headers.get('X-Rol'),xc=r.headers.get('X-Rol-Cards');
-  if(SES&&xr&&(xr!==SES.rol||(xc!==null&&(xc||null)!==(SES.rol_cards||null)))){SES.rol=xr;SES.rol_cards=xc||null;try{const u=JSON.parse(localStorage.getItem('cl_user')||'{}');u.rol=xr;u.rol_cards=SES.rol_cards;localStorage.setItem('cl_user',JSON.stringify(u));}catch(_e){/* nada */}
+  const xr=r.headers.get('X-Rol'),xc=r.headers.get('X-Rol-Cards'),xk=r.headers.get('X-Rol-Cartera');
+  if(SES&&xr&&(xr!==SES.rol||(xc!==null&&(xc||null)!==(SES.rol_cards||null))||(xk!==null&&(xk||null)!==(SES.rol_cartera||null)))){SES.rol=xr;SES.rol_cards=xc||null;SES.rol_cartera=xk||null;try{const u=JSON.parse(localStorage.getItem('cl_user')||'{}');u.rol=xr;u.rol_cards=SES.rol_cards;u.rol_cartera=SES.rol_cartera;localStorage.setItem('cl_user',JSON.stringify(u));}catch(_e){/* nada */}
     setTimeout(()=>{if(!WORKSPACES[WORKSPACE]||!WORKSPACES[WORKSPACE].ok()){WORKSPACE=Object.keys(WORKSPACES).find(k=>WORKSPACES[k].ok())||'conciliacion';localStorage.setItem('cl_workspace',WORKSPACE);VIEW=vistaInicial(WORKSPACE);}renderWs();render();toast('Tus accesos cambiaron','ok');},0);}
   if(!r.ok){let e;try{e=await r.json();}catch(_){e={error:r.statusText};}const err=new Error(e.error||'error');err.status=r.status;err.data=e;throw err;}
   const ct=r.headers.get('content-type')||''; return ct.includes('application/json')?r.json():r;
@@ -911,11 +915,12 @@ async function descargar(path,filename){
 }
 
 /* ---------- roles ---------- */
-const ROLES={admin:'Administrador',operador:'Operador (Operaciones)',tesoreria:'Tesorería (valida)',bancos:'Bancos (dispersa y cierra)',consulta:'Consulta (solo lectura)',inventario:'Inventario (solo esa sección)',comercial:'Comercial (solicita fondeos de Cards)',cards_admin:'Administrador Cards (usuarios y tesorería de Cards)',cards_tesoreria:'Tesorería Cards (asigna saldo y sube comprobante)',cards_operaciones:'Operaciones Cards (da de alta unidades de negocio y tarjetas)',cards_consulta:'Consulta Cards (solo lectura)'};
+const ROLES={admin:'Administrador',operador:'Operador (Operaciones)',tesoreria:'Tesorería (valida)',bancos:'Bancos (dispersa y cierra)',consulta:'Consulta (solo lectura)',inventario:'Inventario (solo esa sección)',comercial:'Comercial (solicita fondeos de Cards)',cards_admin:'Administrador Cards (usuarios y tesorería de Cards)',cards_tesoreria:'Tesorería Cards (asigna saldo y sube comprobante)',cards_operaciones:'Operaciones Cards (da de alta unidades de negocio y tarjetas)',cards_consulta:'Consulta Cards (solo lectura)',cartera:'Credit Solvendom (solo ese espacio)'};
 // Roles que solo entran a Polipay Cards Settlement.
 const ROLES_SOLO_CARDS=['comercial','cards_admin','cards_tesoreria','cards_operaciones','cards_consulta'];
 const soloCards=()=>!!(SES&&ROLES_SOLO_CARDS.includes(SES.rol));
-function can(cap){if(!SES)return false;const M={
+const soloCartera=()=>!!(SES&&SES.rol==='cartera');   // personas que solo entran a Cartera
+function can(cap){if(!SES)return false;if(cap.startsWith('cartera_'))return !!SES.rol_cartera&&(cap==='cartera_ver'||!window.MC_PERM||window.MC_PERM.includes(cap.slice(8)));const M={
   catalogos:['admin'],ingesta:['admin','operador'],corte:['admin','operador'],
   validar:['admin','tesoreria'],dispersar:['admin','bancos'],cerrar:['admin','bancos'],
   notificar:['admin','tesoreria','bancos'],
@@ -1370,9 +1375,10 @@ let VIEW='dashboard';
    WORKSPACES: 'conciliacion' (todo lo original) | 'tareas' (microsistema)
    ========================================================================= */
 const WORKSPACES={
-  conciliacion:{nombre:'Polipay POS Settlement',ic:'CS',sub:'Conciliación y liquidación',color:'var(--accent-fill)',vista:'dashboard',ok:()=>!soloCards()},
-  tareas:{nombre:'Tareas Ops',ic:'TQ',sub:'Tareas de Operaciones',color:'var(--c-teal)',vista:'tar_mis_rutinas',ok:()=>!soloCards()},
+  conciliacion:{nombre:'Polipay POS Settlement',ic:'CS',sub:'Conciliación y liquidación',color:'var(--accent-fill)',vista:'dashboard',ok:()=>!soloCards()&&!soloCartera()},
+  tareas:{nombre:'Tareas Ops',ic:'TQ',sub:'Tareas de Operaciones',color:'var(--c-teal)',vista:'tar_mis_rutinas',ok:()=>!soloCards()&&!soloCartera()},
   cards:{nombre:'Polipay Cards Settlement',ic:'CB',sub:'Fondeos y tesorería de Cards',color:'var(--c-indigo)',vista:'cards_panel',ok:()=>can('cards_ver')},
+  cartera:{nombre:'Credit Solvendom Settlement',ic:'SV',sub:'Mesa de control de crédito',color:'var(--c-teal)',vista:'mc_tablero',ok:()=>can('cartera_ver')},
   admin:{nombre:'Administración',ic:'AD',sub:'Usuarios y accesos',color:'var(--c-neutral)',vista:'adm_usuarios',ok:()=>can('admin_panel')},
 };
 let WORKSPACE = localStorage.getItem('cl_workspace') || 'conciliacion';
@@ -1404,6 +1410,7 @@ function renderWs(){
   if(SES&&SES.rol==='inventario'){ if(sw)sw.style.display='none'; const sub=document.getElementById('wsSubtitle'); if(sub)sub.textContent='Polipay POS Settlement'; return; }
   if(sw)sw.style.display=Object.keys(WORKSPACES).filter(k=>WORKSPACES[k].ok()).length<2?'none':'';
   const w=WORKSPACES[WORKSPACE];
+  document.documentElement.dataset.ws=WORKSPACE;   // la identidad Solvendom (marca.css) solo aplica en el espacio de Credit Solvendom
   const nameEl=document.getElementById('wsName'); if(nameEl) nameEl.innerHTML = w.nombre+'<small>Cambiar de espacio</small>';
   const icon=document.getElementById('wsIcon'); if(icon){ icon.textContent = w.ic; icon.style.background = w.color; }
   const sub=document.getElementById('wsSubtitle'); if(sub) sub.textContent = w.sub;
@@ -1447,6 +1454,27 @@ const NAV_CONCILIACION=[
   {id:'parametros',t:'Parámetros',ic:'ic_16'},
   {id:'bitacora',t:'Bitácora',ic:'ic_20'},
 ];
+const NAV_CARTERA=[
+  {sec:'Mesa de control'},
+  {id:'mc_tablero',t:'Tablero',ic:'ic_01'},
+  {id:'mc_solicitudes',t:'Solicitudes',ic:'ic_11'},
+  {sec:'Cartera',cap:'cartera_ver_todas'},
+  {id:'mc_creditos',t:'Créditos',ic:'ic_09',cap:'cartera_ver_todas'},
+  {id:'mc_cobranza',t:'Cobranza',ic:'ic_04',cap:'cartera_ver_todas'},
+  {id:'mc_conciliacion',t:'Conciliación',ic:'ic_15',cap:'cartera_conciliar'},
+  {sec:'Finanzas',cap:'cartera_ver_todas'},
+  {id:'mc_fondeo',t:'Fondeo',ic:'ic_14',cap:'cartera_ver_todas'},
+  {id:'mc_contab',t:'Contabilidad',ic:'ic_15',cap:'cartera_contabilidad'},
+  {id:'mc_reportes',t:'Reportes',ic:'ic_20',cap:'cartera_reportes'},
+  {sec:'Cumplimiento',cap:'cartera_pld_consulta'},
+  {id:'mc_pld',t:'Listas y PLD',ic:'ic_13',cap:'cartera_pld_consulta'},
+  {id:'mc_uif',t:'UIF · operaciones',ic:'ic_13',cap:'cartera_uif'},
+  {sec:'Control',cap:'cartera_bitacora'},
+  {id:'mc_bitacora',t:'Bitácora',ic:'ic_20',cap:'cartera_bitacora'},
+  {sec:'Administración'},
+  {id:'mc_productos',t:'Productos',ic:'ic_09'},
+  {id:'mc_config',t:'Facultades y política',ic:'ic_16'},
+];
 const NAV_ADMIN=[
   {sec:'Acceso'},
   {id:'adm_usuarios',t:'Usuarios',ic:'ic_20'},
@@ -1482,7 +1510,7 @@ const NAV_CARDS=[
   {sec:'Avisos',cap:'cards_estructura'},
   {id:'cards_destinatarios',t:'Destinatarios',ic:'ic_17',cap:'cards_estructura'},
 ];
-Object.defineProperty(window,'NAV',{ get(){ return WORKSPACE==='tareas' ? NAV_TAREAS : WORKSPACE==='cards' ? NAV_CARDS : WORKSPACE==='admin' ? NAV_ADMIN : NAV_CONCILIACION; } });
+Object.defineProperty(window,'NAV',{ get(){ return WORKSPACE==='tareas' ? NAV_TAREAS : WORKSPACE==='cards' ? NAV_CARDS : WORKSPACE==='cartera' ? NAV_CARTERA : WORKSPACE==='admin' ? NAV_ADMIN : NAV_CONCILIACION; } });
 function navSecKey(name){ return 'cl_nav_'+String(name).toLowerCase().replace(/[^a-z0-9]+/g,'-'); }
 function renderNav(){
   const nav=$('#nav');nav.innerHTML='';
@@ -1572,9 +1600,9 @@ async function render(){renderNav();if(WORKSPACE==='cards')cardsContadores();
     catch(e){v.innerHTML='';v.append(el('div',{class:'banner err'},'No se pudo cargar: '+esc(errMsg(e))));}
     return;
   }
-  const[t,s]=TITLES[VIEW]||(window.INV_TITULOS||{})[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
+  const[t,s]=TITLES[VIEW]||(window.CARTERA_TITULOS||{})[VIEW]||(window.INV_TITULOS||{})[VIEW]||['',''];$('#viewTitle').textContent=t;$('#viewSub').textContent=s;$('#pageAction').innerHTML='';
   const v=$('#view');v.innerHTML='<div class="empty">Cargando…</div>';
-  try{await ({...(window.INV_VISTAS||{}),dashboard:vDashboard,ingesta:vIngesta,inventario:vInventario,contracargos:vContracargos,retenciones:vRetenciones,cortes:vCortes,contable:vContabilidadCortes,cumplimiento:vCumplimiento,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,umbrales:vUmbrales,destinatarios:vDestinatarios,bitacora:vBitacora,
+  try{await ({...(window.CARTERA_VISTAS||{}),...(window.INV_VISTAS||{}),dashboard:vDashboard,ingesta:vIngesta,inventario:vInventario,contracargos:vContracargos,retenciones:vRetenciones,cortes:vCortes,contable:vContabilidadCortes,cumplimiento:vCumplimiento,grupos:vGrupos,cuentas:vCuentas,bancos:vBancos,feriados:vFeriados,parametros:vParametros,umbrales:vUmbrales,destinatarios:vDestinatarios,bitacora:vBitacora,
     disp_dashboard:vDashboard,disp_chargebacks:vDispCB,disp_refunds:vDispRefunds,disp_duplicates:vDispDup,disp_merchants:vDispMerchants,disp_reasoncodes:vDispRC,disp_providers:vDispProviders,disp_reports:vDispReports,
     dest_liquidacion:vDestinatariosCorte,dest_liquidacion_cli:vDestinatariosCliente,dest_contabilidad:vDestinatariosContabilidad,dest_disputas:vDestDisputas,dest_alertas:vDestinatariosAlertas,
     cards_panel:vCardsPanel,cards_fondeos:vCardsFondeos,cards_bandeja:vCardsBandeja,cards_solicitudes:vCardsSolicitudes,cards_estructura:vCardsEstructura,cards_bancos:vCardsBancos,cards_destinatarios:vCardsDestinatarios,cards_contabilidad:vCardsContabilidad,adm_usuarios:vAdmUsuarios,
@@ -3564,9 +3592,10 @@ async function vAdmUsuarios(v){
     const rows=list.filter(u=>(!t||(u.email+' '+(u.nombre||'')).toLowerCase().includes(t))&&(!sis.value||(u.sistemas||[]).includes(sis.value))&&(!est.value||(est.value==='1')===u.activo));
     cnt.textContent=rows.length+' de '+list.length+' usuario(s) · '+list.filter(u=>u.activo).length+' activo(s)';
     cont.innerHTML='';
-    cont.append(tableWrap(['Correo','Nombre','POS Settlement y Tareas','Cards','Estado','Último acceso'],rows.map(u=>{
+    cont.append(tableWrap(['Correo','Nombre','POS Settlement y Tareas','Cards','Credit Solvendom','Estado','Último acceso'],rows.map(u=>{
       const cardsTxt=u.rol_pos==='admin'?'<span class="muted">Acceso total</span>':insigniaRol(u.rol_cards);
-      const r=[esc(u.email),esc(u.nombre||''),insigniaRol(u.rol_pos),cardsTxt,u.activo?'<span class="badge ok">Activo</span>':'<span class="badge neutral">Inactivo</span>',u.ultimo_login_at?new Date(u.ultimo_login_at).toLocaleString('es-MX'):'—'];
+      const carteraTxt=u.rol_pos==='admin'?'<span class="muted">Acceso total</span>':u.rol_cartera?`<span class="badge ${u.rol_cartera==='admin'?'violet':'info'}">${esc(((meta.cartera||[]).find(x=>x.id===u.rol_cartera)||{}).nombre||u.rol_cartera)}</span>`:'<span class="muted">Sin acceso</span>';
+      const r=[esc(u.email),esc(u.nombre||''),insigniaRol(u.rol_pos),cardsTxt,carteraTxt,u.activo?'<span class="badge ok">Activo</span>':'<span class="badge neutral">Inactivo</span>',u.ultimo_login_at?new Date(u.ultimo_login_at).toLocaleString('es-MX'):'—'];
       r._onclick=()=>editUsuarioAdm(u,meta);return r;}),{empty:'Ningún usuario coincide.'}));
   };
   [q,sis,est].forEach(x=>{x.addEventListener('input',pintar);x.addEventListener('change',pintar);});
@@ -3585,19 +3614,24 @@ function editUsuarioAdm(u,meta){
   rolPos.value=u.rol_pos||'';
   const rolCards=el('select',{id:'auRolCards'},el('option',{value:''},'Sin acceso a Cards'),...meta.cards.map(r=>el('option',{value:r.id},r.nombre)));
   rolCards.value=u.rol_cards&&u.rol_pos!=='admin'?u.rol_cards:(nuevo&&!meta.puede_pos?'comercial':'');
+  const rolCartera=el('select',{id:'auRolCartera'},el('option',{value:''},'Sin acceso a Credit Solvendom'),...(meta.cartera||[]).map(r=>el('option',{value:r.id},r.nombre)));
+  rolCartera.value=u.rol_cartera&&u.rol_pos!=='admin'?u.rol_cartera:'';
   const nota=el('div',{class:'req-note','aria-live':'polite'});
   const refresca=()=>{
     const admin=rolPos.value==='admin';
     rolCards.disabled=admin;if(admin)rolCards.value='';
+    rolCartera.disabled=admin;if(admin)rolCartera.value='';
     nota.textContent=admin?'Un administrador tiene acceso total a Cards.':(rolCards.value?DESC_ROL_CARDS[rolCards.value]||'':'');
   };
   rolPos.addEventListener('change',refresca);rolCards.addEventListener('change',refresca);refresca();
   const activo=el('input',{id:'auActivo',type:'checkbox'});activo.checked=u.activo!==false;
   const yo=!nuevo&&SES&&u.id===SES.id;
-  if(yo){rolPos.disabled=true;rolCards.disabled=true;activo.disabled=true;}
+  if(yo){rolPos.disabled=true;rolCards.disabled=true;rolCartera.disabled=true;activo.disabled=true;}
   const body=el('div',{},fld('Correo (Google)',email),fld('Nombre',nombre));
   if(meta.puede_pos)body.append(fld('Rol en POS Settlement y Tareas Ops',rolPos));
-  body.append(fld('Rol en Polipay Cards Settlement',rolCards),nota,el('label',{class:'chk'},activo,' Activo (puede iniciar sesión)'),
+  body.append(fld('Rol en Polipay Cards Settlement',rolCards));
+  if(meta.puede_pos)body.append(fld('Rol en Credit Solvendom Settlement (crédito simple y revolvente)',rolCartera));
+  body.append(nota,el('label',{class:'chk'},activo,' Activo (puede iniciar sesión)'),
     el('div',{class:'req-note'},yo?'Es tu propio usuario: no puedes cambiar tus accesos ni desactivarte.':'El correo debe coincidir exactamente con la cuenta de Google del usuario. Marcar como inactivo bloquea el acceso sin borrar el registro. Al darlo de alta recibe un correo de bienvenida.'));
   const foot=el('div',{});
   if(!nuevo&&!yo)foot.append(el('button',{class:'btn danger',type:'button',style:'margin-right:auto',onclick:async()=>{
@@ -3612,7 +3646,7 @@ function editUsuarioAdm(u,meta){
   const guardar=el('button',{class:'btn',type:'button'},'Guardar');
   foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),guardar);
   guardar.onclick=async()=>{guardar.disabled=true;try{
-    const r=await api('POST','/api/usuarios',{id:u.id,email:email.value,nombre:nombre.value,rol_pos:meta.puede_pos?rolPos.value:'',rol_cards:rolCards.value,activo:activo.checked});
+    const r=await api('POST','/api/usuarios',{id:u.id,email:email.value,nombre:nombre.value,rol_pos:meta.puede_pos?rolPos.value:'',rol_cards:rolCards.value,rol_cartera:meta.puede_pos?rolCartera.value:undefined,activo:activo.checked});
     closeModal();
     if(nuevo){
       if(r.mail&&r.mail.ok)toast('Usuario creado y correo de bienvenida enviado','ok');

@@ -1,0 +1,105 @@
+/* ============================================================================
+   public/cartera/marca.css — Identidad Solvendom (Brand Guidelines 2026) aplicada SOLO al espacio «Credit Solvendom Settlement».
+   Se activa con <html data-ws="cartera">; el resto de los espacios no cambia. Mantiene el sistema de diseño de la aplicación (vidrio, tokens,
+   componentes) y solo cambia lo que el brandbook define: paleta café, tipografía (Spectral + Plus Jakarta Sans), geometría, efectos y fondo.
+
+   Paleta (brandbook p.16–17):  Obsidiana volcánica #1F1B16 · Blanco titanio #FAF8F3 · Sepia cálido #9A6B43 · Porcelana fina #EDE7DA ·
+   Arena #D9B98A · Marrón piedra caliza #E3C79B · Aluminio gris #CFCECE · Granito #6E665B · Nogal #5A4128.
+   ========================================================================= */
+@font-face{font-family:"Spectral";font-weight:300;font-style:normal;font-display:swap;src:url(/public/cartera/fonts/spectral-latin-300-normal.woff2) format("woff2")}
+@font-face{font-family:"Spectral";font-weight:400;font-style:normal;font-display:swap;src:url(/public/cartera/fonts/spectral-latin-400-normal.woff2) format("woff2")}
+@font-face{font-family:"Spectral";font-weight:400;font-style:italic;font-display:swap;src:url(/public/cartera/fonts/spectral-latin-400-italic.woff2) format("woff2")}
+@font-face{font-family:"Spectral";font-weight:600;font-style:normal;font-display:swap;src:url(/public/cartera/fonts/spectral-latin-600-normal.woff2) format("woff2")}
+@font-face{font-family:"Plus Jakarta Sans";font-weight:300;font-style:normal;font-display:swap;src:url(/public/cartera/fonts/plus-jakarta-sans-latin-300-normal.woff2) format("woff2")}
+@font-face{font-family:"Plus Jakarta Sans";font-weight:400;font-style:normal;font-display:swap;src:url(/public/cartera/fonts/plus-jakarta-sans-latin-400-normal.woff2) format("woff2")}
+@font-face{font-family:"Plus Jakarta Sans";font-weight:500;font-style:normal;font-display:swap;src:url(/public/cartera/fonts/plus-jakarta-sans-latin-500-normal.woff2) format("woff2")}
+@font-face{font-family:"Plus Jakarta Sans";font-weight:600;font-style:normal;font-display:swap;src:url(/public/cartera/fonts/plus-jakarta-sans-latin-600-normal.woff2) format("woff2")}
+@font-face{font-family:"Plus Jakarta Sans";font-weight:700;font-style:normal;font-display:swap;src:url(/public/cartera/fonts/plus-jakarta-sans-latin-700-normal.woff2) format("woff2")}
+
+/* ---------- Tokens (claro) ----------  :root repetido para ganarle a las paletas del sistema (data-palette) */
+:root:root:root[data-ws="cartera"]{
+  --serif:"Spectral",Georgia,"Times New Roman",serif;
+  --font:"Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --oxford:#1F1B16; --electrico:#9A6B43; --dodger:#5A4128; --capri:#D9B98A; --artico:#EDE7DA;
+  --brand:#1F1B16;
+  --accent:#9A6B43; --accent2:#D9B98A; --accent-soft:#EDE7DA;
+  --accent-fill:#9A6B43; --accent-fill-hi:#A87648;
+  --accent-ink:#7C5330; --focus:#9A6B43; --c-deep:#5A4128;
+  --sidebar-a:rgba(31,27,22,.97); --sidebar-b:rgba(90,65,40,.94);
+  --mesh1:rgba(154,107,67,.20); --mesh2:rgba(217,185,138,.22); --mesh3:rgba(90,65,40,.12);
+  --bg:#FAF8F3;
+  --panel:rgba(255,255,255,.72); --panel-strong:rgba(255,255,255,.92);
+  --glass-1:rgba(237,231,218,.40); --glass-2:rgba(255,255,255,.60); --glass-3:rgba(255,255,255,.78); --glass-4:rgba(255,255,255,.94);
+  --bar:rgba(250,248,243,.86); --glass-border:rgba(255,255,255,.65); --edge-hi:rgba(255,255,255,.65);
+  --line:rgba(90,65,40,.12); --line-strong:rgba(90,65,40,.20);
+  --scrim:rgba(31,27,22,.38); --fade:rgba(90,65,40,.10);
+  --strip:rgba(90,65,40,.05); --zebra:rgba(90,65,40,.02);
+  --ink:#1F1B16; --muted:#6E665B;
+  --soft-bg:#EDE7DA; --soft-ink:#5A4128; --c-neutral:#6E665B; --c-faint:#6E665B; --c-teal:#9A6B43; --c-indigo:#5A4128;
+  --shadow:0 8px 28px rgba(90,65,40,.09),0 1px 2px rgba(90,65,40,.06);
+  --shadow-lg:0 28px 70px rgba(31,27,22,.22),0 2px 6px rgba(31,27,22,.08);
+}
+/* ---------- Tokens (oscuro): fondo obsidiana, acentos en arena ---------- */
+@media (prefers-color-scheme:dark){
+  :root:root:root:not([data-theme="light"])[data-ws="cartera"]{
+    --brand:#F3EEE4; --accent:#D9B98A; --accent2:#E3C79B; --accent-soft:rgba(217,185,138,.14);
+    --accent-ink:#E3C79B; --focus:#E3C79B;
+    --bg:#14110D; --panel:rgba(38,32,25,.74); --panel-strong:rgba(42,35,27,.94);
+    --glass-1:rgba(255,255,255,.04); --glass-2:rgba(255,255,255,.07); --glass-3:rgba(255,255,255,.11); --glass-4:rgba(255,255,255,.15);
+    --bar:rgba(31,27,22,.86); --glass-border:rgba(255,255,255,.10); --edge-hi:rgba(255,255,255,.10);
+    --line:rgba(217,185,138,.14); --line-strong:rgba(217,185,138,.24);
+    --ink:#F3EEE4; --muted:#B7AD9C; --strip:rgba(255,255,255,.05); --zebra:rgba(255,255,255,.02);
+    --soft-bg:#2A231B; --soft-ink:#E3C79B; --c-neutral:#B7AD9C; --c-faint:#B7AD9C;
+    --mesh1:rgba(154,107,67,.22); --mesh2:rgba(217,185,138,.10); --mesh3:rgba(90,65,40,.20);
+  }
+}
+:root:root:root[data-theme="dark"][data-ws="cartera"]{
+  --brand:#F3EEE4; --accent:#D9B98A; --accent2:#E3C79B; --accent-soft:rgba(217,185,138,.14);
+  --accent-ink:#E3C79B; --focus:#E3C79B;
+  --bg:#14110D; --panel:rgba(38,32,25,.74); --panel-strong:rgba(42,35,27,.94);
+  --glass-1:rgba(255,255,255,.04); --glass-2:rgba(255,255,255,.07); --glass-3:rgba(255,255,255,.11); --glass-4:rgba(255,255,255,.15);
+  --bar:rgba(31,27,22,.86); --glass-border:rgba(255,255,255,.10); --edge-hi:rgba(255,255,255,.10);
+  --line:rgba(217,185,138,.14); --line-strong:rgba(217,185,138,.24);
+  --ink:#F3EEE4; --muted:#B7AD9C; --strip:rgba(255,255,255,.05); --zebra:rgba(255,255,255,.02);
+  --soft-bg:#2A231B; --soft-ink:#E3C79B; --c-neutral:#B7AD9C; --c-faint:#B7AD9C;
+  --mesh1:rgba(154,107,67,.22); --mesh2:rgba(217,185,138,.10); --mesh3:rgba(90,65,40,.20);
+}
+
+/* ---------- Tipografía: Spectral para títulos y cifras; Plus Jakarta Sans para el resto ---------- */
+html[data-ws="cartera"] body{font-family:var(--font)}
+html[data-ws="cartera"] #viewTitle{font-family:var(--serif);font-weight:400;font-size:clamp(26px,2.6vw,34px);letter-spacing:-.01em;color:var(--ink)}
+html[data-ws="cartera"] #viewSub{color:var(--muted)}
+html[data-ws="cartera"] .panel h3,html[data-ws="cartera"] .modal h3,html[data-ws="cartera"] .modal h2{font-family:var(--serif);font-weight:400;font-size:20px;letter-spacing:-.005em}
+html[data-ws="cartera"] .card .value{font-family:var(--serif);font-weight:400;letter-spacing:-.01em}
+html[data-ws="cartera"] .card .label,html[data-ws="cartera"] thead th,html[data-ws="cartera"] .sidebar .navlbl{letter-spacing:.09em}
+html[data-ws="cartera"] .card .label{color:var(--accent-ink);text-transform:uppercase;font-size:var(--fs-xs);font-weight:var(--fw-medium)}
+html[data-ws="cartera"] thead th{color:var(--accent-ink)}
+html[data-ws="cartera"] .cart-cards .value{font-size:clamp(19px,1.9vw,26px)}
+
+/* ---------- Barra lateral: «fondo gráfico» (café y negro con círculos concéntricos de baja opacidad) ---------- */
+html[data-ws="cartera"] .sidebar{
+  background:
+    repeating-radial-gradient(circle at 108% 104%,transparent 0 26px,rgba(255,255,255,.035) 26px 27px),
+    radial-gradient(120% 70% at 100% 100%,rgba(154,107,67,.38),transparent 62%),
+    linear-gradient(165deg,var(--sidebar-a),var(--sidebar-b));
+  color:#EDE7DA;
+}
+html[data-ws="cartera"] .sidebar .sub{color:rgba(227,199,155,.78)}
+html[data-ws="cartera"] .sidebar .navlbl{color:rgba(227,199,155,.70)}
+html[data-ws="cartera"] .sidebar nav a{color:rgba(237,231,218,.86)}
+html[data-ws="cartera"] .ws .ws-ic{background:linear-gradient(145deg,#A87648,#5A4128);font-family:var(--serif);font-weight:600;font-size:13px}
+
+/* ---------- Geometría y efectos: esquinas redondeadas, sombra suave y baja opacidad ---------- */
+html[data-ws="cartera"] .panel,html[data-ws="cartera"] .card{border-color:var(--line)}
+html[data-ws="cartera"] .btn:not(.secondary):not(.ghost):not(.danger){background:linear-gradient(145deg,#A87648,#8A5E39);box-shadow:0 6px 18px rgba(154,107,67,.28)}
+html[data-ws="cartera"] .btn.secondary,html[data-ws="cartera"] .btn.ghost{color:var(--accent-ink)}
+html[data-ws="cartera"] .sidebar .btn{color:#EDE7DA}
+
+/* ---------- Logotipo Solvendom (brandbook p.7–8): ícono + nombre en Spectral + SOFOM E.N.R. en Plus Jakarta Sans ---------- */
+.brand-solvendom{display:none;align-items:center;gap:10px;margin:4px var(--sp-2) 2px}
+html[data-ws="cartera"] .brand-solvendom{display:flex}
+html[data-ws="cartera"] .sidebar .brand-logo{display:none}
+.brand-solvendom .iso{width:34px;height:34px;flex:none;border-radius:9px;background:linear-gradient(145deg,#9A6B43 0%,#5A4128 100%);display:grid;place-items:center;color:#FAF8F3;font-family:"Spectral",Georgia,serif;font-size:21px;line-height:1;box-shadow:0 4px 12px rgba(0,0,0,.28)}
+.brand-solvendom .nom{display:flex;flex-direction:column;line-height:1}
+.brand-solvendom .nom b{font-family:"Spectral",Georgia,serif;font-weight:400;font-size:22px;letter-spacing:-.005em;color:#FAF8F3}
+.brand-solvendom .nom small{font-family:"Plus Jakarta Sans",sans-serif;font-weight:400;font-size:8.5px;letter-spacing:.34em;color:#D9B98A;margin-top:5px}
