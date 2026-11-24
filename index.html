@@ -6344,6 +6344,7 @@ async function vCardsEstructura(v){
       ?el('div',{},chipClabe(e.clabe_ef),el('small',{class:'muted',style:'display:block;margin-top:4px'},[e.beneficiario_ef,e.banco_nombre_ef].filter(Boolean).join(' · '),e.beneficiario_ef?'':el('span',{class:'badge warn',title:'Complétalo para poder compararlo con el CEP'},'Sin beneficiario')),
         e.cuenta_de?el('small',{class:'muted',style:'display:block'},'↳ Hereda la cuenta de '+e.cuenta_de_nombre):'')
       :el('div',{},el('span',{class:'badge warn'},'Sin cuenta de fondeo'));
+    if(can(e.nivel==='EMPRESA'?'cards_estructura':'cards_estr_un'))hij.push(el('button',{class:'btn ghost sm',type:'button',title:e.nivel==='EMPRESA'?'Corregir la estructura: convertir esta empresa en unidad de negocio de otra':'Corregir la estructura: moverla a otra empresa'+(e.nivel==='TARJETA'?' o unidad de negocio':''),onclick:ev=>{ev.stopPropagation();moverEntidad(e,ents);}},e.nivel==='EMPRESA'?'⇄ Pasar a unidad de negocio':'⇄ Mover'));
     const x=[nombre,cuenta,{num:pctTxt(e.comision_efectiva)+(e.hereda_comision&&e.nivel!=='EMPRESA'?' <small class="muted">hereda</small>':'')},{num:pctTxt(e.iva_efectivo)},{num:e.n_fondeos},
       e.activo?'<span class="badge ok">Activa</span>':'<span class="badge neutral">Inactiva</span>',el('div',{class:'acciones'},...hij)];
     if(can(e.nivel==='EMPRESA'?'cards_estructura':'cards_estr_un'))x._onclick=()=>editEntidad(e,null,ents);
@@ -6351,6 +6352,40 @@ async function vCardsEstructura(v){
   const p=el('div',{class:'panel'});
   p.append(tableWrap(['Nombre','Cuenta de fondeo',{t:'Comisión'},{t:'IVA'},{t:'Fondeos'},'Estado',''],filas,{empty:'Aún no hay empresas. Crea la primera con “+ Empresa”.'}));
   v.append(p);
+}
+
+/* Corregir la estructura: pasar una empresa a unidad de negocio de otra, o mover una unidad de negocio / tarjeta. Primero se revisa (no guarda) y luego se confirma. */
+async function moverEntidad(e,ents){
+  const desc=new Set([e.id]);let cambio=true;while(cambio){cambio=false;ents.forEach(x=>{if(x.parent_id!=null&&desc.has(x.parent_id)&&!desc.has(x.id)){desc.add(x.id);cambio=true;}});}
+  const dests=ents.filter(x=>x.activo&&!desc.has(x.id)&&x.id!==e.parent_id&&(e.nivel==='TARJETA'?x.nivel!=='TARJETA':x.nivel==='EMPRESA'));
+  const nom=x=>x.nivel==='TARJETA'&&x.correo_usuario?x.correo_usuario:x.nombre;
+  const etq=e.nivel==='EMPRESA'?'Será unidad de negocio de':(e.nivel==='UN'?'Mover a la empresa':'Mover a');
+  const sel=el('select',{id:'mvDestino'},el('option',{value:''},'Elige…'),...dests.map(x=>el('option',{value:String(x.id)},(x.nivel==='UN'?'   └ ':'')+(x.ruta||x.nombre)+(x.nivel==='UN'?' (unidad de negocio)':''))));
+  const out=el('div',{'aria-live':'polite',style:'margin-top:10px'});
+  const ok=el('button',{class:'btn',type:'button',disabled:true},e.nivel==='EMPRESA'?'Pasar a unidad de negocio':'Mover');
+  const intro=e.nivel==='EMPRESA'
+    ?'Úsalo cuando esta empresa se capturó por error y en realidad es una unidad de negocio de otra. Sus unidades de negocio pasan a colgar directo de la empresa que elijas y sus tarjetas se quedan con ella.'
+    :(e.nivel==='UN'?'La unidad de negocio se va con todas sus tarjetas a la empresa que elijas.':'La tarjeta se va a la empresa o unidad de negocio que elijas.');
+  const body=el('div',{},el('div',{class:'banner'},intro),el('div',{class:'req-note',style:'margin:6px 0'},el('b',{},CARDS_NIVEL[e.nivel]+': '),nom(e)),fld(etq,sel),out);
+  const revisar=async()=>{
+    ok.disabled=true;out.innerHTML='';if(!sel.value)return;
+    try{
+      const r=await api('POST','/api/cards/entidades/'+e.id+'/mover',{parent_id:+sel.value});const p=r.plan;
+      const li=[];
+      li.push(`<li><b>${esc(p.nombre)}</b> pasa a ${p.nivel_nuevo!==p.nivel?'ser <b>unidad de negocio</b> de':'depender de'} <b>${esc(p.destino.nombre)}</b>.</li>`);
+      if(p.subir&&p.subir.length)li.push(`<li>Sus unidades de negocio (${p.subir.map(esc).join(', ')}) pasan a colgar directo de <b>${esc(p.empresa_destino.nombre)}</b>.</li>`);
+      if(p.arrastra.tarjetas)li.push(`<li>${p.arrastra.tarjetas} tarjeta(s) se van con ella.</li>`);
+      if(p.arrastra.unidades&&!(p.subir&&p.subir.length))li.push(`<li>${p.arrastra.unidades} unidad(es) de negocio se van con ella.</li>`);
+      if(p.fondeos.total)li.push(`<li>Sus ${p.fondeos.total} fondeo(s) ya registrados pasan a la empresa <b>${esc(p.empresa_destino.nombre)}</b>${p.fondeos.en_proceso?` (${p.fondeos.en_proceso} en proceso)`:''}. Los cortes de comisión ya generados no cambian.</li>`);
+      if(p.conserva_comision)li.push(`<li>Conserva su comisión propia (${pctTxt(p.conserva_comision.comision_pct)}) e IVA (${pctTxt(p.conserva_comision.iva_pct==null?0:p.conserva_comision.iva_pct)}). Si prefieres que herede la de la empresa nueva, edítala después y déjala vacía.</li>`);
+      if(p.conserva_cuenta&&e.nivel==='EMPRESA')li.push('<li>Conserva su CLABE propia.</li>');
+      out.append(el('div',{class:'banner ok',html:'<b>Revisión:</b><ul style="margin:6px 0 0 18px">'+li.join('')+'</ul>'}));ok.disabled=false;
+    }catch(er){out.append(el('div',{class:'banner err'},errMsg(er)));}
+  };
+  sel.addEventListener('change',revisar);
+  const foot=el('div',{});foot.append(el('button',{class:'btn secondary',type:'button',onclick:closeModal},'Cancelar'),ok);
+  ok.onclick=async()=>{ok.disabled=true;try{const r=await api('POST','/api/cards/entidades/'+e.id+'/mover',{parent_id:+sel.value,confirmar:true});closeModal();toast('Estructura corregida','ok');render();}catch(er){toast(errMsg(er),'err');ok.disabled=false;}};
+  modal('Corregir estructura',body,foot);
 }
 
 /* Importar empresas desde Excel/CSV: primero se revisa (sin guardar nada) y luego se confirma. */
