@@ -248,7 +248,7 @@ function tabSolicitante(d) {
 }
 function tabExpediente(d) {
   const a = d.acciones, s = d.solicitud, cont = el('div', {});
-  const subir = tipo => { const f = el('input', { type: 'file', accept: '.pdf,.jpg,.jpeg,.png', style: 'display:none' }); f.addEventListener('change', async () => { if (!f.files[0]) return; const fd = new FormData(); fd.append('tipo', tipo); fd.append('archivo', f.files[0]); try { await withBusy('Subiendo documento…', () => call('POST', `/solicitudes/${s.id}/documentos`, fd)); toast('Documento cargado', 'ok'); render(); } catch (e) { falla(e); } }); f.click(); };
+  const subir = tipo => { const f = el('input', { type: 'file', accept: '.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.doc,.docx,.xls,.xlsx,.csv,.xml,.txt', style: 'display:none' }); f.addEventListener('change', async () => { if (!f.files[0]) return; const fd = new FormData(); fd.append('tipo', tipo); fd.append('archivo', f.files[0]); try { await withBusy('Subiendo documento…', () => call('POST', `/solicitudes/${s.id}/documentos`, fd)); toast('Documento cargado', 'ok'); render(); } catch (e) { falla(e); } }); f.click(); };
   const revisar = (tipo, estado) => {
     const done = async c => { try { await call('PATCH', `/solicitudes/${s.id}/documentos`, { tipo, estado, comentario: c }); closeModal(); toast(estado === 'validado' ? 'Documento validado' : 'Documento rechazado', 'ok'); render(); } catch (e) { falla(e); } };
     if (estado === 'validado') return done('');
@@ -261,7 +261,7 @@ function tabExpediente(d) {
     if (a.validar_docs && x.tiene_archivo && x.estado !== 'validado') acc.append(el('button', { class: 'btn ok sm', onclick: () => revisar(x.tipo, 'validado') }, 'Validar'));
     if (a.validar_docs && x.tiene_archivo && x.estado !== 'rechazado') acc.append(el('button', { class: 'btn danger sm', onclick: () => revisar(x.tipo, 'rechazado') }, 'Rechazar'));
     return [esc(x.tipo), badge(DOC_CLS[x.estado], x.estado[0].toUpperCase() + x.estado.slice(1)), x.tiene_archivo ? `${esc(x.archivo_nombre || '')}<small class="muted" style="display:block">${Math.round((x.archivo_tam || 0) / 1024)} KB · ${esc(x.subido_por || '')} · ${fF(x.subido_at)}</small>` : '<span class="muted">Sin archivo</span>', x.vigencia ? fD(x.vigencia) : '—', esc(x.comentario || ''), acc];
-  }), { empty: 'Sin documentos requeridos.' }), el('div', { class: 'muted', style: 'font-size:12px;margin-top:8px' }, 'Se aceptan PDF, JPG o PNG de hasta 8 MB. Los archivos se guardan cifrados y cada descarga queda en la bitácora. Quien sube un documento no puede validarlo.')));
+  }), { empty: 'Sin documentos requeridos.' }), el('div', { class: 'muted', style: 'font-size:12px;margin-top:8px' }, 'Se aceptan PDF, imágenes (JPG, PNG, WEBP, HEIC), Word, Excel, CSV y XML de hasta 15 MB. Los archivos se guardan cifrados y cada descarga queda en la bitácora. Quien sube un documento no puede validarlo.')));
   return cont;
 }
 function tabPld(d) {

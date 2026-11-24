@@ -38,7 +38,8 @@ async function arrancar() {
     let j = null; try { j = await r.json(); } catch (_e) { /* descarga */ }
     return { s: r.status, j };
   };
-  return { pg, db, api, cerrar: async () => { srv.close(); await pg.close(); } };
+  const bajar = async (u, ruta) => { const r = await fetch(base + '/api/cartera/mc' + ruta, { headers: { 'x-u': u } }); return { s: r.status, tipo: r.headers.get('content-type'), buf: Buffer.from(await r.arrayBuffer()) }; };
+  return { pg, db, api, bajar, cerrar: async () => { srv.close(); await pg.close(); } };
 }
 
 const PROD = { clave: 'pyme_test', nombre: 'PyME de prueba', tipo: 'simple', monto_min: 10000, monto_max: 800000, plazo_min: 3, plazo_max: 36, tasa_min: 0.2, tasa_max: 0.5, tasa_default: 0.36, periodicidades: ['mensual'], comision_apertura: 0.02 };
@@ -246,6 +247,28 @@ test('mesa de control: listas PLD (importar CSV, retirar) y ejemplos', async () 
     const b = await api('ad', 'DELETE', '/ejemplos'); assert.equal(b.j.solicitudes, 10); assert.equal(b.j.creditos, 3); assert.equal((await api('ad', 'GET', '/creditos')).j.total, 0);
     assert.equal((await api('ad', 'GET', '/solicitudes')).j.total, 0);
     assert.equal((await api('ad', 'GET', '/bitacora/verificar')).j.ok, true, 'la bitácora conserva y sigue íntegra');
+  } finally { await cerrar(); }
+});
+
+test('mesa de control: los archivos del expediente se guardan y se bajan idénticos (binarios, varios tipos, con y sin llaves de cifrado)', async () => {
+  const { api, bajar, cerrar } = await arrancar();
+  try {
+    const prod = (await api('ad', 'POST', '/productos', PROD)).j.id;
+    const id = (await api('ej', 'POST', '/solicitudes', solicitud(prod, 100000))).j.id;
+    const d = (await api('ej', 'GET', '/solicitudes/' + id)).j;
+    const binario = n => { const b = Buffer.alloc(n); for (let i = 0; i < n; i++) b[i] = (i * 7 + 13) % 256; b[0] = 0x25; b[1] = 0x50; return b; };   // incluye todos los bytes, también los mayores a 0x7f
+    const casos = [['a.pdf', 'application/pdf', binario(300000)], ['b.jpg', 'image/jpeg', binario(5000)], ['c.xlsx', 'application/octet-stream', binario(40000)], ['d.heic', '', binario(2000)], ['e.docx', 'application/zip', binario(1000)]];
+    for (let i = 0; i < casos.length; i++) {
+      const [nombre, mime, buf] = casos[i], tipo = d.documentos[i].tipo;
+      const f = new FormData(); f.append('tipo', tipo); f.append('archivo', new Blob([buf], { type: mime }), nombre);
+      const r = await api('ej', 'POST', `/solicitudes/${id}/documentos`, f); assert.equal(r.s, 200, nombre + ' ' + JSON.stringify(r.j));
+      const g = await bajar('ej', `/solicitudes/${id}/documentos/archivo?tipo=${encodeURIComponent(tipo)}`);
+      assert.equal(g.s, 200, nombre); assert.ok(g.buf.equals(buf), `${nombre}: el archivo bajado debe ser idéntico byte por byte`);
+    }
+    const mal = new FormData(); mal.append('tipo', d.documentos[5].tipo); mal.append('archivo', new Blob([Buffer.from('MZ')], { type: 'application/octet-stream' }), 'virus.exe');
+    assert.equal((await api('ej', 'POST', `/solicitudes/${id}/documentos`, mal)).s, 400, 'un ejecutable no se acepta');
+    const dd = (await api('ej', 'GET', '/solicitudes/' + id)).j;
+    assert.equal(dd.documentos.filter(x => x.tiene_archivo).length, 5);
   } finally { await cerrar(); }
 });
 void pdf;
