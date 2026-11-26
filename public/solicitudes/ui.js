@@ -5,7 +5,7 @@
    ============================================================================ */
 (function () {
 'use strict';
-const SC = { yo: null, sel: null, nuevo: null, cat: {}, lista: { q: '', estado: 'abiertas', tipo: '', id_grupo: '', vencidas: false, pagina: 1 }, cliente: null };
+const SC = { yo: null, sel: null, nuevo: null, cat: {}, lista: { q: '', estado: 'abiertas', tipo: '', id_grupo: '', vencidas: false, desde: '', hasta: '', pagina: 1 }, cliente: null };
 const call = (m, p, b) => api(m, '/api/sc' + p, b);
 const fF = iso => iso ? new Date(iso).toLocaleString('es-MX', { timeZone: 'America/Mexico_City', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
 const fFecha = iso => iso ? new Date(iso).toLocaleDateString('es-MX', { timeZone: 'America/Mexico_City', day: '2-digit', month: 'short', year: 'numeric' }) : '—';
@@ -90,18 +90,20 @@ async function vLista(v) {
   const L = SC.lista; v.innerHTML = '';
   const cli = yo.rol === 'cliente';
   if (yo.puede_crear) cardsAcciones(el('button', { class: 'btn', onclick: () => go('sc_nueva') }, '+ Nueva solicitud'));
-  const q = el('input', { type: 'search', placeholder: 'Buscar por folio, nombre o afiliación…', value: L.q, style: 'min-width:240px', 'aria-label': 'Buscar' });
+  const q = el('input', { type: 'search', placeholder: 'Folio, nombre o afiliación…', value: L.q, 'aria-label': 'Buscar' });
   const grupos = new Map(); (yo.orden || []).forEach(e => { const n = cli ? yo.estados[e].cliente : yo.estados[e].nombre; grupos.set(n, (grupos.get(n) || []).concat(e)); });
   const est = el('select', { 'aria-label': 'Estado' }, el('option', { value: '' }, 'Todos los estados'), el('option', { value: 'abiertas' }, 'Abiertas'), ...[...grupos].map(([n, es]) => el('option', { value: es.join(',') }, n)));
   const tp = el('select', { 'aria-label': 'Tipo' }, el('option', { value: '' }, 'Todos los tipos'), ...(yo.tipos || []).map(t => el('option', { value: t.id }, t.corto)));
-  const gr = el('select', { 'aria-label': 'Cliente' }, el('option', { value: '' }, 'Todos los clientes'), ...(yo.grupos || []).map(g => el('option', { value: String(g.id_grupo) }, g.nombre)));
-  const vc = el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'scVenc' }), ' Solo vencidas');
+  const gr = el('select', { 'aria-label': 'Unidad de negocio' }, el('option', { value: '' }, 'Todas las unidades de negocio'), ...(yo.grupos || []).map(g => el('option', { value: String(g.id_grupo) }, g.nombre)));
+  const vc = el('label', { class: 'chk', style: 'white-space:nowrap;flex:none' }, el('input', { type: 'checkbox', id: 'scVenc', style: 'flex:none;min-width:0;width:16px' }), ' Solo vencidas');
   est.value = L.estado; tp.value = L.tipo; gr.value = L.id_grupo; vc.querySelector('input').checked = L.vencidas;
-  const barra = el('div', { class: 'filters', style: 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center' }, q, est, tp, ...(cli && yo.grupos.length < 2 ? [] : [gr]), ...(cli ? [] : [vc]));
+  const fe = filtroFechas({ desde: L.desde, hasta: L.hasta, titulo: 'Fechas', onChange: (d, h) => { L.desde = d; L.hasta = h; L.pagina = 1; pintar(); } });
+  const limpiar = el('button', { class: 'btn ghost sm', onclick: () => { Object.assign(L, { q: '', estado: 'abiertas', tipo: '', id_grupo: '', vencidas: false, desde: '', hasta: '', pagina: 1 }); vLista(v); } }, 'Limpiar');
+  const barra = el('div', { class: 'filters cards-filtros' }, q, est, tp, ...(cli && yo.grupos.length < 2 ? [] : [gr]), fe, ...(cli ? [] : [vc]), limpiar);
   const cont = el('div', {}); v.append(barra, cont);
   let t0 = null;
   const pintar = async () => {
-    const p = new URLSearchParams({ pagina: L.pagina }); if (L.q) p.set('q', L.q); if (L.estado) p.set('estado', L.estado); if (L.tipo) p.set('tipo', L.tipo); if (L.id_grupo) p.set('id_grupo', L.id_grupo); if (L.vencidas) p.set('vencidas', '1');
+    const p = new URLSearchParams({ pagina: L.pagina }); if (L.q) p.set('q', L.q); if (L.estado) p.set('estado', L.estado); if (L.tipo) p.set('tipo', L.tipo); if (L.id_grupo) p.set('id_grupo', L.id_grupo); if (L.vencidas) p.set('vencidas', '1'); if (L.desde) p.set('desde', L.desde); if (L.hasta) p.set('hasta', L.hasta);
     let r; try { r = await call('GET', '/solicitudes?' + p); } catch (e) { cont.innerHTML = ''; cont.append(nota('err', esc(errMsg(e)))); return; }
     cont.innerHTML = '';
     cont.append(tableWrap(['Folio', 'Solicitud', cli ? '' : 'Cliente', 'Estado', 'Enviada', 'Vence', ''], r.filas.map(s => { const row = [esc(s.folio), `<b>${esc(s.tipo_nombre)}</b><small class="muted" style="display:block">${esc(s.titulo || '—')}</small>`, cli ? '' : esc(s.cliente || ''), chipEstado(s.estado, s.estado_nombre) + (s.critica && !cli ? ' ' + badge('violet', 'Crítica') : ''), fFecha(s.enviada_at), s.vence_at ? `${fFecha(s.vence_at)}${s.vencida ? ' ' + badge('danger', 'Vencida') : ''}` : '—', '']; row._onclick = () => abrir(s.id); return row; }),
@@ -125,9 +127,10 @@ async function vNueva(v) {
   const grupos = (yo.grupos || []).filter(g => g.portal || yo.rol === 'cliente' || yo.staff);   // el personal ve todas las unidades de negocio (grupos de cliente), tengan o no el portal activo
   let idGrupo = SC.cliente || (grupos[0] && grupos[0].id_grupo) || '';
   if (yo.rol !== 'cliente' || grupos.length > 1) {
-    const sel = el('select', { id: 'scNuevoGrupo', 'aria-label': 'Unidad de negocio (grupo de cliente)' }, ...grupos.map(g => el('option', { value: String(g.id_grupo) }, g.nombre + (g.portal || yo.rol === 'cliente' ? '' : ' · sin portal'))));
+    const sel = el('select', { id: 'scNuevoGrupo', 'aria-label': 'Unidad de negocio (grupo de cliente)', style: 'width:auto;min-width:260px;max-width:100%' }, ...grupos.map(g => el('option', { value: String(g.id_grupo) }, g.nombre + (g.portal || yo.rol === 'cliente' ? '' : ' · sin portal'))));
     sel.value = String(idGrupo); sel.addEventListener('change', () => { SC.cliente = Number(sel.value); });
-    v.append(panel('¿Para qué unidad de negocio?', sel, el('div', { class: 'req-note', style: 'margin-top:8px' }, 'Cada unidad de negocio es un grupo de cliente de POS; después eliges bajo cuál de sus afiliaciones o razones sociales va la solicitud.')));
+    v.append(el('div', { class: 'panel', style: 'display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:16px 20px' },
+      el('div', { style: 'flex:1 1 280px;min-width:0' }, el('div', { style: 'font-weight:600' }, '¿Para qué unidad de negocio?'), el('div', { class: 'req-note', style: 'margin:2px 0 0' }, 'Cada una es un grupo de cliente de POS; después eliges bajo cuál de sus afiliaciones o razones sociales va.')), sel));
     SC.cliente = Number(sel.value || 0) || null;
   } else SC.cliente = idGrupo;
   if (!grupos.length) { v.append(nota('warn', yo.rol === 'cliente' ? 'Tu acceso al portal está desactivado. Habla con tu Ejecutivo Comercial.' : 'No hay unidades de negocio disponibles. Revisa los grupos de cliente en POS.')); return; }
@@ -611,7 +614,8 @@ async function vAlta(v) {
     const sg = el('select', { id: 'scAltaGrupo', 'aria-label': 'Unidad de negocio (grupo de cliente)' }, ...disponibles.map(g => el('option', { value: String(g.id_grupo) }, g.nombre + (g.portal || cli ? '' : ' · sin portal'))));
     sg.value = String(SC.nuevo.id_grupo);
     sg.addEventListener('change', () => { const pre = { ...ctx.d }; ['afil_principal', 'unidad_negocio', 'liq_banco', 'liq_clabe', 'liq_titular', 'nivel_empresas', 'nivel_udn', 'nivel_comercios', 'id_sub'].forEach(k => delete pre[k]); SC.nuevo.pre = pre; SC.nuevo.id_grupo = Number(sg.value); SC.cliente = SC.nuevo.id_grupo; render(); });
-    cab.append(el('label', { class: 'field', style: 'margin-top:12px;max-width:520px' }, 'Unidad de negocio (grupo de cliente)', sg, el('span', { class: 'req-note' }, 'Al cambiarla se muestran las afiliaciones con las que opera, con sus tasas, cuenta de liquidación y comercios.')));
+    sg.style.cssText = 'width:auto;min-width:260px;max-width:100%';
+    cab.append(el('div', { style: 'display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)' }, el('div', { style: 'flex:1 1 260px;min-width:0' }, el('div', { style: 'font-weight:600;font-size:var(--fs-md)' }, 'Unidad de negocio (grupo de cliente)'), el('div', { class: 'req-note', style: 'margin:2px 0 0' }, 'Al cambiarla se muestran las afiliaciones con las que opera, con sus tasas, cuenta y comercios.')), sg));
   }
   v.append(cab);
   if (cat.acotado) v.append(nota('', 'Tu acceso está acotado a ' + (cat.unidades.map(u => u.nombre).join(', ') || 'algunas afiliaciones') + '. Solo verás y podrás pedir lo de ellas.'));
@@ -717,13 +721,14 @@ async function vRegistro(v) {
   const yo = await base(); v.innerHTML = '';
   const par = () => { const p = new URLSearchParams(); Object.entries(REG).forEach(([k, x]) => { if (x && k !== 'pagina') p.set(k, x); }); return p; };
   cardsAcciones(el('button', { class: 'btn', onclick: () => descargar('/api/sc/registro.xlsx?' + par(), 'registro-solicitudes.xlsx').catch(falla) }, 'Descargar registro (Excel)'));
-  const campoF = (label, nodo) => el('label', { class: 'field', style: 'min-width:150px' }, label, nodo);
-  const desde = el('input', { type: 'date', value: REG.desde }), hasta = el('input', { type: 'date', value: REG.hasta }), q = el('input', { type: 'search', placeholder: 'Folio, nombre, afiliación…', value: REG.q });
-  const tp = el('select', {}, el('option', { value: '' }, 'Todos'), ...(yo.tipos || []).map(t => el('option', { value: t.id }, t.corto))); tp.value = REG.tipo;
-  const es = el('select', {}, el('option', { value: '' }, 'Todos'), ...(yo.orden || []).map(e => el('option', { value: e }, yo.estados[e].nombre))); es.value = REG.estado;
-  const gr = el('select', {}, el('option', { value: '' }, 'Todos'), ...(yo.grupos || []).map(g => el('option', { value: String(g.id_grupo) }, g.nombre))); gr.value = REG.id_grupo;
+  const q = el('input', { type: 'search', placeholder: 'Folio, nombre, afiliación…', value: REG.q, 'aria-label': 'Buscar' });
+  const tp = el('select', { 'aria-label': 'Tipo' }, el('option', { value: '' }, 'Todos los tipos'), ...(yo.tipos || []).map(t => el('option', { value: t.id }, t.corto))); tp.value = REG.tipo;
+  const es = el('select', { 'aria-label': 'Estado' }, el('option', { value: '' }, 'Todos los estados'), ...(yo.orden || []).map(e => el('option', { value: e }, yo.estados[e].nombre))); es.value = REG.estado;
+  const gr = el('select', { 'aria-label': 'Unidad de negocio' }, el('option', { value: '' }, 'Todas las unidades de negocio'), ...(yo.grupos || []).map(g => el('option', { value: String(g.id_grupo) }, g.nombre))); gr.value = REG.id_grupo;
+  const fe = filtroFechas({ desde: REG.desde, hasta: REG.hasta, titulo: 'Fechas', onChange: (d, h) => { REG.desde = d; REG.hasta = h; REG.pagina = 1; pintar(); } });
+  const limpiar = el('button', { class: 'btn ghost sm', onclick: () => { Object.assign(REG, { desde: '', hasta: '', tipo: '', estado: '', id_grupo: '', q: '', pagina: 1 }); vRegistro(v); } }, 'Limpiar');
   v.append(nota('', 'Aquí queda el registro de <b>todas</b> las solicitudes, de cualquier tipo y estado, con su historial. Filtra y descarga el Excel (una hoja general y una por tipo con todos sus datos) para tus bitácoras.'));
-  v.append(el('div', { class: 'filters', style: 'display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;align-items:end' }, campoF('Desde', desde), campoF('Hasta', hasta), campoF('Tipo', tp), campoF('Estado', es), campoF('Cliente', gr), campoF('Buscar', q)));
+  v.append(el('div', { class: 'filters cards-filtros' }, q, tp, es, gr, fe, limpiar));
   const cont = el('div', {}); v.append(cont); let t0 = null;
   const pintar = async () => {
     const p = par(); p.set('pagina', REG.pagina);
@@ -734,8 +739,8 @@ async function vRegistro(v) {
     const paginas = Math.max(1, Math.ceil(r.total / r.por));
     if (r.total > r.por) cont.append(el('div', { style: 'display:flex;gap:8px;align-items:center;justify-content:flex-end' }, el('button', { class: 'btn ghost sm', disabled: REG.pagina <= 1 ? 'true' : null, onclick: () => { REG.pagina--; pintar(); } }, '← Anterior'), el('span', { class: 'muted', style: 'font-size:12px' }, `Página ${REG.pagina} de ${paginas}`), el('button', { class: 'btn ghost sm', disabled: REG.pagina >= paginas ? 'true' : null, onclick: () => { REG.pagina++; pintar(); } }, 'Siguiente →')));
   };
-  const cambio = () => { Object.assign(REG, { desde: desde.value, hasta: hasta.value, tipo: tp.value, estado: es.value, id_grupo: gr.value, q: q.value, pagina: 1 }); pintar(); };
-  q.addEventListener('input', () => { clearTimeout(t0); t0 = setTimeout(cambio, 300); }); [desde, hasta, tp, es, gr].forEach(x => x.addEventListener('change', cambio));
+  const cambio = () => { Object.assign(REG, { tipo: tp.value, estado: es.value, id_grupo: gr.value, q: q.value, pagina: 1 }); pintar(); };
+  q.addEventListener('input', () => { clearTimeout(t0); t0 = setTimeout(cambio, 300); }); [tp, es, gr].forEach(x => x.addEventListener('change', cambio));
   pintar();
 }
 
