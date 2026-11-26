@@ -32,6 +32,8 @@ create table if not exists sc_contactos (
   creado_at     timestamptz not null default now(),
   primary key (usuario_id, id_grupo)
 );
+-- tipo: 'cliente' (persona del cliente, usuario con rol 'cliente') o 'account_manager' (uso interno: persona de Polipay que pide a nombre de la unidad de negocio).
+alter table sc_contactos add column if not exists tipo text not null default 'cliente';
 create index if not exists idx_sc_contactos_grupo on sc_contactos(id_grupo);
 
 create sequence if not exists sc_folio_seq;

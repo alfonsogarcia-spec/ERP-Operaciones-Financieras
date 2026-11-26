@@ -440,3 +440,40 @@ test('una afiliación puede estar en varias unidades de negocio (grupos): cada g
     assert.equal((await rev(s2)).solicitud.datos.liq_banco, 'BANAMEX', 'la concentradora es la del grupo 8102');
   } finally { await cerrar(); }
 });
+
+test('contactos de tipo account manager (uso interno): ven la unidad de negocio y lo que piden pasa directo a Operación', async () => {
+  const { pg, api, cerrar } = await arrancar({ sinCorreo: true });
+  try {
+    const A = (u, id, accion, comentario) => api(u, 'POST', `/solicitudes/${id}/accion`, { accion, comentario });
+    // com2 es Comercial de OTRO cliente: no ve el 8101 hasta que se le da de alta como account manager
+    assert.equal((await api('com2', 'GET', '/catalogo?id_grupo=8101')).s, 403);
+    const alta = await api('com', 'POST', '/clientes/8101/contactos', { nombre: 'Comercial Dos', email: 'com2@polipay.test', tipo: 'account_manager', puesto: 'Account manager' });
+    assert.equal(alta.s, 201, JSON.stringify(alta.j));
+    assert.equal((await api('com2', 'GET', '/catalogo?id_grupo=8101')).s, 200, 'ya ve la unidad de negocio');
+    assert.ok((await api('com2', 'GET', '/yo')).j.grupos.some(g => g.id_grupo === 8101));
+    const lista = (await api('com', 'GET', '/clientes/8101/contactos')).j; assert.equal(lista.find(c => c.email === 'com2@polipay.test').tipo, 'account_manager'); assert.equal(lista.find(c => c.email === 'cliente@norte.test').tipo, 'cliente');
+    // una persona nueva de Polipay: usuario interno con rol Comercial en el portal (no un usuario de cliente)
+    const nuevo = await api('com', 'POST', '/clientes/8101/contactos', { nombre: 'AM Nuevo', email: 'am.nuevo@polipay.test', tipo: 'account_manager' }); assert.equal(nuevo.s, 201);
+    const u = (await pg.query("select rol, rol_solicitudes from usuarios where lower(email) = 'am.nuevo@polipay.test'")).rows[0]; assert.equal(u.rol, 'solicitudes'); assert.equal(u.rol_solicitudes, 'comercial');
+    // no se mezclan: un contacto de cliente no puede ser account manager ni al revés
+    assert.equal((await api('com', 'POST', '/clientes/8101/contactos', { nombre: 'X', email: 'cliente@norte.test', tipo: 'account_manager' })).s, 409);
+    assert.equal((await api('com', 'POST', '/clientes/8101/contactos', { nombre: 'X', email: 'am.nuevo@polipay.test', tipo: 'cliente' })).s, 409);
+    assert.equal((await api('com', 'POST', '/clientes/8101/contactos', { nombre: 'X', email: 'op@polipay.test', tipo: 'account_manager' })).s, 409, 'quien tiene otro rol del portal no puede ser account manager');
+    // lo que pide un account manager y no necesita parte comercial va directo a Operación
+    const s1 = (await api('com2', 'POST', '/solicitudes', { tipo: 'alta_subafiliado', id_grupo: 8101, datos: SUB })).j.id;
+    const e1 = await A('com2', s1, 'enviar'); assert.equal(e1.s, 200, JSON.stringify(e1.j)); assert.equal(e1.j.estado, 'operacion');
+    const d1 = (await api('op', 'GET', '/solicitudes/' + s1)).j; assert.equal(d1.solicitud.estado, 'operacion'); assert.equal(d1.solicitud.liberada_por, 'com2@polipay.test');
+    assert.match(d1.eventos.map(e => e.detalle).join(' | '), /no requiere otra revisión de Comercial/);
+    assert.equal((await A('op', s1, 'tomar')).s, 200); assert.equal((await A('op', s1, 'ejecutar')).s, 200);
+    // si falta la parte comercial (checklist de un cambio), la completa él mismo y la libera: no hay otra persona que la revise
+    const DAT = { afil_principal: '8100101', id_sub: 'SUB-1', tipo_mod: ['Domicilio de la sucursal'], campo: 'Domicilio', dato_actual: 'Calle 1', dato_nuevo: 'Calle 2', justificacion: 'Se mudó la sucursal' };
+    const s2 = (await api('com2', 'POST', '/solicitudes', { tipo: 'cambio_datos_sub', id_grupo: 8101, datos: DAT })).j.id;
+    assert.equal((await A('com2', s2, 'enviar')).j.estado, 'revision_comercial', 'con parte comercial pendiente espera a que él la complete');
+    // lo que pide el cliente sí pasa por la revisión de Comercial
+    const s3 = (await api('cli', 'POST', '/solicitudes', { tipo: 'alta_subafiliado', datos: { ...SUB, nombre_comercial: 'Otra Sucursal' } })).j.id;
+    assert.equal((await A('cli', s3, 'enviar')).j.estado, 'revision_comercial');
+    // al quitarlo del contacto pierde la unidad
+    assert.equal((await api('com', 'PUT', `/clientes/8101/contactos/${U.com2.sub}`, { activo: false })).s, 200);
+    assert.equal((await api('com2', 'GET', '/catalogo?id_grupo=8101')).s, 403);
+  } finally { await cerrar(); }
+});

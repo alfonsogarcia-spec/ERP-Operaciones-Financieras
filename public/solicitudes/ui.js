@@ -668,14 +668,20 @@ async function dlgCliente(c, ejecutivos, yo, tab) {
 
   if (tab === 'contactos') {
     const resumen = p => !p.unidades.length ? '<span class="muted">Todas las afiliaciones</span>' : esc(p.unidades.map(nombreUn).filter(Boolean).join(', '));
-    const lista = tableWrap(['Nombre', 'Correo', 'Acceso', 'Estado', ''], cont.map(p => { const acc = el('div', { class: 'acciones' },
-      el('button', { class: 'btn ghost sm', onclick: () => dlgAcceso(c, un, p, () => recarga('contactos', 'Acceso guardado')) }, 'Acceso'),
+    const esAM = p => p.tipo === 'account_manager';
+    const lista = tableWrap(['Nombre', 'Tipo', 'Correo', 'Acceso', 'Estado', ''], cont.map(p => { const acc = el('div', { class: 'acciones' },
+      ...(esAM(p) ? [] : [el('button', { class: 'btn ghost sm', onclick: () => dlgAcceso(c, un, p, () => recarga('contactos', 'Acceso guardado')) }, 'Acceso')]),
       el('button', { class: 'btn ghost sm', onclick: async () => { try { await call('PUT', `/clientes/${c.id_grupo}/contactos/${p.usuario_id}`, { activo: !p.activo }); recarga('contactos', p.activo ? 'Contacto desactivado' : 'Contacto activado'); } catch (e) { falla(e); } } }, p.activo ? 'Desactivar' : 'Activar'));
-      return [`${esc(p.nombre)}<small class="muted" style="display:block">${esc(p.puesto || '')}</small>`, esc(p.email), resumen(p), p.activo ? badge('ok', 'Activo') : badge('neutral', 'Inactivo'), acc]; }), { empty: 'Aún no hay contactos.' });
+      return [`${esc(p.nombre)}<small class="muted" style="display:block">${esc(p.puesto || '')}</small>`, esAM(p) ? badge('info', 'Account manager', 'Uso interno: persona de Polipay') : badge('neutral', 'Cliente'), esc(p.email), esAM(p) ? '<span class="muted">Toda la unidad de negocio</span>' : resumen(p), p.activo ? badge('ok', 'Activo') : badge('neutral', 'Inactivo'), acc]; }), { empty: 'Aún no hay contactos.' });
     const nombre = el('input', { id: 'sccNombre', maxlength: '120', placeholder: 'Nombre completo' }), email = el('input', { id: 'sccEmail', type: 'email', placeholder: 'correo@cliente.com (cuenta de Google)' }), puesto = el('input', { id: 'scPuesto', maxlength: '80', placeholder: 'Puesto (opcional)' });
+    const tipo = el('select', { id: 'sccTipo' }, el('option', { value: 'cliente' }, 'Cliente (externo)'), el('option', { value: 'account_manager' }, 'Account manager (uso interno)'));
     const acceso = selectorUnidades(un, []);
-    const add = el('button', { class: 'btn', onclick: async () => { add.disabled = true; try { const r = await call('POST', `/clientes/${c.id_grupo}/contactos`, { nombre: nombre.value, email: email.value, puesto: puesto.value, unidades: acceso.valor() }); recarga('contactos', r.aviso ? 'Contacto agregado y avisado por correo' : 'Contacto agregado'); } catch (e) { falla(e); add.disabled = false; } } }, 'Agregar contacto');
-    cuerpo = el('div', {}, lista, el('h4', { style: 'margin:14px 0 6px' }, 'Agregar contacto'), el('div', { class: 'form-grid' }, el('label', { class: 'field' }, 'Nombre', nombre), el('label', { class: 'field' }, 'Correo de Google', email), el('label', { class: 'field' }, 'Puesto', puesto)),
+    const ayudaTipo = el('div', { class: 'req-note', style: 'margin-top:6px' });
+    const cambiaTipo = () => { const am = tipo.value === 'account_manager'; acceso.nodo.style.display = am ? 'none' : ''; email.placeholder = am ? 'correo@polipay.io (cuenta de Google de Polipay)' : 'correo@cliente.com (cuenta de Google)';
+      ayudaTipo.textContent = am ? 'Es personal de Polipay: pide solicitudes a nombre de esta unidad de negocio y, como las pide Comercial, pasan directo a Operación sin otra revisión.' : 'Es una persona del cliente: entra con Google y solo ve esta unidad de negocio; sus solicitudes las revisa Comercial.'; };
+    tipo.addEventListener('change', cambiaTipo); cambiaTipo();
+    const add = el('button', { class: 'btn', onclick: async () => { add.disabled = true; try { const r = await call('POST', `/clientes/${c.id_grupo}/contactos`, { nombre: nombre.value, email: email.value, puesto: puesto.value, tipo: tipo.value, unidades: acceso.valor() }); recarga('contactos', r.aviso ? 'Contacto agregado y avisado por correo' : 'Contacto agregado'); } catch (e) { falla(e); add.disabled = false; } } }, 'Agregar contacto');
+    cuerpo = el('div', {}, lista, el('h4', { style: 'margin:14px 0 6px' }, 'Agregar contacto'), el('div', { class: 'form-grid' }, el('label', { class: 'field' }, 'Tipo de contacto', tipo), el('label', { class: 'field' }, 'Nombre', nombre), el('label', { class: 'field' }, 'Correo de Google', email), el('label', { class: 'field' }, 'Puesto', puesto)), ayudaTipo,
       el('div', { style: 'margin-top:8px' }, acceso.nodo), el('div', { style: 'margin-top:10px' }, add));
   }
   modal(c.nombre, el('div', {}, tabs, cuerpo), pie, true);
