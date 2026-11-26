@@ -18,12 +18,12 @@ Cliente captura y sube documentos → **Comercial revisa** (completa condiciones
 (afiliación, token, MCC, prueba…) → **Coordinación** valida (y la **Dirección** si aplica) → Completada. Se puede rechazar o cancelar con motivo.
 El cliente ve estados simples («En revisión», «Necesita tu información», «En proceso», «Completada») y solo lo que le corresponde; el token de activación nunca se le muestra.
 
-## Unidades de negocio del cliente y acceso por correo
-Las unidades de negocio **salen solas del catálogo de POS** (grupo de cliente → sus afiliaciones, con sus comercios): una afiliación nueva en POS aparece sin hacer nada.
-En «Clientes y contactos», cada cliente tiene tres pestañas: **General** (Ejecutivo Comercial y portal activo), **Unidades de negocio** y **Contactos**.
-- Se pueden renombrar, agrupar, agregar o desactivar; «Actualizar desde POS» fuerza la revisión.
-- A cada contacto (correo de Google) se le da acceso a **todo el cliente** o **solo a algunas unidades**. Sus solicitudes ya salen con eso predefinido: la afiliación,
-  los comercios y las unidades se eligen de listas (no se escriben), su nombre, correo, puesto y teléfono se precargan, y el servidor **rechaza** lo que salga de sus unidades.
+## Unidades de negocio (= grupos de cliente de POS) y acceso por correo
+**Una unidad de negocio es un grupo de cliente de POS**, y su estructura (grupo → afiliaciones / razones sociales, con sus tasas y cuentas de liquidación) sale tal cual del módulo de Grupos de cliente y afiliaciones. El personal (administrador, Dirección Comercial, Comercial) ve **todas** en «Unidades de negocio» y en «Nueva solicitud» (aunque todavía no tengan el portal activo).
+- En «Unidades de negocio» cada una tiene tres pestañas: **General** (Ejecutivo Comercial y portal activo), **Grupos de afiliaciones (opcional)** y **Contactos**.
+- A cada contacto (correo de Google) se le da acceso a la unidad de negocio; al pedir una solicitud elige **bajo cuál de sus afiliaciones o razones sociales** va. Su nombre, correo, puesto y teléfono se precargan.
+- **Una afiliación puede estar en varias unidades de negocio** (como en Grupos y afiliaciones de POS): cada grupo ve sus propias tasas pactadas, su cuenta de liquidación y sus comercios para esa afiliación, y las solicitudes y avisos de duplicado se separan por grupo. En el formulario, **al cambiar de unidad de negocio** se muestran las afiliaciones con las que opera; lo ya capturado se conserva, menos lo que depende de la afiliación.
+- Opcional: si alguien debe ver solo parte de las afiliaciones (por ejemplo una sucursal), se crea un grupo de afiliaciones y se le asigna; el servidor **rechaza** lo que salga de ese alcance. Por defecto no existe ninguno.
 
 ## Elegir afiliación y ver sus costos
 Al pedir un sub comercio (y en los cambios de datos, condiciones y CLABE), el cliente elige **bajo cuál de sus afiliaciones** y ve al instante su **vista previa**: razón social, giro/MCC, cuenta donde liquida, **tasas pactadas** (débito, crédito, internacional, AMEX, costo por transacción) y los comercios que ya operan bajo ella. Esas tasas son las que hereda el comercio nuevo. En su Inicio, el cliente tiene el resumen «Mis afiliaciones y condiciones». Los costos internos de Polipay (interredes, fee del adquirente) no se muestran.
@@ -46,7 +46,7 @@ Menú **Registro** (personal): todas las solicitudes, de cualquier tipo y estado
 
 ## Roles (se asignan en Administración → Usuarios → «Rol en Solicitudes de clientes»)
 `dir_comercial` · `comercial` · `operacion` · `coordinacion` · `direccion` · `consulta` (el administrador de POS es administrador del portal).
-Los **clientes** no se dan de alta en Administración: Comercial los registra en «Clientes y contactos» (correo de Google de cada persona) y entran con «Entrar con Google».
+Los **clientes** no se dan de alta en Administración: Comercial los registra en «Unidades de negocio» (correo de Google de cada persona) y entran con «Entrar con Google».
 Cada cliente (grupo de POS) tiene un Ejecutivo Comercial asignado por la Dirección Comercial; ese Ejecutivo solo ve lo de sus clientes.
 
 ## Reglas que hace cumplir el servidor

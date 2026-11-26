@@ -337,12 +337,16 @@ test('unidades de negocio del cliente: se cargan de POS, cada contacto ve solo l
       insert into cuentas(id_grupo,numero_afiliacion,nombre_comercial,razon_social_beneficiario,banco,clabe) values (8101,'8100101','Sucursal San Pedro','TIENDAS DEL NORTE SA DE CV','BBVA MEXICO','${clabe('012', 5)}'), (8101,'8100102','Tienda en línea','TIENDAS DEL NORTE ECOMMERCE SA DE CV','BBVA MEXICO','${clabe('012', 6)}');`);
     assert.equal((await api('cli', 'GET', '/clientes/8101/unidades')).s, 403, 'el cliente no administra unidades');
     assert.equal((await api('com2', 'GET', '/clientes/8101/unidades')).s, 403, 'comercial de otro cliente');
-    // las unidades salen solas del catálogo de POS (una por afiliación): sin cargar nada a mano
-    const lista = (await api('com', 'GET', '/clientes/8101/unidades')).j; assert.equal(lista.unidades.length, 2, 'una unidad por afiliación');
-    const imp = await api('com', 'POST', '/clientes/8101/unidades/importar', {}); assert.equal(imp.s, 200); assert.equal(imp.j.creadas, 0, 'no duplica');
-    // una afiliación nueva en POS aparece sola
+    // la unidad de negocio es el grupo de cliente: ya NO se crean solos grupos de afiliaciones; el cliente ve todas sus afiliaciones y los comercios de cada una
+    assert.equal((await api('com', 'GET', '/clientes/8101/unidades')).j.unidades.length, 0, 'sin grupos de afiliaciones por defecto');
+    const cat0 = (await api('cli', 'GET', '/catalogo?id_grupo=8101')).j; assert.equal(cat0.afiliaciones.length, 2); assert.equal(cat0.unidades.length, 0);
+    assert.deepEqual(cat0.afiliaciones.find(a => a.numero === '8100102').comercios, ['Tienda en línea'], 'los comercios de cada afiliación salen de POS');
+    // opcional: crear un grupo de afiliaciones por afiliación (para acotar a un contacto)
+    const imp = await api('com', 'POST', '/clientes/8101/unidades/importar', {}); assert.equal(imp.s, 200); assert.equal(imp.j.creadas, 2);
+    const lista = (await api('com', 'GET', '/clientes/8101/unidades')).j; assert.equal(lista.unidades.length, 2);
+    assert.equal((await api('com', 'POST', '/clientes/8101/unidades/importar', {})).j.creadas, 0, 'no duplica');
     await pg.exec(`insert into afiliaciones values ('8100103','TIENDAS DEL NORTE FRANQUICIAS SA DE CV','ADQ',5411,'Abarrotes'); insert into afil_grupo values (8101,'8100103',0.012,0.021,0.03,0.035,0);`);
-    assert.equal((await api('com', 'GET', '/clientes/8101/unidades')).j.unidades.length, 3, 'la afiliación nueva se vuelve unidad sola');
+    assert.equal((await api('com', 'POST', '/clientes/8101/unidades/importar', {})).j.creadas, 1, 'una afiliación nueva se agrega al pedirlo');
     await pg.exec("delete from afil_grupo where numero_afiliacion = '8100103'; delete from sc_unidades where afiliaciones = '{8100103}';");
     const norte = lista.unidades.find(u => /ECOMMERCE/.test(u.nombre) === false), linea = lista.unidades.find(u => /ECOMMERCE/.test(u.nombre));
     assert.deepEqual(norte.comercios.sort(), ['Sucursal San Pedro', 'TIENDAS DEL NORTE'].sort()); assert.deepEqual(linea.comercios, ['Tienda en línea']);
@@ -405,5 +409,34 @@ test('sub afiliado que pide cuenta nueva en Suite Banca: Operación debe registr
     assert.equal((await api('op', 'PUT', `/solicitudes/${id}`, { datos_operacion: { banca_clabe: '123' } })).s, 400, 'CLABE inválida');
     assert.equal((await api('op', 'PUT', `/solicitudes/${id}`, { datos_operacion: { banca_clabe: CLABE_NUEVA } })).s, 200);
     assert.equal((await A('op', id, 'ejecutar')).s, 200);
+  } finally { await cerrar(); }
+});
+
+test('una afiliación puede estar en varias unidades de negocio (grupos): cada grupo ve sus tasas, cuenta y solicitudes', async () => {
+  const { pg, api, cerrar } = await arrancar({ sinCorreo: true });
+  try {
+    // la afiliación 8100101 también opera para el grupo 8102 (Restaurantes Sol), con otras tasas y otra cuenta de liquidación
+    await pg.exec(`insert into afil_grupo values (8102,'8100101',0.0099,0.0185,0.029,0.034,0);
+      insert into cuentas(id_grupo,numero_afiliacion,nombre_comercial,razon_social_beneficiario,banco,clabe) values (8102,'8100101','Sol Express','TIENDAS DEL NORTE SA DE CV','BANAMEX','${CLABE_BANAMEX}');`);
+    const c1 = (await api('ad', 'GET', '/catalogo?id_grupo=8101')).j, c2 = (await api('ad', 'GET', '/catalogo?id_grupo=8102')).j;
+    const a1 = c1.afiliaciones.find(a => a.numero === '8100101'), a2 = c2.afiliaciones.find(a => a.numero === '8100101');
+    assert.equal(a1.tasas.tdd, 1.2); assert.equal(a2.tasas.tdd, 0.99, 'las tasas son las pactadas con ESE grupo');
+    assert.equal(a1.cuenta.clabe, CLABE_BBVA); assert.equal(a2.cuenta.clabe, CLABE_BANAMEX, 'y su cuenta de liquidación también');
+    assert.deepEqual(a1.comercios, ['TIENDAS DEL NORTE']); assert.deepEqual(a2.comercios, ['Sol Express'], 'los comercios son los de cada grupo');
+    assert.deepEqual(c2.afiliaciones.map(a => a.numero).sort(), ['8100101', '8100201'], 'cada grupo ve solo las afiliaciones con las que opera');
+    // la misma sucursal bajo la misma afiliación en dos grupos no es un duplicado; en el mismo grupo sí avisa
+    const D = { ...SUB, nombre_comercial: 'Sucursal Compartida' };
+    const s1 = (await api('ad', 'POST', '/solicitudes', { tipo: 'alta_subafiliado', id_grupo: 8101, datos: D })).j.id;
+    const s2 = (await api('ad', 'POST', '/solicitudes', { tipo: 'alta_subafiliado', id_grupo: 8102, datos: D })).j.id;
+    const rev = async id => (await api('ad', 'GET', '/solicitudes/' + id)).j;
+    const s3 = (await api('ad', 'POST', '/solicitudes', { tipo: 'alta_subafiliado', id_grupo: 8101, datos: D })).j.id;
+    const A = id => api('ad', 'POST', `/solicitudes/${id}/accion`, { accion: 'enviar' });
+    assert.equal((await A(s1)).s, 200);
+    assert.equal((await A(s2)).s, 200); assert.equal((await A(s3)).s, 200);
+    assert.ok(!(await rev(s2)).solicitud.alertas.some(x => /Ya hay una solicitud/.test(x)), 'otro grupo: no es duplicado');
+    assert.ok((await rev(s3)).solicitud.alertas.some(x => /Ya hay una solicitud/.test(x)), 'mismo grupo y afiliación: avisa del duplicado');
+    // la referencia de POS que se congela es la del grupo de cada solicitud
+    assert.equal((await rev(s1)).solicitud.referencia_pos.tasas.tdd, 1.2); assert.equal((await rev(s2)).solicitud.referencia_pos.tasas.tdd, 0.99);
+    assert.equal((await rev(s2)).solicitud.datos.liq_banco, 'BANAMEX', 'la concentradora es la del grupo 8102');
   } finally { await cerrar(); }
 });

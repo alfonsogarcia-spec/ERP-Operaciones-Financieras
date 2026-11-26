@@ -122,15 +122,15 @@ async function vNueva(v) {
   const yo = await base();
   if (SC.nuevo) return vDetalle(v);
   v.innerHTML = '';
-  const grupos = (yo.grupos || []).filter(g => g.portal || yo.rol === 'cliente');
+  const grupos = (yo.grupos || []).filter(g => g.portal || yo.rol === 'cliente' || yo.staff);   // el personal ve todas las unidades de negocio (grupos de cliente), tengan o no el portal activo
   let idGrupo = SC.cliente || (grupos[0] && grupos[0].id_grupo) || '';
   if (yo.rol !== 'cliente' || grupos.length > 1) {
-    const sel = el('select', { id: 'scNuevoGrupo', 'aria-label': 'Cliente' }, ...grupos.map(g => el('option', { value: String(g.id_grupo) }, g.nombre)));
+    const sel = el('select', { id: 'scNuevoGrupo', 'aria-label': 'Unidad de negocio (grupo de cliente)' }, ...grupos.map(g => el('option', { value: String(g.id_grupo) }, g.nombre + (g.portal || yo.rol === 'cliente' ? '' : ' · sin portal'))));
     sel.value = String(idGrupo); sel.addEventListener('change', () => { SC.cliente = Number(sel.value); });
-    v.append(panel('¿Para qué cliente?', sel));
+    v.append(panel('¿Para qué unidad de negocio?', sel, el('div', { class: 'req-note', style: 'margin-top:8px' }, 'Cada unidad de negocio es un grupo de cliente de POS; después eliges bajo cuál de sus afiliaciones o razones sociales va la solicitud.')));
     SC.cliente = Number(sel.value || 0) || null;
   } else SC.cliente = idGrupo;
-  if (!grupos.length) { v.append(nota('warn', yo.rol === 'cliente' ? 'Tu acceso al portal está desactivado. Habla con tu Ejecutivo Comercial.' : 'No tienes clientes con el portal activo. Actívalos en «Clientes y contactos».')); return; }
+  if (!grupos.length) { v.append(nota('warn', yo.rol === 'cliente' ? 'Tu acceso al portal está desactivado. Habla con tu Ejecutivo Comercial.' : 'No hay unidades de negocio disponibles. Revisa los grupos de cliente en POS.')); return; }
   const g = el('div', { style: 'display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px' });
   (yo.tipos || []).forEach(tp => g.append(tarjetaTipo(tp, () => iniciarNueva(tp.id))));
   v.append(panel('¿Qué necesitas pedir?', g));
@@ -147,7 +147,7 @@ const pctTxt = v => (v == null ? '—' : Number(v).toLocaleString('es-MX', { max
 function previewAfil(a, cat) {
   if (!a) return el('div', {});
   const t = a.tasas || {}; const c = a.cuenta;
-  const comercios = [...new Set((cat.unidades || []).filter(u => (u.afiliaciones || []).includes(a.numero)).flatMap(u => u.comercios || []))];
+  const comercios = a.comercios || [...new Set((cat.unidades || []).filter(u => (u.afiliaciones || []).includes(a.numero)).flatMap(u => u.comercios || []))];
   const celda = (k, v) => `<div style="min-width:130px"><div class="muted" style="font-size:11.5px">${esc(k)}</div><div style="font-weight:600;font-variant-numeric:tabular-nums">${v}</div></div>`;
   return el('div', { class: 'panel', style: 'margin:8px 0 0;padding:12px 14px;background:rgba(127,127,127,.10)' },
     el('div', { style: 'font-weight:700;margin-bottom:8px', html: `Condiciones de la afiliación ${esc(a.numero)}` }),
@@ -592,11 +592,11 @@ function panelHistorial(s, r, cli) {
 /* ============================ ALTA (captura de una solicitud nueva) ============================ */
 async function vAlta(v) {
   const tp = tipoDe(SC.nuevo.tipo); const cat = await catalogoDe(SC.nuevo.id_grupo);
-  const cli = esCliente(); const d = {};
+  const cli = esCliente(); const d = { ...(SC.nuevo.pre || {}) }; SC.nuevo.pre = null;   // lo ya capturado se conserva al cambiar de unidad de negocio
   // precarga datos del solicitante
   const pf = cat.perfil || { nombre: SC.yo.nombre, email: SC.yo.usuario, puesto: '', telefono: '' };
   if (tp.id === 'usuario_suite') { d.sol_nombre = pf.nombre; d.sol_email = pf.email; if (pf.puesto) d.sol_puesto = pf.puesto; if (pf.telefono) d.sol_tel = pf.telefono; }
-  if (tp.id === 'alta_subafiliado') { d.contacto_nombre = pf.nombre; d.contacto_email = pf.email; if (pf.puesto) d.contacto_puesto = pf.puesto; if (pf.telefono) d.contacto_tel = pf.telefono; }
+  if (tp.id === 'alta_subafiliado') { d.contacto_nombre = d.contacto_nombre || pf.nombre; d.contacto_email = d.contacto_email || pf.email; if (pf.puesto && !d.contacto_puesto) d.contacto_puesto = pf.puesto; if (pf.telefono && !d.contacto_tel) d.contacto_tel = pf.telefono; }
   // Con una sola unidad de negocio (o afiliación) asignada, ya sale elegida.
   if ((cat.unidades || []).length === 1) { const u = cat.unidades[0]; if (tp.id === 'alta_subafiliado') { d.unidad_negocio = u.nombre; if ((u.afiliaciones || []).length === 1) d.afil_principal = u.afiliaciones[0]; } if (tp.id === 'usuario_suite') d.nivel_udn = [u.nombre]; }
   if (tp.requiere_afiliacion && cat.afiliaciones.length === 1 && !d.afil_principal) d.afil_principal = cat.afiliaciones[0].numero;
@@ -604,8 +604,17 @@ async function vAlta(v) {
   if (cat.acotado) ctx.aviso = true;
   cardsAcciones(el('button', { class: 'btn secondary', onclick: volver }, '← Cancelar'), el('button', { class: 'btn ghost', onclick: () => descargar(`/api/sc/formatos/${tp.id}/pdf`, `${tp.formato}-formato-en-blanco.pdf`).catch(falla) }, 'Formato en blanco (PDF)'));
   const grupo = (SC.yo.grupos || []).find(g => g.id_grupo === SC.nuevo.id_grupo);
-  v.append(el('div', { class: 'panel' }, el('h2', { style: 'margin:0;font-size:18px' }, tp.nombre), el('div', { class: 'muted', style: 'margin:4px 0' }, `${tp.formato} · ${grupo ? grupo.nombre : ''}`), el('div', { class: 'muted' }, tp.descripcion)));
-  if (cat.acotado) v.append(nota('', 'Tu acceso está acotado a ' + (cat.unidades.map(u => u.nombre).join(', ') || 'tus unidades de negocio') + '. Solo verás y podrás pedir lo de esas unidades.'));
+  const disponibles = (SC.yo.grupos || []).filter(g => g.portal || cli || SC.yo.staff);
+  const cab = el('div', { class: 'panel' }, el('h2', { style: 'margin:0;font-size:18px' }, tp.nombre), el('div', { class: 'muted', style: 'margin:4px 0' }, `${tp.formato}${disponibles.length > 1 ? '' : ' · ' + (grupo ? grupo.nombre : '')}`), el('div', { class: 'muted' }, tp.descripcion));
+  if (disponibles.length > 1) {
+    // Cambiar de unidad de negocio (grupo de cliente) trae sus afiliaciones, tasas, cuentas y comercios; lo ya capturado se conserva, menos lo que depende de la afiliación.
+    const sg = el('select', { id: 'scAltaGrupo', 'aria-label': 'Unidad de negocio (grupo de cliente)' }, ...disponibles.map(g => el('option', { value: String(g.id_grupo) }, g.nombre + (g.portal || cli ? '' : ' · sin portal'))));
+    sg.value = String(SC.nuevo.id_grupo);
+    sg.addEventListener('change', () => { const pre = { ...ctx.d }; ['afil_principal', 'unidad_negocio', 'liq_banco', 'liq_clabe', 'liq_titular', 'nivel_empresas', 'nivel_udn', 'nivel_comercios', 'id_sub'].forEach(k => delete pre[k]); SC.nuevo.pre = pre; SC.nuevo.id_grupo = Number(sg.value); SC.cliente = SC.nuevo.id_grupo; render(); });
+    cab.append(el('label', { class: 'field', style: 'margin-top:12px;max-width:520px' }, 'Unidad de negocio (grupo de cliente)', sg, el('span', { class: 'req-note' }, 'Al cambiarla se muestran las afiliaciones con las que opera, con sus tasas, cuenta de liquidación y comercios.')));
+  }
+  v.append(cab);
+  if (cat.acotado) v.append(nota('', 'Tu acceso está acotado a ' + (cat.unidades.map(u => u.nombre).join(', ') || 'algunas afiliaciones') + '. Solo verás y podrás pedir lo de ellas.'));
   if (tp.requiere_afiliacion && !cat.afiliaciones.length) v.append(nota('err', 'Este cliente no tiene afiliaciones activas en POS, así que no se puede pedir esto todavía. Habla con tu Ejecutivo Comercial.'));
   const form = formulario(tp, ctx); v.append(form.nodo);
   if ((tp.docs || []).length) v.append(nota('', 'Después de guardar el borrador podrás subir los documentos que se piden y enviar la solicitud.'));
@@ -622,15 +631,15 @@ async function vClientes(v) {
   const yo = await base(); v.innerHTML = '';
   const filas = await call('GET', '/clientes');
   const ej = yo.puede_asignar ? await call('GET', '/ejecutivos') : [];
-  v.append(nota('', 'Por cada cliente defines sus unidades de negocio (se cargan de POS) y das de alta a las personas que entran al portal, con acceso a todo el cliente o solo a algunas unidades. Entran con «Entrar con Google» usando el correo que registres; sus solicitudes ya salen con eso predefinido y solo llenan lo demás.'));
-  v.append(panel('', tableWrap(['Cliente', 'Portal', 'Ejecutivo Comercial', 'Unidades de negocio', 'Contactos', 'Abiertas', ''], filas.map(c => { const r = [`<b>${esc(c.nombre)}</b>`, c.portal ? badge('ok', 'Activo') : badge('neutral', 'Sin activar'), c.ejecutivo ? esc(c.ejecutivo) : '<span class="muted">Sin asignar</span>', { num: c.unidades }, { num: c.contactos }, { num: c.abiertas }, '']; r._onclick = () => dlgCliente(c, ej, yo); return r; }), { empty: 'No hay clientes.' })));
+  v.append(nota('', 'Cada unidad de negocio es un grupo de cliente de POS (aquí están todas). Por cada una asignas a su Ejecutivo Comercial y das de alta a las personas que entran al portal; al pedir una solicitud eligen bajo cuál de sus afiliaciones o razones sociales va. Entran con «Entrar con Google» usando el correo que registres; sus solicitudes ya salen con eso predefinido y solo llenan lo demás.'));
+  v.append(panel('', tableWrap(['Unidad de negocio (grupo de cliente)', 'Portal', 'Ejecutivo Comercial', 'Afiliaciones', 'Contactos', 'Abiertas', ''], filas.map(c => { const r = [`<b>${esc(c.nombre)}</b>`, c.portal ? badge('ok', 'Activo') : badge('neutral', 'Sin activar'), c.ejecutivo ? esc(c.ejecutivo) : '<span class="muted">Sin asignar</span>', { num: c.unidades }, { num: c.contactos }, { num: c.abiertas }, '']; r._onclick = () => dlgCliente(c, ej, yo); return r; }), { empty: 'No hay clientes.' })));
 }
 async function dlgCliente(c, ejecutivos, yo, tab) {
   tab = tab || 'general';
   const [cont, un] = await Promise.all([call('GET', `/clientes/${c.id_grupo}/contactos`), call('GET', `/clientes/${c.id_grupo}/unidades`)]);
   const recarga = (t, msg) => { if (msg) toast(msg, 'ok'); dlgCliente({ ...c, portal: true }, ejecutivos, yo, t || tab); };
   const nombreUn = id => (un.unidades.find(x => x.id === id) || {}).nombre || '';
-  const tabs = el('div', { style: 'display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap' }, ...[['general', 'General'], ['unidades', `Unidades de negocio (${un.unidades.filter(u => u.activo).length})`], ['contactos', `Contactos (${cont.length})`]].map(([k, n]) => el('button', { class: 'btn ' + (tab === k ? '' : 'secondary') + ' sm', onclick: () => recarga(k) }, n)));
+  const tabs = el('div', { style: 'display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap' }, ...[['general', 'General'], ['unidades', `Grupos de afiliaciones, opcional (${un.unidades.filter(u => u.activo).length})`], ['contactos', `Contactos (${cont.length})`]].map(([k, n]) => el('button', { class: 'btn ' + (tab === k ? '' : 'secondary') + ' sm', onclick: () => recarga(k) }, n)));
   let cuerpo; let pie = el('button', { class: 'btn secondary', onclick: closeModal }, 'Cerrar');
 
   if (tab === 'general') {
@@ -638,7 +647,7 @@ async function dlgCliente(c, ejecutivos, yo, tab) {
     sel.value = c.ejecutivo_id ? String(c.ejecutivo_id) : '';
     const portal = el('input', { type: 'checkbox', id: 'scPortal' }); portal.checked = !!c.portal;
     cuerpo = el('div', {}, el('div', { class: 'form-grid' }, el('label', { class: 'field' }, 'Ejecutivo Comercial', sel), el('label', { class: 'chk', style: 'align-self:end' }, portal, ' Portal activo para este cliente')),
-      el('div', { class: 'req-note', style: 'margin-top:10px' }, 'El Ejecutivo Comercial recibe y revisa primero las solicitudes de este cliente. Define sus unidades de negocio en la pestaña siguiente y da a cada contacto acceso a todas o solo a algunas.'));
+      el('div', { class: 'req-note', style: 'margin-top:10px' }, 'El Ejecutivo Comercial recibe y revisa primero las solicitudes de este cliente. Da de alta a sus contactos en la pestaña «Contactos»; si alguno solo debe ver parte de sus afiliaciones, crea un grupo de afiliaciones en la pestaña de al lado.'));
     pie = el('div', {}, el('button', { class: 'btn secondary', onclick: closeModal }, 'Cerrar'), el('button', { class: 'btn', onclick: async () => { try { const b = { activo: portal.checked }; if (yo.puede_asignar) b.ejecutivo_id = sel.value || null; await call('PUT', '/clientes/' + c.id_grupo, b); closeModal(); toast('Cliente guardado', 'ok'); render(); } catch (e) { falla(e); } } }, 'Guardar'));
   }
 
@@ -646,15 +655,15 @@ async function dlgCliente(c, ejecutivos, yo, tab) {
     const filas = un.unidades.map(u => { const acc = el('div', { class: 'acciones' }, el('button', { class: 'btn ghost sm', onclick: () => dlgUnidad(c, un, u, () => recarga('unidades')) }, 'Editar'),
         el('button', { class: 'btn ghost sm', onclick: async () => { try { await call('PUT', `/clientes/${c.id_grupo}/unidades/${u.id}`, { activo: !u.activo }); recarga('unidades'); } catch (e) { falla(e); } } }, u.activo ? 'Desactivar' : 'Activar'));
       return [`<b>${esc(u.nombre)}</b>${u.activo ? '' : ' ' + badge('neutral', 'Inactiva')}`, esc((u.afiliaciones || []).join(', ') || '—'), `${(u.comercios || []).length} comercio(s)<small class="muted" style="display:block">${esc((u.comercios || []).slice(0, 4).join(', '))}${(u.comercios || []).length > 4 ? '…' : ''}</small>`, acc]; });
-    cuerpo = el('div', {}, el('div', { class: 'req-note', style: 'margin-bottom:8px' }, 'Las unidades de negocio salen solas del catálogo de POS (grupo de cliente y sus afiliaciones, con sus comercios); si el cliente recibe una afiliación nueva, aparece aquí sin hacer nada. Cada contacto puede tener acceso a todas o solo a algunas.'),
-      tableWrap(['Unidad de negocio', 'Afiliaciones', 'Comercios', ''], filas, { empty: 'Este cliente aún no tiene afiliaciones en el catálogo de POS.' }),
+    cuerpo = el('div', {}, el('div', { class: 'req-note', style: 'margin-bottom:8px' }, 'Opcional. La unidad de negocio es el grupo de cliente y sus afiliaciones salen solas de POS; por defecto cada contacto ve todas. Crea aquí un grupo de afiliaciones solo si alguien debe ver únicamente algunas (por ejemplo, una sola sucursal).'),
+      tableWrap(['Grupo de afiliaciones', 'Afiliaciones', 'Comercios', ''], filas, { empty: 'Sin grupos de afiliaciones: todos sus contactos ven todas las afiliaciones de la unidad de negocio.' }),
       el('div', { style: 'display:flex;gap:8px;margin-top:10px;flex-wrap:wrap' },
-        el('button', { class: 'btn secondary', onclick: async () => { try { const r = await call('POST', `/clientes/${c.id_grupo}/unidades/importar`, {}); recarga('unidades', r.creadas ? `${r.creadas} unidad(es) nueva(s) desde POS` : 'Ya está al día con POS'); } catch (e) { falla(e); } } }, 'Actualizar desde POS'),
-        el('button', { class: 'btn secondary', onclick: () => dlgUnidad(c, un, null, () => recarga('unidades')) }, '+ Unidad de negocio')));
+        el('button', { class: 'btn secondary', onclick: async () => { try { const r = await call('POST', `/clientes/${c.id_grupo}/unidades/importar`, {}); recarga('unidades', r.creadas ? `${r.creadas} grupo(s) de afiliaciones nuevo(s) desde POS` : 'Ya están todas las afiliaciones'); } catch (e) { falla(e); } } }, 'Crear uno por afiliación'),
+        el('button', { class: 'btn secondary', onclick: () => dlgUnidad(c, un, null, () => recarga('unidades')) }, '+ Grupo de afiliaciones')));
   }
 
   if (tab === 'contactos') {
-    const resumen = p => !p.unidades.length ? '<span class="muted">Todo el cliente</span>' : esc(p.unidades.map(nombreUn).filter(Boolean).join(', '));
+    const resumen = p => !p.unidades.length ? '<span class="muted">Todas las afiliaciones</span>' : esc(p.unidades.map(nombreUn).filter(Boolean).join(', '));
     const lista = tableWrap(['Nombre', 'Correo', 'Acceso', 'Estado', ''], cont.map(p => { const acc = el('div', { class: 'acciones' },
       el('button', { class: 'btn ghost sm', onclick: () => dlgAcceso(c, un, p, () => recarga('contactos', 'Acceso guardado')) }, 'Acceso'),
       el('button', { class: 'btn ghost sm', onclick: async () => { try { await call('PUT', `/clientes/${c.id_grupo}/contactos/${p.usuario_id}`, { activo: !p.activo }); recarga('contactos', p.activo ? 'Contacto desactivado' : 'Contacto activado'); } catch (e) { falla(e); } } }, p.activo ? 'Desactivar' : 'Activar'));
@@ -675,12 +684,12 @@ function selectorUnidades(un, marcadas) {
   const caja = el('div', { style: 'display:flex;flex-direction:column;gap:4px;margin:6px 0 0 22px;max-height:170px;overflow:auto' });
   activas.forEach(u => { const ch = el('input', { type: 'checkbox' }); ch.checked = sel.has(u.id); ch.addEventListener('change', () => { ch.checked ? sel.add(u.id) : sel.delete(u.id); if (sel.size) { solo.checked = true; } }); caja.append(el('label', { class: 'chk' }, ch, ' ' + u.nombre)); });
   todo.addEventListener('change', () => { if (todo.checked) { sel.clear(); caja.querySelectorAll('input').forEach(i => { i.checked = false; }); } });
-  const nodo = el('div', {}, el('div', { class: 'muted', style: 'font-size:12px;margin-bottom:4px' }, 'Acceso a unidades de negocio'), el('label', { class: 'chk' }, todo, ' Todo el cliente'), el('label', { class: 'chk' }, solo, ' Solo estas unidades:'), activas.length ? caja : el('div', { class: 'muted', style: 'margin-left:22px;font-size:12px' }, 'Aún no hay unidades de negocio definidas.'));
+  const nodo = el('div', {}, el('div', { class: 'muted', style: 'font-size:12px;margin-bottom:4px' }, 'Acceso del contacto'), el('label', { class: 'chk' }, todo, ' Todas las afiliaciones de la unidad de negocio'), el('label', { class: 'chk' }, solo, ' Solo estos grupos de afiliaciones:'), activas.length ? caja : el('div', { class: 'muted', style: 'margin-left:22px;font-size:12px' }, 'No hay grupos de afiliaciones definidos (pestaña «Grupos de afiliaciones»).'));
   return { nodo, valor: () => (solo.checked ? [...sel] : []) };
 }
 function dlgAcceso(c, un, p, listo) {
   const sel = selectorUnidades(un, p.unidades);
-  modal('Acceso de ' + p.nombre, el('div', {}, el('div', { class: 'banner' }, `${p.email} podrá pedir solicitudes solo de lo que marques. Sin marcar nada, tiene acceso a todo el cliente.`), sel.nodo),
+  modal('Acceso de ' + p.nombre, el('div', {}, el('div', { class: 'banner' }, `${p.email} podrá pedir solicitudes solo de lo que marques. Sin marcar nada, tiene acceso a todas las afiliaciones.`), sel.nodo),
     el('div', {}, el('button', { class: 'btn secondary', onclick: closeModal }, 'Cancelar'), el('button', { class: 'btn', onclick: async () => { try { await call('PUT', `/clientes/${c.id_grupo}/contactos/${p.usuario_id}`, { unidades: sel.valor() }); closeModal(); listo(); } catch (e) { falla(e); } } }, 'Guardar')));
 }
 function dlgUnidad(c, un, u, listo) {
@@ -690,7 +699,7 @@ function dlgUnidad(c, un, u, listo) {
   const cmBox = el('div', { style: 'display:flex;flex-direction:column;gap:4px;max-height:170px;overflow:auto' }); [...new Set([...un.comercios_pos, ...(u ? u.comercios : [])])].forEach(m => { const ch = el('input', { type: 'checkbox' }); ch.checked = cmSel.has(m); ch.addEventListener('change', () => { ch.checked ? cmSel.add(m) : cmSel.delete(m); }); cmBox.append(el('label', { class: 'chk' }, ch, ' ' + m)); });
   const otros = el('textarea', { rows: 2, style: 'width:100%', placeholder: 'Otros comercios (uno por renglón)' });
   const ok = el('button', { class: 'btn', onclick: async () => { ok.disabled = true; try { const b = { nombre: nombre.value, afiliaciones: [...afSel], comercios: [...cmSel, ...otros.value.split(/[\n;]+/).map(x => x.trim()).filter(Boolean)] }; if (u) await call('PUT', `/clientes/${c.id_grupo}/unidades/${u.id}`, b); else await call('POST', `/clientes/${c.id_grupo}/unidades`, b); closeModal(); listo(); } catch (e) { falla(e); ok.disabled = false; } } }, u ? 'Guardar' : 'Crear');
-  modal(u ? 'Editar unidad de negocio' : 'Nueva unidad de negocio', el('div', {}, el('label', { class: 'field' }, 'Nombre', nombre), el('div', { class: 'muted', style: 'font-size:12px;margin:10px 0 4px' }, 'Afiliaciones que agrupa'), afBox,
+  modal(u ? 'Editar grupo de afiliaciones' : 'Nuevo grupo de afiliaciones', el('div', {}, el('label', { class: 'field' }, 'Nombre', nombre), el('div', { class: 'muted', style: 'font-size:12px;margin:10px 0 4px' }, 'Afiliaciones que agrupa'), afBox,
     el('div', { class: 'muted', style: 'font-size:12px;margin:10px 0 4px' }, 'Comercios (los que ya conoce POS)'), cmBox, el('div', { style: 'margin-top:6px' }, otros)), el('div', {}, el('button', { class: 'btn secondary', onclick: closeModal }, 'Cancelar'), ok));
 }
 
@@ -737,6 +746,6 @@ window.SC_TITULOS = {
   sc_nueva: ['Nueva solicitud', 'Elige qué necesitas pedir'],
   sc_registro: ['Registro de solicitudes', 'Todas las solicitudes, de cualquier tipo y estado, con descarga a Excel'],
   sc_formatos: ['Formatos (PDF)', 'Los formatos oficiales para documentar cada solicitud'],
-  sc_clientes: ['Clientes y contactos', 'Quién del cliente entra al portal y quién es su Ejecutivo Comercial'],
+  sc_clientes: ['Unidades de negocio y contactos', 'Los grupos de cliente de POS, quién entra al portal de cada uno y su Ejecutivo Comercial'],
 };
 })();
