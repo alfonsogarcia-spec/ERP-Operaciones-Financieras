@@ -146,6 +146,12 @@ test('alta de sub afiliado: cliente → comercial → operación → coordinacio
     assert.equal(dc.solicitud.estado, 'completada'); assert.equal(dc.solicitud.datos_operacion.token_activacion, undefined, 'el token no se muestra al cliente');
     assert.equal(dc.solicitud.ejecutada_por, null); assert.ok(dc.eventos.every(e => e.actor_nombre === 'Polipay' || e.actor_nombre === 'Cliente Norte'));
     assert.ok(!JSON.stringify(dc).includes('TOK-SECRETO'));
+    // al completarse se genera solo el PDF: queda guardado (completo para el personal, sin datos internos para el cliente) y se manda por correo al solicitante
+    const pdfsCli = dc.adjuntos.filter(x => /POL-OP-F03-SC-.*\.pdf$/.test(x.nombre) && !/completo/.test(x.nombre)); assert.equal(pdfsCli.length, 1, 'el cliente solo ve su versión');
+    const dPers = (await api('com', 'GET', '/solicitudes/' + id)).j; assert.equal(dPers.adjuntos.filter(x => /POL-OP-F03-SC-.*\.pdf$/.test(x.nombre)).length, 2, 'el personal ve la completa y la del cliente');
+    const bajado = await api('cli', 'GET', `/solicitudes/${id}/adjuntos/${pdfsCli[0].id}`); assert.equal(bajado.s, 200); assert.equal(bajado.buf.slice(0, 5).toString(), '%PDF-');
+    const comp = dPers.adjuntos.find(x => /completo/.test(x.nombre)); assert.equal((await api('cli', 'GET', `/solicitudes/${id}/adjuntos/${comp.id}`)).s, 404, 'la versión completa no la baja el cliente');
+    assert.ok(await hay(m => m.to.includes('cliente@norte.test') && (m.attachments || []).some(x => x.contentType === 'application/pdf' && x.content.slice(0, 5).toString() === '%PDF-')), 'el correo de completada lleva el PDF adjunto');
     // bitácora encadenada
     const ev = (await pg.query('select * from sc_eventos where solicitud_id = $1 order by id', [id])).rows;
     let prev = ''; for (const e of ev) { assert.equal(e.prev_hash || '', prev); prev = e.hash; }

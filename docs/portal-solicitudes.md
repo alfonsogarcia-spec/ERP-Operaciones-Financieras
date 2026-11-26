@@ -44,6 +44,7 @@ Menú **Registro** (personal): todas las solicitudes, de cualquier tipo y estado
 ## Formatos en PDF
 - Menú **Formatos (PDF)**: los 6 formatos oficiales (F02, F03, F07, F08, F11, F13) en blanco, para imprimir y llenar a mano. También hay un botón «Formato en blanco» al capturar cada solicitud.
 - En el detalle de cada solicitud, **«Descargar formato (PDF)»** baja el formato ya lleno: datos de cada parte, documentos, constancia electrónica de quién dio cada paso y cuándo (en lugar de firma de papel) y, para el personal, la huella de la bitácora. El token de activación nunca sale en el PDF.
+- **Al completarse una solicitud el PDF se genera solo:** se guarda en la solicitud (aparece en «Otros archivos», cifrado) en dos versiones, la **completa** (solo personal de Polipay) y la **del cliente** (sin datos internos), y la del cliente se manda **adjunta por correo** con el aviso de «Tu solicitud está completada» (al solicitante, con copia al Ejecutivo Comercial y a los account managers de la unidad). Si vuelve a completarse, reemplaza las anteriores. En cualquier momento sigue disponible «Descargar formato (PDF)».
 - El cliente descarga el PDF de sus propias solicitudes, sin datos internos (condiciones, verificaciones, historial interno). Cada descarga del personal queda en la bitácora.
 
 ## Roles (se asignan en Administración → Usuarios → «Rol en Solicitudes de clientes»)
