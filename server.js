@@ -158,12 +158,16 @@ const rolCardsDe = (rol, rolCards) => CARDS_ROLES.includes(rol) ? rol : rol === 
 // Rol efectivo dentro de Cartera: el administrador de POS es administrador de Cartera; el resto, el `rol_cartera` asignado (id de un rol de Cartera
 // o 'admin') o ninguno. Sus roles y permisos se definen en Cartera (tabla cartera_roles) y se asignan en Administración.
 const rolCarteraDe = (rol, rolCartera) => rol === 'admin' ? 'admin' : (rolCartera ? String(rolCartera) : null);
-const safeUser = u => ({ id: u.id, email: u.email, nombre: u.nombre, rol: u.rol, rol_cards: rolCardsDe(u.rol, u.rol_cards), rol_cartera: rolCarteraDe(u.rol, u.rol_cartera), foto_url: u.foto_url || null });
-const ROLES = { admin: 'Administrador', operador: 'Operador (Operaciones)', tesoreria: 'Tesorería (valida)', bancos: 'Bancos (dispersa y cierra)', consulta: 'Consulta (solo lectura)', inventario: 'Inventario (solo esa sección)', comercial: 'Comercial (solicita fondeos de Cards)', cards_admin: 'Administrador Cards (usuarios y tesorería de Cards)', cards_tesoreria: 'Tesorería Cards (asigna saldo y sube comprobante)', cards_operaciones: 'Operaciones Cards (da de alta unidades de negocio y tarjetas)', cards_consulta: 'Consulta Cards (solo lectura)', cartera: 'Credit Solvendom (solo ese espacio)' };
+// Rol efectivo dentro del portal de solicitudes de clientes: el administrador de POS es administrador del portal; el resto, el `rol_solicitudes` asignado o ninguno.
+const rolSolicitudesDe = (rol, rolSol) => rol === 'admin' ? 'admin' : (rolSol ? String(rolSol) : null);
+const safeUser = u => ({ id: u.id, email: u.email, nombre: u.nombre, rol: u.rol, rol_cards: rolCardsDe(u.rol, u.rol_cards), rol_cartera: rolCarteraDe(u.rol, u.rol_cartera), rol_solicitudes: rolSolicitudesDe(u.rol, u.rol_solicitudes), foto_url: u.foto_url || null });
+const ROLES = { admin: 'Administrador', operador: 'Operador (Operaciones)', tesoreria: 'Tesorería (valida)', bancos: 'Bancos (dispersa y cierra)', consulta: 'Consulta (solo lectura)', inventario: 'Inventario (solo esa sección)', comercial: 'Comercial (solicita fondeos de Cards)', cards_admin: 'Administrador Cards (usuarios y tesorería de Cards)', cards_tesoreria: 'Tesorería Cards (asigna saldo y sube comprobante)', cards_operaciones: 'Operaciones Cards (da de alta unidades de negocio y tarjetas)', cards_consulta: 'Consulta Cards (solo lectura)', cartera: 'Credit Solvendom (solo ese espacio)', cliente: 'Cliente (solo el portal de solicitudes)', solicitudes: 'Portal de solicitudes (solo ese espacio)' };
 // Roles que solo entran a Polipay Cards Settlement (no ven POS Settlement ni Tareas).
 const ROLES_SOLO_CARDS = ['comercial', 'cards_admin', 'cards_tesoreria', 'cards_operaciones', 'cards_consulta'];
 // Personas que solo entran a Cartera (crédito simple y revolvente). Su permiso fino lo da `rol_cartera`.
 const ROLES_SOLO_CARTERA = ['cartera'];
+// Clientes externos y personal que solo entra al portal de solicitudes (su permiso fino lo da `rol_solicitudes`).
+const ROLES_SOLO_PORTAL = ['cliente', 'solicitudes'];
 const ROLES_VALIDOS = Object.keys(ROLES);
 
 // jti único por sesión — permite revocarla al cerrar sesión (blacklist en memoria).
@@ -183,11 +187,17 @@ function rutaPermitidaRolInventario(path) {
 // Además de /api/cards, el Administrador Cards usa el panel de Administración (usuarios) acotado a los roles de Cards.
 function rutaPermitidaRolComercial(path, p) {
   return path === '/api/yo' || path === '/api/logout' || path.startsWith('/api/cards/') || path === '/api/usuarios' || path.startsWith('/api/usuarios/') || path === '/api/admin/roles'
-    || (!!(p && p.rol_cartera) && path.startsWith('/api/cartera/'));
+    || (!!(p && p.rol_cartera) && path.startsWith('/api/cartera/'))
+    || (!!(p && p.rol_solicitudes) && path.startsWith('/api/sc/'));
 }
 // Roles solo-Cartera: únicamente /api/cartera (y la sesión).
-function rutaPermitidaRolCartera(path) {
-  return path === '/api/yo' || path === '/api/logout' || path.startsWith('/api/cartera/');
+function rutaPermitidaRolCartera(path, p) {
+  return path === '/api/yo' || path === '/api/logout' || path.startsWith('/api/cartera/') || (!!(p && p.rol_solicitudes) && path.startsWith('/api/sc/'));
+}
+// Clientes y personal del portal de solicitudes: únicamente /api/sc (más lo de Cartera o Cards si además tienen ese acceso).
+function rutaPermitidaRolPortal(path, p) {
+  return path === '/api/yo' || path === '/api/logout' || path.startsWith('/api/sc/')
+    || (!!(p && p.rol_cartera) && path.startsWith('/api/cartera/')) || (!!(p && p.rol_cards) && path.startsWith('/api/cards/'));
 }
 // Rol y estado VIGENTES del usuario (no los del token): un cambio de rol, o desactivar a alguien, aplica en menos de un minuto
 // sin que tenga que volver a iniciar sesión. Memoria de 60 s; se limpia al editar o borrar un usuario.
@@ -196,8 +206,8 @@ const ROL_TTL_MS = 60 * 1000;
 async function rolVigente(id) {
   const c = ROL_CACHE.get(id);
   if (c && Date.now() - c.ts < ROL_TTL_MS) return c;
-  const r = (await db.query('select rol, rol_cards, rol_cartera, activo from usuarios where id=$1', [id])).rows[0];
-  const v = { rol: r ? r.rol : null, rol_cards: r ? rolCardsDe(r.rol, r.rol_cards) : null, rol_cartera: r ? rolCarteraDe(r.rol, r.rol_cartera) : null, activo: !!(r && r.activo), ts: Date.now() };
+  const r = (await db.query('select rol, rol_cards, rol_cartera, rol_solicitudes, activo from usuarios where id=$1', [id])).rows[0];
+  const v = { rol: r ? r.rol : null, rol_cards: r ? rolCardsDe(r.rol, r.rol_cards) : null, rol_cartera: r ? rolCarteraDe(r.rol, r.rol_cartera) : null, rol_solicitudes: r ? rolSolicitudesDe(r.rol, r.rol_solicitudes) : null, activo: !!(r && r.activo), ts: Date.now() };
   ROL_CACHE.set(id, v);
   return v;
 }
@@ -214,8 +224,8 @@ async function auth(req, res, next) {
     try {
       const v = await rolVigente(Number(p.sub));
       if (!v.rol || !v.activo) return res.status(401).json({ error: 'usuario_inactivo', mensaje: 'Tu acceso fue desactivado.' });
-      p.rol = v.rol; p.rol_cards = v.rol_cards; p.rol_cartera = v.rol_cartera;
-    } catch (_e) { p.rol_cards = rolCardsDe(p.rol, null); p.rol_cartera = rolCarteraDe(p.rol, null); /* sin base de datos: se usa el rol del token */ }
+      p.rol = v.rol; p.rol_cards = v.rol_cards; p.rol_cartera = v.rol_cartera; p.rol_solicitudes = v.rol_solicitudes;
+    } catch (_e) { p.rol_cards = rolCardsDe(p.rol, null); p.rol_cartera = rolCarteraDe(p.rol, null); p.rol_solicitudes = rolSolicitudesDe(p.rol, null); /* sin base de datos: se usa el rol del token */ }
   }
   if (p.rol === 'inventario' && !rutaPermitidaRolInventario(req.path)) {
     return res.status(403).json({ error: 'rol_no_autorizado', mensaje: 'Este usuario solo tiene acceso a Inventario de terminales.' });
@@ -223,12 +233,16 @@ async function auth(req, res, next) {
   if (ROLES_SOLO_CARDS.includes(p.rol) && !rutaPermitidaRolComercial(req.path, p)) {
     return res.status(403).json({ error: 'rol_no_autorizado', mensaje: 'Este usuario solo tiene acceso a Polipay Cards Settlement.' });
   }
-  if (ROLES_SOLO_CARTERA.includes(p.rol) && !rutaPermitidaRolCartera(req.path)) {
+  if (ROLES_SOLO_PORTAL.includes(p.rol) && !rutaPermitidaRolPortal(req.path, p)) {
+    return res.status(403).json({ error: 'rol_no_autorizado', mensaje: 'Este usuario solo tiene acceso al portal de solicitudes.' });
+  }
+  if (ROLES_SOLO_CARTERA.includes(p.rol) && !rutaPermitidaRolCartera(req.path, p)) {
     return res.status(403).json({ error: 'rol_no_autorizado', mensaje: 'Este usuario solo tiene acceso a Credit Solvendom Settlement.' });
   }
   if (p.rol_cards === undefined) p.rol_cards = rolCardsDe(p.rol, null);
   if (p.rol_cartera === undefined) p.rol_cartera = rolCarteraDe(p.rol, null);
-  res.setHeader('X-Rol', p.rol); res.setHeader('X-Rol-Cards', p.rol_cards || ''); res.setHeader('X-Rol-Cartera', p.rol_cartera || '');        // la pantalla los compara para refrescar menús si cambian
+  if (p.rol_solicitudes === undefined) p.rol_solicitudes = rolSolicitudesDe(p.rol, null);
+  res.setHeader('X-Rol', p.rol); res.setHeader('X-Rol-Cards', p.rol_cards || ''); res.setHeader('X-Rol-Cartera', p.rol_cartera || ''); res.setHeader('X-Rol-Solicitudes', p.rol_solicitudes || '');        // la pantalla los compara para refrescar menús si cambian
   req.user = p; next();
 }
 const requiereRol = (...roles) => (req, res, next) =>
@@ -383,7 +397,7 @@ app.post('/api/login/dev', async (req, res) => {
     ? (await db.query('select * from usuarios where activo=true and lower(email)=$1', [email])).rows[0]
     : (await db.query("select * from usuarios where activo=true and rol='admin' order by id limit 1")).rows[0];
   if (!u) return res.status(email ? 404 : 500).json({ error: email ? 'usuario_no_existe' : 'sin_admin' });
-  const safe = { id: u.id, email: u.email, nombre: u.nombre, rol: u.rol, rol_cards: rolCardsDe(u.rol, u.rol_cards), rol_cartera: rolCarteraDe(u.rol, u.rol_cartera) };
+  const safe = { id: u.id, email: u.email, nombre: u.nombre, rol: u.rol, rol_cards: rolCardsDe(u.rol, u.rol_cards), rol_cartera: rolCarteraDe(u.rol, u.rol_cartera), rol_solicitudes: rolSolicitudesDe(u.rol, u.rol_solicitudes) };
   res.json({ token: firmar(u), user: safe });
 });
 
@@ -455,7 +469,7 @@ app.post('/api/login/google', loginLimiter, async (req, res) => {
   await bit(req, 'login_google', `${email} · amr=${amrStr} · hd=${payload.hd || '—'}`, { actor: { nombre: u.nombre, rol: u.rol }, resource_type: 'usuario', resource_id: u.id });
   res.json({ token: firmar(u), user: safeUser(u) });
 });
-app.get('/api/yo', auth, (req, res) => res.json({ id: req.user.sub, nombre: req.user.nombre, email: req.user.email, rol: req.user.rol, rol_cards: req.user.rol_cards, rol_cartera: req.user.rol_cartera }));
+app.get('/api/yo', auth, (req, res) => res.json({ id: req.user.sub, nombre: req.user.nombre, email: req.user.email, rol: req.user.rol, rol_cards: req.user.rol_cards, rol_cartera: req.user.rol_cartera, rol_solicitudes: req.user.rol_solicitudes }));
 // Cierra la sesión del server-side: agrega el jti a la blacklist para que el mismo token no vuelva a autenticar.
 app.post('/api/logout', auth, (req, res) => {
   if (req.user.jti) REVOKED_JTI.add(req.user.jti);
@@ -465,14 +479,15 @@ app.post('/api/logout', auth, (req, res) => {
 /* ---------- Administración de usuarios (panel único) ----------
    Un solo lugar para los usuarios de todos los sistemas: POS Settlement, Tareas Ops y Polipay Cards Settlement.
    Administrador → todos los roles. Administrador Cards → solo los usuarios con rol de Cards (no ve ni toca los demás). */
-const SISTEMAS = { pos: 'POS Settlement', tareas: 'Tareas Ops', cards: 'Cards', cartera: 'Credit Solvendom', admin: 'Administración' };
-const ROLES_POS = ROLES_VALIDOS.filter(r => !ROLES_SOLO_CARDS.includes(r) && !ROLES_SOLO_CARTERA.includes(r));           // admin, operador, tesoreria, bancos, consulta, inventario
+const SISTEMAS = { pos: 'POS Settlement', tareas: 'Tareas Ops', cards: 'Cards', cartera: 'Credit Solvendom', solicitudes: 'Solicitudes de clientes', admin: 'Administración' };
+const ROLES_POS = ROLES_VALIDOS.filter(r => !ROLES_SOLO_CARDS.includes(r) && !ROLES_SOLO_CARTERA.includes(r) && !ROLES_SOLO_PORTAL.includes(r));           // admin, operador, tesoreria, bancos, consulta, inventario
 // A qué sistemas entra una persona: POS y Tareas por su rol de POS; Cards por su rol de Cards (independiente); el panel, un administrador.
-function sistemasDe(rol, rolCards, rolCartera) {
+function sistemasDe(rol, rolCards, rolCartera, rolSol) {
   const s = [];
   if (ROLES_POS.includes(rol)) { s.push('pos'); if (rol !== 'inventario') s.push('tareas'); }
   if (rolCardsDe(rol, rolCards)) s.push('cards');
   if (rolCarteraDe(rol, rolCartera)) s.push('cartera');
+  if (rolSolicitudesDe(rol, rolSol)) s.push('solicitudes');
   if (rol === 'admin' || rol === 'cards_admin') s.push('admin');
   return s;
 }
@@ -486,19 +501,19 @@ app.get('/api/admin/roles', auth, requiereRol('admin', 'cards_admin'), async (re
   const fila = id => ({ id, nombre: ROLES[id] });
   let cartera = [];
   try { if (esAdminPos(req)) cartera = await rolesCartera(); } catch (_e) { /* sin schema de Cartera: la lista queda vacía */ }
-  res.json({ sistemas: SISTEMAS, pos: esAdminPos(req) ? ROLES_POS.map(fila) : [], cards: CARDS_ROLES.map(fila), cartera, puede_pos: esAdminPos(req) });
+  res.json({ sistemas: SISTEMAS, pos: esAdminPos(req) ? ROLES_POS.map(fila) : [], cards: CARDS_ROLES.map(fila), cartera, solicitudes: esAdminPos(req) ? require('./lib/solicitudes/flujo.js').lista() : [], puede_pos: esAdminPos(req) });
 });
 app.get('/api/usuarios', auth, requiereRol('admin', 'cards_admin'), async (req, res) => {
   if (!dbReady(res)) return;
   const rows = (await db.query(esAdminPos(req)
-    ? 'select id,email,email_cifrado,nombre,nombre_cifrado,rol,rol_cards,rol_cartera,activo,ultimo_login_at,creado_at,creado_por,foto_url from usuarios order by activo desc, rol, email'
-    : 'select id,email,email_cifrado,nombre,nombre_cifrado,rol,rol_cards,rol_cartera,activo,ultimo_login_at,creado_at,creado_por,foto_url from usuarios where rol = any($1::text[]) order by activo desc, rol, email', esAdminPos(req) ? [] : [ROLES_SOLO_CARDS])).rows;
+    ? "select id,email,email_cifrado,nombre,nombre_cifrado,rol,rol_cards,rol_cartera,rol_solicitudes,activo,ultimo_login_at,creado_at,creado_por,foto_url from usuarios where rol <> 'cliente' order by activo desc, rol, email"
+    : 'select id,email,email_cifrado,nombre,nombre_cifrado,rol,rol_cards,rol_cartera,rol_solicitudes,activo,ultimo_login_at,creado_at,creado_por,foto_url from usuarios where rol = any($1::text[]) order by activo desc, rol, email', esAdminPos(req) ? [] : [ROLES_SOLO_CARDS])).rows;
   res.json(rows.map(u => ({
     id: u.id,
     email: descifraTexto(u.email_cifrado, u.email),
     nombre: descifraTexto(u.nombre_cifrado, u.nombre),
-    rol: u.rol, rol_pos: ROLES_POS.includes(u.rol) ? u.rol : '', rol_cards: rolCardsDe(u.rol, u.rol_cards) || '', rol_cartera: rolCarteraDe(u.rol, u.rol_cartera) || '',
-    activo: u.activo, sistemas: sistemasDe(u.rol, u.rol_cards, u.rol_cartera),
+    rol: u.rol, rol_pos: ROLES_POS.includes(u.rol) ? u.rol : '', rol_cards: rolCardsDe(u.rol, u.rol_cards) || '', rol_cartera: rolCarteraDe(u.rol, u.rol_cartera) || '', rol_solicitudes: rolSolicitudesDe(u.rol, u.rol_solicitudes) || '',
+    activo: u.activo, sistemas: sistemasDe(u.rol, u.rol_cards, u.rol_cartera, u.rol_solicitudes),
     ultimo_login_at: u.ultimo_login_at, creado_at: u.creado_at, creado_por: u.creado_por, foto_url: u.foto_url,
   })));
 });
@@ -515,6 +530,7 @@ app.post('/api/usuarios', auth, requiereRol('admin', 'cards_admin'), async (req,
   let rolCartera = b.rol_cartera !== undefined ? String(b.rol_cartera || '').trim() : null;
   if (rolCartera === null && b.rol === 'cartera') rolCartera = 'operador';
   rolCartera = rolCartera || '';
+  let rolSol = b.rol_solicitudes !== undefined ? String(b.rol_solicitudes || '').trim() : null;      // null = no se tocó (se conserva el que ya tiene)
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'email_invalido' });
   if (!nombre) return res.status(400).json({ error: 'nombre_requerido' });
   if (rolPos && !ROLES_POS.includes(rolPos)) return res.status(400).json({ error: 'rol_invalido', mensaje: 'Rol de POS Settlement no válido.' });
@@ -525,32 +541,41 @@ app.post('/api/usuarios', auth, requiereRol('admin', 'cards_admin'), async (req,
     try { okRol = (await rolesCartera()).some(r => r.id === rolCartera); } catch (_e) { okRol = false; }
     if (!okRol) return res.status(400).json({ error: 'rol_invalido', mensaje: 'Rol de Credit Solvendom no válido.' });
   }
-  if (!rolPos && !rolCards && !rolCartera) return res.status(400).json({ error: 'rol_requerido', mensaje: 'Asigna al menos un acceso: POS Settlement, Cards o Credit Solvendom.' });
+  if (rolSol) {
+    if (!esAdminPos(req)) return res.status(400).json({ error: 'rol_invalido', mensaje: 'Solo un administrador asigna el acceso al portal de solicitudes.' });
+    if (!require('./lib/solicitudes/flujo.js').lista().some(r => r.id === rolSol)) return res.status(400).json({ error: 'rol_invalido', mensaje: 'Rol del portal de solicitudes no válido.' });
+  }
+  if (!b.id && !rolPos && !rolCards && !rolCartera && !rolSol) return res.status(400).json({ error: 'rol_requerido', mensaje: 'Asigna al menos un acceso: POS Settlement, Cards, Credit Solvendom o el portal de solicitudes.' });
+  if (b.id && !rolPos && !rolCards && !rolCartera && rolSol === '') { /* sin ningún acceso (se valida más abajo contra el rol existente) */ }
   if (!esAdminPos(req) && rolPos) return res.status(400).json({ error: 'rol_invalido', mensaje: 'Solo un administrador asigna roles de POS Settlement.' });
-  if (rolPos === 'admin') { rolCards = ''; rolCartera = ''; }   // el administrador ya tiene acceso total a Cards y a Cartera
+  if (rolPos === 'admin') { rolCards = ''; rolCartera = ''; rolSol = ''; }   // el administrador ya tiene acceso total a Cards, Cartera y al portal de solicitudes
   // Lo que se guarda: con rol de POS, `rol` = ese rol y `rol_cards` = el de Cards (o nada); sin rol de POS, `rol` = el rol de Cards.
-  const rolGuardar = rolPos || rolCards || (rolCartera ? 'cartera' : ''), rolCardsGuardar = rolPos ? (rolCards || null) : null, rolCarteraGuardar = rolCartera || null;
+  const rolGuardar = rolPos || rolCards || (rolCartera ? 'cartera' : '') || (rolSol ? 'solicitudes' : ''), rolCardsGuardar = rolPos ? (rolCards || null) : null, rolCarteraGuardar = rolCartera || null;
   if (b.id) {
     // Edición
     const id = parseInt(b.id, 10);
     const existente = (await db.query('select id,rol from usuarios where id=$1', [id])).rows[0];
-    if (!existente || (!esAdminPos(req) && !ROLES_SOLO_CARDS.includes(existente.rol))) return res.status(404).json({ error: 'no_existe', mensaje: 'Ese usuario no existe o no lo puedes administrar.' });
-    const actual = (await db.query('select rol, rol_cards, rol_cartera from usuarios where id=$1', [id])).rows[0];
-    if (id === parseInt(req.user.sub, 10) && (actual.rol !== rolGuardar || (actual.rol_cards || null) !== rolCardsGuardar || (actual.rol_cartera || null) !== rolCarteraGuardar || !activo))
+    if (!existente || existente.rol === 'cliente' || (!esAdminPos(req) && !ROLES_SOLO_CARDS.includes(existente.rol))) return res.status(404).json({ error: 'no_existe', mensaje: 'Ese usuario no existe o no lo puedes administrar.' });
+    const actual = (await db.query('select rol, rol_cards, rol_cartera, rol_solicitudes from usuarios where id=$1', [id])).rows[0];
+    const rolSolGuardar = rolSol === null ? (actual.rol_solicitudes || null) : (rolSol || null);
+    // Quien solo entra al portal conserva ese rol de base si no se le dio otro acceso.
+    const rolBase = rolGuardar || (rolSolGuardar ? 'solicitudes' : '');
+    if (!rolBase) return res.status(400).json({ error: 'rol_requerido', mensaje: 'Asigna al menos un acceso: POS Settlement, Cards, Credit Solvendom o el portal de solicitudes.' });
+    if (id === parseInt(req.user.sub, 10) && (actual.rol !== rolBase || (actual.rol_cards || null) !== rolCardsGuardar || (actual.rol_cartera || null) !== rolCarteraGuardar || (actual.rol_solicitudes || null) !== rolSolGuardar || !activo))
       return res.status(409).json({ error: 'no_te_edites', mensaje: 'No puedes cambiar tus propios accesos ni desactivarte.' });
     // Regla: no permitas quedarte sin admins activos.
-    if ((existente.rol === 'admin') && (rolGuardar !== 'admin' || !activo)) {
+    if ((existente.rol === 'admin') && (rolBase !== 'admin' || !activo)) {
       const admins = (await db.query("select count(*)::int as n from usuarios where rol='admin' and activo=true and id<>$1", [id])).rows[0].n;
       if (admins === 0) return res.status(409).json({ error: 'ultimo_admin', mensaje: 'No puedes dejar el sistema sin al menos un administrador activo.' });
     }
     const dupE = (await db.query('select id from usuarios where id<>$1 and (email_hash=$2 or lower(email)=lower($3))', [id, C.hmacEmail(email), email])).rows[0];
     if (dupE) return res.status(409).json({ error: 'email_duplicado', mensaje: 'Ese correo ya pertenece a otro usuario.' });
     await db.query(
-      'update usuarios set email=$2, nombre=$3, rol=$4, rol_cards=$9, rol_cartera=$10, activo=$5, email_hash=$6, email_cifrado=$7, nombre_cifrado=$8 where id=$1',
-      [id, email, nombre, rolGuardar, activo, C.hmacEmail(email), C.encrypt(email), C.encrypt(nombre), rolCardsGuardar, rolCarteraGuardar]
+      'update usuarios set email=$2, nombre=$3, rol=$4, rol_cards=$9, rol_cartera=$10, rol_solicitudes=$11, activo=$5, email_hash=$6, email_cifrado=$7, nombre_cifrado=$8 where id=$1',
+      [id, email, nombre, rolBase, activo, C.hmacEmail(email), C.encrypt(email), C.encrypt(nombre), rolCardsGuardar, rolCarteraGuardar, rolSolGuardar]
     );
     olvidarRol(id);
-    await bit(req, 'usuario_editar', `email=${email} pos=${rolPos || '—'} cards=${rolCards || '—'} cartera=${rolCartera || '—'} activo=${activo}`, { resource_type: 'usuario', resource_id: id });
+    await bit(req, 'usuario_editar', `email=${email} pos=${rolPos || '—'} cards=${rolCards || '—'} cartera=${rolCartera || '—'} solicitudes=${rolSolGuardar || '—'} activo=${activo}`, { resource_type: 'usuario', resource_id: id });
     anotarAccesoCartera(req, email, rolPos, rolCartera, 'cambió');
     return res.json({ ok: true, id });
   }
@@ -559,10 +584,10 @@ app.post('/api/usuarios', auth, requiereRol('admin', 'cards_admin'), async (req,
   const dup = (await db.query('select id, rol from usuarios where email_hash=$1 or lower(email)=lower($2)', [eHash, email])).rows[0];
   if (dup) return res.status(409).json({ error: 'email_duplicado', mensaje: !esAdminPos(req) && !ROLES_SOLO_CARDS.includes(dup.rol) ? 'Ese correo ya tiene un usuario con acceso a POS Settlement. Un administrador debe asignarle el acceso a Cards.' : 'Ese correo ya tiene usuario.' });
   const r = await db.query(
-    'insert into usuarios(email,nombre,rol,rol_cards,rol_cartera,activo,creado_por,email_hash,email_cifrado,nombre_cifrado) values($1,$2,$3,$9,$10,$4,$5,$6,$7,$8) returning id',
-    [email, nombre, rolGuardar, activo, req.user.nombre || req.user.email, C.hmacEmail(email), C.encrypt(email), C.encrypt(nombre), rolCardsGuardar, rolCarteraGuardar]
+    'insert into usuarios(email,nombre,rol,rol_cards,rol_cartera,rol_solicitudes,activo,creado_por,email_hash,email_cifrado,nombre_cifrado) values($1,$2,$3,$9,$10,$11,$4,$5,$6,$7,$8) returning id',
+    [email, nombre, rolGuardar, activo, req.user.nombre || req.user.email, C.hmacEmail(email), C.encrypt(email), C.encrypt(nombre), rolCardsGuardar, rolCarteraGuardar, rolSol || null]
   );
-  await bit(req, 'usuario_alta', `email=${email} pos=${rolPos || '—'} cards=${rolCards || '—'} cartera=${rolCartera || '—'}`, { resource_type: 'usuario', resource_id: r.rows[0].id });
+  await bit(req, 'usuario_alta', `email=${email} pos=${rolPos || '—'} cards=${rolCards || '—'} cartera=${rolCartera || '—'} solicitudes=${rolSol || '—'}`, { resource_type: 'usuario', resource_id: r.rows[0].id });
   anotarAccesoCartera(req, email, rolPos, rolCartera, 'dio de alta');
   // Correo de bienvenida (best-effort, no bloquea el alta).
   let mail = { ok: false, motivo: 'ses_no_configurado' };
@@ -5111,7 +5136,7 @@ function armarBienvenidaHTML(user, invitadoPor, opts) {
   const bullets = permisosPorRol(user.rol).concat(!ROLES_SOLO_CARDS.includes(user.rol) && user.rol_cards ? permisosPorRol(user.rol_cards).map(t => 'Cards · ' + t) : []);
   const appUrl = opts.appUrl || process.env.APP_URL || 'https://polipay-conciliacion-liquidacion.onrender.com';
   const logo = opts.logoSrc || 'cid:polipay-logo';
-  const sistema = ROLES_SOLO_CARDS.includes(user.rol) ? 'Polipay Cards Settlement' : ROLES_SOLO_CARTERA.includes(user.rol) ? 'Credit Solvendom Settlement' : 'Polipay POS Settlement';
+  const sistema = ROLES_SOLO_CARDS.includes(user.rol) ? 'Polipay Cards Settlement' : ROLES_SOLO_CARTERA.includes(user.rol) ? 'Credit Solvendom Settlement' : ROLES_SOLO_PORTAL.includes(user.rol) ? 'el Portal de solicitudes de Polipay' : 'Polipay POS Settlement';
   const subject = `Bienvenido/a a ${sistema} — acceso ${rolLabel}`;
   const html = `<!doctype html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -6206,6 +6231,10 @@ function anotarAccesoCartera(req, email, rolPos, rolCartera, verbo) { try { if (
 const logoMesa = () => { try { return [{ cid: 'polipay-logo', filename: 'polipay-logo.png', contentType: 'image/png', content: require('fs').readFileSync(path.join(__dirname, 'public', 'logo.png')) }]; } catch (_e) { return []; } };
 montarMesaControl(app, { auth, db, correo: { activo: () => sesEnabled(), enviar: m => sendSES({ to: m.to, cc: m.cc, bcc: m.bcc, subject: m.subject, html: m.html, textFallback: m.text, attachments: m.attachments, inlineImages: logoMesa(), fromName: 'Polipay · Credit Solvendom' }) } });
 
+// Portal de solicitudes de clientes (POS): alta de sub afiliados y afiliaciones, usuarios de Suite, cambios de datos, condiciones y CLABE.
+require('./lib/solicitudes/routes.js').montar(app, { auth, db, C, bit, appUrl: () => process.env.APP_URL || 'https://polipay-conciliacion-liquidacion.onrender.com',
+  correo: { activo: () => sesEnabled(), enviar: m => sendSES({ to: m.to, cc: m.cc, bcc: m.bcc, subject: m.subject, html: m.html, textFallback: m.text, attachments: m.attachments, inlineImages: logoMesa(), fromName: 'Polipay · Solicitudes' }) } });
+
 /* ---------- Módulo ENTREGABLES · Portal de solicitudes (fase 5) ---------- */
 const { mountEntregablesRoutes } = require('./lib/entregables-routes.js');
 mountEntregablesRoutes(app, { auth, requiereRol, bit, db, C, upload, sesEnabled, sendSES, SES_FROM_NAME });
@@ -6312,6 +6341,7 @@ app.use('/public/inventario-admin.js', express.static(path.join(__dirname, 'publ
 // Credit Solvendom: la identidad (marca.css) y la mesa de control se revalidan siempre (ETag): si no, un cambio tardaría hasta 7 días en llegar a quien ya lo tiene en caché.
 app.use('/public/cartera', express.static(path.join(__dirname, 'public', 'cartera'), { maxAge: 0, etag: true, lastModified: true, setHeaders: res => res.setHeader('Cache-Control', 'no-cache') }));
 app.use('/public/mesa', express.static(path.join(__dirname, 'public', 'mesa'), { maxAge: 0, etag: true, lastModified: true, setHeaders: res => res.setHeader('Cache-Control', 'no-cache') }));
+app.use('/public/solicitudes', express.static(path.join(__dirname, 'public', 'solicitudes'), { maxAge: 0, etag: true, lastModified: true, setHeaders: res => res.setHeader('Cache-Control', 'no-cache') }));   // portal de solicitudes: siempre la versión vigente
 app.use('/public', express.static(path.join(__dirname, 'public'), { maxAge: '7d' }));
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'not_found' });

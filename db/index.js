@@ -102,6 +102,11 @@ async function migrate() {
     await backend.exec(fs.readFileSync(path.join(__dirname, 'schema-mesa.sql'), 'utf8'));
     await backend.query(`set search_path to ${SCHEMA}`);
   } catch (e) { console.warn('⚠ schema-mesa migrate:', e.message); }
+  // Portal de solicitudes de clientes (tablas sc_*, mismo schema que POS: usa sus grupos, afiliaciones, cuentas y bancos).
+  try {
+    await backend.exec(fs.readFileSync(path.join(__dirname, 'schema-solicitudes.sql'), 'utf8'));
+    await backend.query(`set search_path to ${SCHEMA}`);
+  } catch (e) { console.warn('⚠ schema-solicitudes migrate:', e.message); }
   await seedUsuarios();
   await seedReasonCodes();
 }
