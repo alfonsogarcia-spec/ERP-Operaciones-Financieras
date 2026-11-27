@@ -174,7 +174,7 @@ const IC = {
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13 7l4 4"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>',
 };
-const IC_SECCION = { afiliacion: 'link', comercio: 'store', contacto: 'user', solicitante: 'user', usuario: 'user', modalidad: 'card', condiciones: 'percent', operacion: 'gear', rep: 'id', liquidacion: 'bank', nueva: 'bank', niveles: 'shield', perfil: 'shield', cambio: 'edit', tipo: 'list' };
+const IC_SECCION = { afiliacion: 'link', comercio: 'store', contacto: 'user', solicitante: 'user', autoriza: 'shield', usuario: 'user', modalidad: 'card', condiciones: 'percent', operacion: 'gear', rep: 'id', liquidacion: 'bank', nueva: 'bank', niveles: 'shield', perfil: 'shield', cambio: 'edit', tipo: 'list' };
 const icSvg = id => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[IC_SECCION[id]] || IC.list}</svg>`;
 function estiloFormulario() {
   if (document.getElementById('sc-form-css')) return;
@@ -238,13 +238,14 @@ function formulario(tp, ctx) {
   const repintar = () => refs.forEach(r => r.actualizar());
   tp.secciones.forEach(sec => {
     if (ctx.cliente && sec.llena !== 'cliente') return;                 // el cliente solo ve su parte (y lo comercial que le corresponde, abajo)
-    const editable = ctx.editables.has(sec.llena);
+    if (sec.auto && ctx.alta) return;                                    // datos del solicitante: salen solos de quien inicia sesión, no se piden
+    const editable = ctx.editables.has(sec.llena) && !sec.auto;
     const oculta = sec.omitir_si && visibleCampo({ show_if: sec.omitir_si }, ctx.d);
     if (oculta) return;                                                  // p. ej. «Cuenta en Suite Banca» solo existe si se pidió esa cuenta
     const cuerpo = el('div', { class: 'form-grid' });
     const cnt = el('span', { class: 'sc-cnt' }); const barra = el('i');
     const pan = el('div', { class: 'panel sc-sec', 'data-etapa': sec.llena, id: 'sc-sec-' + sec.id },
-      el('h3', { class: 'sc-h' }, el('span', { class: 'sc-ic', html: icSvg(sec.id) }), el('span', { class: 'sc-ht' }, el('b', {}, sec.titulo), el('small', {}, (editable ? 'Por llenar: ' : 'Parte de: ') + etiquetaEtapa[sec.llena])), cnt),
+      el('h3', { class: 'sc-h' }, el('span', { class: 'sc-ic', html: icSvg(sec.id) }), el('span', { class: 'sc-ht' }, el('b', {}, sec.titulo), el('small', {}, (sec.auto ? 'Tomados de quien solicita' : (editable ? 'Por llenar: ' : 'Parte de: ') + etiquetaEtapa[sec.llena]))), cnt),
       editable ? el('div', { class: 'sc-bar' }, barra) : el('div', { style: 'height:14px' }), cuerpo);
     // cuántos obligatorios visibles de esta sección ya tienen respuesta
     const estado = () => { let t = 0, h = 0; sec.campos.forEach(c => { if (!c.required || oculta || !visibleCampo(c, ctx.d)) return; t++; if (!vacio(ctx.d[c.key])) h++; }); return { t, h }; };
@@ -598,12 +599,11 @@ async function vAlta(v) {
   const cli = esCliente(); const d = { ...(SC.nuevo.pre || {}) }; SC.nuevo.pre = null;   // lo ya capturado se conserva al cambiar de unidad de negocio
   // precarga datos del solicitante
   const pf = cat.perfil || { nombre: SC.yo.nombre, email: SC.yo.usuario, puesto: '', telefono: '' };
-  if (tp.id === 'usuario_suite') { d.sol_nombre = pf.nombre; d.sol_email = pf.email; if (pf.puesto) d.sol_puesto = pf.puesto; if (pf.telefono) d.sol_tel = pf.telefono; }
   if (tp.id === 'alta_subafiliado') { d.contacto_nombre = d.contacto_nombre || pf.nombre; d.contacto_email = d.contacto_email || pf.email; if (pf.puesto && !d.contacto_puesto) d.contacto_puesto = pf.puesto; if (pf.telefono && !d.contacto_tel) d.contacto_tel = pf.telefono; }
   // Con una sola unidad de negocio (o afiliación) asignada, ya sale elegida.
   if ((cat.unidades || []).length === 1) { const u = cat.unidades[0]; if (tp.id === 'alta_subafiliado') { d.unidad_negocio = u.nombre; if ((u.afiliaciones || []).length === 1) d.afil_principal = u.afiliaciones[0]; } if (tp.id === 'usuario_suite') d.nivel_udn = [u.nombre]; }
   if (tp.requiere_afiliacion && cat.afiliaciones.length === 1 && !d.afil_principal) d.afil_principal = cat.afiliaciones[0].numero;
-  const ctx = { d, editables: new Set(['cliente']), cat, errores: {}, dirty: { cliente: {} }, cliente: true };
+  const ctx = { d, editables: new Set(['cliente']), cat, errores: {}, dirty: { cliente: {} }, cliente: true, alta: true };
   if (cat.acotado) ctx.aviso = true;
   cardsAcciones(el('button', { class: 'btn secondary', onclick: volver }, '← Cancelar'), el('button', { class: 'btn ghost', onclick: () => descargar(`/api/sc/formatos/${tp.id}/pdf`, `${tp.formato}-formato-en-blanco.pdf`).catch(falla) }, 'Formato en blanco (PDF)'));
   const grupo = (SC.yo.grupos || []).find(g => g.id_grupo === SC.nuevo.id_grupo);

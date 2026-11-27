@@ -190,6 +190,22 @@ test('alta de sub afiliado: cliente → comercial → operación → coordinacio
   } finally { await cerrar(); }
 });
 
+test('usuario en Suite: los datos del solicitante salen de la sesión, no del formulario', async () => {
+  const { api, cerrar } = await arrancar();
+  try {
+    const datos = { sol_nombre: 'Otra Persona', sol_email: 'otra@falsa.test', sol_puesto: 'Inventado', jefe_nombre: 'Jefa Norte', jefe_email: 'jefa@norte.test', tipo_solicitud: 'Alta de usuario nuevo', usuario_nombre: 'Luis Ruiz', usuario_email: 'luis@norte.test',
+      nivel_empresas: ['Tiendas del Norte'], perfil: 'Consulta', justificacion: 'Consulta de reportes' };
+    const id = (await api('cli', 'POST', '/solicitudes', { tipo: 'usuario_suite', datos })).j.id;
+    let d = (await api('cli', 'GET', '/solicitudes/' + id)).j.solicitud.datos;
+    assert.notEqual(d.sol_nombre, 'Otra Persona'); assert.notEqual(d.sol_email, 'otra@falsa.test'); assert.ok(d.sol_nombre && d.sol_email);
+    assert.equal(d.sol_puesto || null, null);   // sin ficha de contacto con puesto, queda vacío (no es obligatorio)
+    const antes = d.sol_nombre;
+    await api('cli', 'PUT', '/solicitudes/' + id, { datos: { sol_nombre: 'Cambiado' } });
+    d = (await api('cli', 'GET', '/solicitudes/' + id)).j.solicitud.datos; assert.equal(d.sol_nombre, antes);
+    assert.equal((await api('cli', 'POST', `/solicitudes/${id}/accion`, { accion: 'enviar' })).s, 200);
+  } finally { await cerrar(); }
+});
+
 test('usuario en Suite con perfil Administrador exige además la firma de la Dirección; segregación de funciones', async () => {
   const { api, cerrar } = await arrancar();
   try {
